@@ -1,0 +1,209 @@
+// Database Migration Script - Run this to add missing tables
+const fs = require('fs');
+const path = require('path');
+const initSqlJs = require('sql.js');
+
+const dbPath = path.join(__dirname, 'barman-store.db');
+
+async function migrate() {
+  console.log('Starting database migration...');
+  
+  const SQL = await initSqlJs();
+  
+  // Load existing database
+  if (!fs.existsSync(dbPath)) {
+    console.log('Database file not found!');
+    return;
+  }
+  
+  const buffer = fs.readFileSync(dbPath);
+  const db = new SQL.Database(buffer);
+  
+  // Helper functions
+  const dbRun = (sql, params = []) => {
+    db.run(sql, params);
+  };
+  
+  const dbGet = (sql, params = []) => {
+    const stmt = db.prepare(sql);
+    stmt.bind(params);
+    if (stmt.step()) {
+      const result = stmt.getAsObject();
+      stmt.free();
+      return result;
+    }
+    stmt.free();
+    return null;
+  };
+  
+  const saveDB = () => {
+    const data = db.export();
+    const buffer = Buffer.from(data);
+    fs.writeFileSync(dbPath, buffer);
+  };
+  
+  // Tables to create if missing
+  const migrations = [
+    {
+      name: 'product_versions',
+      sql: `CREATE TABLE IF NOT EXISTS product_versions (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        internal_product_id TEXT NOT NULL,
+        sku TEXT NOT NULL,
+        mrp REAL NOT NULL,
+        price REAL NOT NULL,
+        valid_from DATETIME DEFAULT CURRENT_TIMESTAMP,
+        valid_to DATETIME,
+        created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+      )`
+    },
+    {
+      name: 'uom_conversions',
+      sql: `CREATE TABLE IF NOT EXISTS uom_conversions (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        product_id INTEGER NOT NULL,
+        from_uom TEXT NOT NULL,
+        to_uom TEXT NOT NULL,
+        conversion_factor REAL NOT NULL DEFAULT 1,
+        created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+      )`
+    },
+    {
+      name: 'distributors',
+      sql: `CREATE TABLE IF NOT EXISTS distributors (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        name TEXT NOT NULL,
+        contact_person TEXT,
+        email TEXT,
+        phone TEXT,
+        address TEXT,
+        city TEXT,
+        state TEXT,
+        pincode TEXT,
+        salesman_name TEXT,
+        salesman_phone TEXT,
+        gst_number TEXT,
+        payment_terms TEXT DEFAULT 'net30',
+        credit_limit REAL DEFAULT 0,
+        notes TEXT,
+        status TEXT DEFAULT 'active',
+        created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+        updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+      )`
+    },
+    {
+      name: 'purchase_orders',
+      sql: `CREATE TABLE IF NOT EXISTS purchase_orders (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        po_number TEXT UNIQUE NOT NULL,
+        distributor_id INTEGER NOT NULL,
+        total REAL NOT NULL DEFAULT 0,
+        status TEXT DEFAULT 'pending',
+        notes TEXT,
+        expected_delivery DATE,
+        invoice_number TEXT,
+        created_by INTEGER,
+        created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+        updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+      )`
+    },
+    {
+      name: 'purchase_order_items',
+      sql: `CREATE TABLE IF NOT EXISTS purchase_order_items (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        order_id INTEGER NOT NULL,
+        product_id INTEGER,
+        product_name TEXT NOT NULL,
+        quantity REAL NOT NULL,
+        received_quantity REAL DEFAULT 0,
+        uom TEXT DEFAULT 'pcs',
+        unit_price REAL NOT NULL,
+        total REAL NOT NULL
+      )`
+    },
+    {
+      name: 'purchase_returns',
+      sql: `CREATE TABLE IF NOT EXISTS purchase_returns (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        return_number TEXT UNIQUE NOT NULL,
+        distributor_id INTEGER NOT NULL,
+        total REAL NOT NULL DEFAULT 0,
+        reason TEXT,
+        return_type TEXT DEFAULT 'return',
+        reference_po TEXT,
+        created_by INTEGER,
+        created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+        updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+      )`
+    },
+    {
+      name: 'purchase_return_items',
+      sql: `CREATE TABLE IF NOT EXISTS purchase_return_items (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        return_id INTEGER NOT NULL,
+        product_id INTEGER,
+        product_name TEXT NOT NULL,
+        quantity REAL NOT NULL,
+        uom TEXT DEFAULT 'pcs',
+        unit_price REAL NOT NULL,
+        total REAL NOT NULL,
+        reason TEXT
+      )`
+    },
+    {
+      name: 'batch_stock',
+      sql: `CREATE TABLE IF NOT EXISTS batch_stock (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        product_id INTEGER NOT NULL,
+        batch_number TEXT NOT NULL,
+        quantity REAL NOT NULL DEFAULT 0,
+        expiry_date DATE,
+        unit_cost REAL,
+        received_date DATE,
+        created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+      )`
+    },
+    {
+      name: 'credit_limits',
+      sql: `CREATE TABLE IF NOT EXISTS credit_limits (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        customer_id INTEGER NOT NULL,
+        credit_limit REAL NOT NULL DEFAULT 0,
+        available_credit REAL NOT NULL DEFAULT 0,
+        credit_used REAL NOT NULL DEFAULT 0,
+        last_updated DATETIME DEFAULT CURRENT_TIMESTAMP
+      )`
+    }
+  ];
+  
+  // Run migrations
+  for (const migration of migrations) {
+    try {
+      const tableExists = dbGet("SELECT name FROM sqlite_master WHERE type='table' AND name='" + migration.name + "'");
+      if (!tableExists) {
+        console.log('Creating table: ' + migration.name);
+        dbRun(migration.sql);
+      } else {
+        console.log('Table already exists: ' + migration.name);
+      }
+    } catch (error) {
+      console.log('Table ' + migration.name + ': ' + error.message);
+    }
+  }
+  
+  // Add internal_id column if missing
+  try {
+    const tableInfo = dbGet("SELECT sql FROM sqlite_master WHERE type='table' AND name='products'");
+    if (tableInfo && !tableInfo.sql.includes('internal_id')) {
+      console.log('Adding internal_id column to products...');
+      dbRun('ALTER TABLE products ADD COLUMN internal_id TEXT');
+    }
+  } catch (error) {
+    console.log('Column check: ' + error.message);
+  }
+  
+  saveDB();
+  console.log('Migration completed successfully!');
+}
+
+migrate().catch(console.error);

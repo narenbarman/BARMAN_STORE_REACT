@@ -1,0 +1,582 @@
+/* Purchase Management Styles */
+.purchase-management {
+  padding: 24px;
+}
+
+.purchase-management .loading {
+  text-align: center;
+  padding: 60px 20px;
+  color: #6b7280;
+  font-size: 16px;
+}
+
+.purchase-management .error-message {
+  background: #fee2e2;
+  color: #dc2626;
+  padding: 12px 16px;
+  border-radius: 8px;
+  margin-bottom: 16px;
+  font-size: 14px;
+}
+
+/* Sub Navigation */
+.purchase-management .sub-nav {
+  display: flex;
+  gap: 12px;
+  margin-bottom: 24px;
+  padding: 8px;
+  background: #f3f4f6;
+  border-radius: 10px;
+}
+
+.purchase-management .sub-nav button {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 20px;
+  border: none;
+  background: transparent;
+  color: #6b7280;
+  font-weight: 500;
+  cursor: pointer;
+  border-radius: 8px;
+  transition: all 0.2s ease;
+}
+
+.purchase-management .sub-nav button:hover {
+  background: white;
+  color: #374151;
+}
+
+.purchase-management .sub-nav button.active {
+  background: white;
+  color: #10b981;
+  box-shadow: 0 2px 4px rgba(0, 0, 0, 0.05);
+}
+
+/* Filters Bar */
+.purchase-management .filters-bar {
+  display: flex;
+  gap: 16px;
+  margin-bottom: 20px;
+  flex-wrap: wrap;
+}
+
+.purchase-management .filter-group {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.purchase-management .filter-group label {
+  font-size: 14px;
+  color: #6b7280;
+  font-weight: 500;
+}
+
+.purchase-management .filter-group select,
+.purchase-management .filter-group input {
+  padding: 8px 12px;
+  border: 1px solid #d1d5db;
+  border-radius: 6px;
+  font-size: 14px;
+  color: #374151;
+}
+
+.purchase-management .filter-group select:focus,
+.purchase-management .filter-group input:focus {
+  outline: none;
+  border-color: #10b981;
+}
+
+/* Actions Bar */
+.purchase-management .actions-bar {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 20px;
+}
+
+.purchase-management .actions-bar h2 {
+  margin: 0;
+  font-size: 22px;
+  color: #111827;
+}
+
+.purchase-management .action-buttons {
+  display: flex;
+  gap: 12px;
+}
+
+.purchase-management .admin-btn {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 16px;
+  border: none;
+  border-radius: 8px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: all 0.2s ease;
+}
+
+.purchase-management .admin-btn.primary {
+  background: linear-gradient(135deg, #10b981, #059669);
+  color: white;
+}
+
+.purchase-management .admin-btn.primary:hover {
+  background: linear-gradient(135deg, #059669, #047857);
+}
+
+.purchase-management .admin-btn.secondary {
+  background: #f3f4f6;
+  color: #374151;
+  border: 1px solid #e5e7eb;
+}
+
+.purchase-management .admin-btn.secondary:hover {
+  background: #e5e7eb;
+}
+
+/* Data Table */
+.purchase-management .data-table {
+  background: white;
+  border-radius: 12px;
+  border: 1px solid #e5e7eb;
+  overflow: hidden;
+}
+
+.purchase-management .data-table table {
+  width: 100%;
+  border-collapse: collapse;
+}
+
+.purchase-management .data-table th {
+  background: #f9fafb;
+  padding: 12px 16px;
+  text-align: left;
+  font-size: 13px;
+  font-weight: 600;
+  color: #6b7280;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  border-bottom: 1px solid #e5e7eb;
+}
+
+.purchase-management .data-table td {
+  padding: 14px 16px;
+  border-bottom: 1px solid #f3f4f6;
+  font-size: 14px;
+  color: #374151;
+}
+
+.purchase-management .data-table tr:last-child td {
+  border-bottom: none;
+}
+
+.purchase-management .data-table tr:hover {
+  background: #f9fafb;
+}
+
+.purchase-management .data-table .empty-state {
+  text-align: center;
+  padding: 40px 20px;
+  color: #9ca3af;
+}
+
+/* Status Badges */
+.purchase-management .status-badge {
+  display: inline-flex;
+  padding: 4px 10px;
+  border-radius: 20px;
+  font-size: 12px;
+  font-weight: 500;
+}
+
+.purchase-management .status-badge.pending {
+  background: #fef3c7;
+  color: #92400e;
+}
+
+.purchase-management .status-badge.confirmed {
+  background: #dbeafe;
+  color: #1d4ed8;
+}
+
+.purchase-management .status-badge.shipped {
+  background: #e0e7ff;
+  color: #4338ca;
+}
+
+.purchase-management .status-badge.received {
+  background: #d1fae5;
+  color: #065f46;
+}
+
+.purchase-management .status-badge.cancelled {
+  background: #fee2e2;
+  color: #991b1b;
+}
+
+.purchase-management .type-badge {
+  display: inline-flex;
+  padding: 4px 10px;
+  border-radius: 20px;
+  font-size: 12px;
+  font-weight: 500;
+}
+
+.purchase-management .type-badge.return {
+  background: #fee2e2;
+  color: #991b1b;
+}
+
+.purchase-management .type-badge.exchange {
+  background: #dbeafe;
+  color: #1d4ed8;
+}
+
+/* Actions Cell */
+.purchase-management .actions-cell {
+  display: flex;
+  gap: 8px;
+}
+
+.purchase-management .action-btn {
+  width: 32px;
+  height: 32px;
+  border: none;
+  border-radius: 6px;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: all 0.2s ease;
+  background: #f3f4f6;
+  color: #6b7280;
+}
+
+.purchase-management .action-btn:hover {
+  background: #e5e7eb;
+  color: #374151;
+}
+
+.purchase-management .action-btn.receive {
+  background: #d1fae5;
+  color: #065f46;
+}
+
+.purchase-management .action-btn.receive:hover {
+  background: #a7f3d0;
+}
+
+.purchase-management .action-btn.delete {
+  background: #fee2e2;
+  color: #dc2626;
+}
+
+.purchase-management .action-btn.delete:hover {
+  background: #fecaca;
+}
+
+/* Modal Styles */
+.purchase-management .modal-overlay {
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  background: rgba(0, 0, 0, 0.5);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 1000;
+  padding: 20px;
+}
+
+.purchase-management .modal-content {
+  background: white;
+  border-radius: 16px;
+  width: 100%;
+  max-width: 600px;
+  max-height: 90vh;
+  overflow-y: auto;
+  box-shadow: 0 20px 40px rgba(0, 0, 0, 0.15);
+}
+
+.purchase-management .modal-content.large {
+  max-width: 800px;
+}
+
+.purchase-management .modal-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 20px 24px;
+  border-bottom: 1px solid #e5e7eb;
+  position: sticky;
+  top: 0;
+  background: white;
+  z-index: 10;
+}
+
+.purchase-management .modal-header h2 {
+  margin: 0;
+  font-size: 20px;
+  color: #111827;
+}
+
+.purchase-management .close-btn {
+  background: none;
+  border: none;
+  color: #6b7280;
+  cursor: pointer;
+  padding: 4px;
+  border-radius: 6px;
+  transition: all 0.2s ease;
+}
+
+.purchase-management .close-btn:hover {
+  background: #f3f4f6;
+  color: #111827;
+}
+
+.purchase-management form {
+  padding: 24px;
+}
+
+.purchase-management .form-section {
+  margin-bottom: 24px;
+}
+
+.purchase-management .form-section h3 {
+  font-size: 16px;
+  color: #374151;
+  margin: 0 0 16px 0;
+}
+
+.purchase-management .section-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 16px;
+}
+
+.purchase-management .section-header h3 {
+  margin: 0;
+}
+
+.purchase-management .add-item-btn {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 8px 14px;
+  background: #f3f4f6;
+  border: 1px dashed #d1d5db;
+  border-radius: 6px;
+  color: #6b7280;
+  font-size: 14px;
+  cursor: pointer;
+  transition: all 0.2s ease;
+}
+
+.purchase-management .add-item-btn:hover {
+  background: #e5e7eb;
+  border-color: #9ca3af;
+}
+
+.purchase-management .form-row {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 16px;
+}
+
+.purchase-management .form-group {
+  margin-bottom: 16px;
+}
+
+.purchase-management .form-group label {
+  display: block;
+  font-size: 14px;
+  font-weight: 500;
+  color: #374151;
+  margin-bottom: 6px;
+}
+
+.purchase-management .form-group input,
+.purchase-management .form-group select,
+.purchase-management .form-group textarea {
+  width: 100%;
+  padding: 10px 12px;
+  border: 1px solid #d1d5db;
+  border-radius: 8px;
+  font-size: 14px;
+  color: #111827;
+  transition: all 0.2s ease;
+}
+
+.purchase-management .form-group input:focus,
+.purchase-management .form-group select:focus,
+.purchase-management .form-group textarea:focus {
+  outline: none;
+  border-color: #10b981;
+  box-shadow: 0 0 0 3px rgba(16, 185, 129, 0.1);
+}
+
+.purchase-management .form-group textarea {
+  resize: vertical;
+  min-height: 60px;
+}
+
+/* Items List */
+.purchase-management .items-list {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.purchase-management .item-row {
+  display: grid;
+  grid-template-columns: 2fr 1fr 1fr 1fr 1fr auto;
+  gap: 12px;
+  align-items: end;
+  padding: 16px;
+  background: #f9fafb;
+  border-radius: 10px;
+  border: 1px solid #e5e7eb;
+}
+
+.purchase-management .item-field {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.purchase-management .item-field label {
+  font-size: 12px;
+  color: #6b7280;
+  font-weight: 500;
+}
+
+.purchase-management .item-field span {
+  font-size: 14px;
+  color: #374151;
+  padding: 8px 0;
+}
+
+.purchase-management .item-field input,
+.purchase-management .item-field select {
+  padding: 8px 10px;
+  border: 1px solid #d1d5db;
+  border-radius: 6px;
+  font-size: 14px;
+}
+
+.purchase-management .remove-item-btn {
+  width: 32px;
+  height: 32px;
+  border: none;
+  background: #fee2e2;
+  color: #dc2626;
+  border-radius: 6px;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: all 0.2s ease;
+}
+
+.purchase-management .remove-item-btn:hover {
+  background: #fecaca;
+}
+
+.purchase-management .no-items {
+  text-align: center;
+  padding: 30px;
+  color: #9ca3af;
+  font-size: 14px;
+}
+
+.purchase-management .modal-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 12px;
+  padding-top: 16px;
+  border-top: 1px solid #e5e7eb;
+  position: sticky;
+  bottom: 0;
+  background: white;
+}
+
+.purchase-management .cancel-btn {
+  padding: 10px 20px;
+  border: 1px solid #d1d5db;
+  border-radius: 8px;
+  background: white;
+  color: #374151;
+  font-weight: 500;
+  cursor: pointer;
+  transition: all 0.2s ease;
+}
+
+.purchase-management .cancel-btn:hover {
+  background: #f9fafb;
+  border-color: #9ca3af;
+}
+
+.purchase-management .submit-btn {
+  padding: 10px 24px;
+  border: none;
+  border-radius: 8px;
+  background: linear-gradient(135deg, #10b981, #059669);
+  color: white;
+  font-weight: 500;
+  cursor: pointer;
+  transition: all 0.2s ease;
+}
+
+.purchase-management .submit-btn:hover {
+  background: linear-gradient(135deg, #059669, #047857);
+}
+
+/* Responsive */
+@media (max-width: 900px) {
+  .purchase-management .item-row {
+    grid-template-columns: 1fr 1fr;
+    gap: 12px;
+  }
+
+  .purchase-management .item-field.product {
+    grid-column: 1 / -1;
+  }
+
+  .purchase-management .form-row {
+    grid-template-columns: 1fr;
+  }
+}
+
+@media (max-width: 768px) {
+  .purchase-management {
+    padding: 16px;
+  }
+
+  .purchase-management .filters-bar {
+    flex-direction: column;
+    gap: 12px;
+  }
+
+  .purchase-management .actions-bar {
+    flex-direction: column;
+    gap: 16px;
+    align-items: flex-start;
+  }
+
+  .purchase-management .data-table {
+    overflow-x: auto;
+  }
+
+  .purchase-management .data-table table {
+    min-width: 800px;
+  }
+}

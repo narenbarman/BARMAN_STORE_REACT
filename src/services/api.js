@@ -1,0 +1,537 @@
+// Get the current API URL based on the environment
+const getApiUrl = () => {
+  const hostname = window.location.hostname;
+  return `http://${hostname}:5000`;
+};
+
+// Get auth token from localStorage
+const getAuthToken = () => {
+  try {
+    const user = JSON.parse(localStorage.getItem('user') || '{}');
+    return user.token || null;
+  } catch (e) {
+    return null;
+  }
+};
+
+// Generic fetch wrapper
+export const apiFetch = async (endpoint, options = {}) => {
+  const baseUrl = getApiUrl();
+  const url = `${baseUrl}${endpoint}`;
+  
+  const token = getAuthToken();
+  
+  const config = {
+    headers: {
+      'Content-Type': 'application/json',
+      ...(token && { 'Authorization': `Bearer ${token}` }),
+      ...options.headers,
+    },
+    ...options,
+  };
+
+  if (config.body && typeof config.body === 'object') {
+    config.body = JSON.stringify(config.body);
+  }
+
+  const response = await fetch(url, config);
+  
+  if (!response.ok) {
+    const error = await response.json().catch(() => ({ error: 'Request failed' }));
+    throw new Error(error.error || error.message || 'Request failed');
+  }
+  
+  return response.json();
+};
+
+// Auth API
+export const authApi = {
+  login: (email, password) => 
+    apiFetch('/api/auth/login', {
+      method: 'POST',
+      body: { email, password },
+    }),
+  
+  loginWithPhone: (phone, password) =>
+    apiFetch('/api/auth/login', {
+      method: 'POST',
+      body: { phone, password },
+    }),
+  
+  register: (email, password, name, phone, address) => 
+    apiFetch('/api/auth/register', {
+      method: 'POST',
+      body: { email, password, name, phone, address },
+    }),
+  
+  changePassword: (email, phone, currentPassword, newPassword) =>
+    apiFetch('/api/auth/change-password', {
+      method: 'POST',
+      body: { email, phone, currentPassword, newPassword },
+    }),
+
+  requestPasswordReset: (email, phone, reason) =>
+    apiFetch('/api/auth/request-password-reset', {
+      method: 'POST',
+      body: { email, phone, reason },
+    }),
+};
+
+// Products API
+export const productsApi = {
+  getAll: (params = {}) => {
+    const query = new URLSearchParams(params).toString();
+    return apiFetch(`/api/products${query ? `?${query}` : ''}`);
+  },
+  getById: (id) => apiFetch(`/api/products/${id}`),
+  getByCategory: (category) => apiFetch(`/api/products/category/${category}`),
+  create: (product) => 
+    apiFetch('/api/products', {
+      method: 'POST',
+      body: product,
+    }),
+  update: (id, product) => 
+    apiFetch(`/api/products/${id}`, {
+      method: 'PUT',
+      body: product,
+    }),
+  delete: (id) => 
+    apiFetch(`/api/products/${id}`, {
+      method: 'DELETE',
+    }),
+};
+
+// ============================================
+// CUSTOMERS API (Profile & Validation)
+// ============================================
+
+export const customersApi = {
+  // Get customer profile for order
+  getProfile: (customerId) => 
+    apiFetch(`/api/customers/${customerId}/profile`),
+  
+  // Search customers (for admin)
+  search: (query, limit = 20) => 
+    apiFetch(`/api/customers/search?q=${encodeURIComponent(query)}&limit=${limit}`),
+  
+  // Get all customers (for admin dropdown)
+  getAll: () => apiFetch('/api/customers'),
+  
+  // Validate customer before order
+  validateForOrder: (userId) =>
+    apiFetch('/api/orders/validate-customer', {
+      method: 'POST',
+      body: { user_id: userId },
+    }),
+};
+
+// ============================================
+// ORDERS API - Complete Order Processing
+// ============================================
+
+export const ordersApi = {
+  // Get all orders (admin)
+  getAll: () => apiFetch('/api/orders'),
+  
+  // Get order by ID
+  getById: (id) => apiFetch(`/api/orders/${id}`),
+  
+  // Get order by order number
+  getByOrderNumber: (orderNumber) => apiFetch(`/api/orders/number/${orderNumber}`),
+  
+  // Get orders by user
+  getByUser: (userId) => apiFetch(`/api/users/${userId}/orders`),
+  
+  // Create order (legacy)
+  create: (orderData) => 
+    apiFetch('/api/orders', {
+      method: 'POST',
+      body: orderData,
+    }),
+  
+  // Create validated order (new - with customer validation)
+  createValidated: (orderData) => 
+    apiFetch('/api/orders/create-validated', {
+      method: 'POST',
+      body: orderData,
+    }),
+  
+  // Verify inventory availability
+  verifyInventory: (items) => 
+    apiFetch('/api/orders/verify-inventory', {
+      method: 'POST',
+      body: { items },
+    }),
+  
+  // Verify shipping address
+  verifyAddress: (address) => 
+    apiFetch('/api/orders/verify-address', {
+      method: 'POST',
+      body: { address },
+    }),
+  
+  // Get shipping options
+  getShippingOptions: (weight, destination) => 
+    apiFetch('/api/orders/shipping-options', {
+      method: 'POST',
+      body: { weight, destination },
+    }),
+  
+  // Update order status
+  updateStatus: (id, status, description, createdBy) => 
+    apiFetch(`/api/orders/${id}/status`, {
+      method: 'PUT',
+      body: { status, description, created_by: createdBy },
+    }),
+  
+  // Cancel order
+  cancel: (id, reason, userId) => 
+    apiFetch(`/api/orders/${id}/cancel`, {
+      method: 'POST',
+      body: { reason, user_id: userId },
+    }),
+  
+  // Modify order
+  modify: (id, data) => 
+    apiFetch(`/api/orders/${id}/modify`, {
+      method: 'PUT',
+      body: data,
+    }),
+  
+  // Generate shipping label
+  generateLabel: (id, carrier, serviceType, weight) => 
+    apiFetch(`/api/orders/${id}/generate-label`, {
+      method: 'POST',
+      body: { carrier, service_type: serviceType, weight },
+    }),
+  
+  // Get order notifications
+  getNotifications: (orderId) => 
+    apiFetch(`/api/orders/${orderId}/notifications`),
+  
+  // Resend notification
+  resendNotification: (notificationId) => 
+    apiFetch(`/api/notifications/${notificationId}/resend`, {
+      method: 'POST',
+    }),
+};
+
+// ============================================
+// CART API
+// ============================================
+
+export const cartApi = {
+  get: (sessionId) => apiFetch(`/api/cart/${sessionId}`),
+  add: (sessionId, productId, quantity) => 
+    apiFetch('/api/cart', {
+      method: 'POST',
+      body: { session_id: sessionId, product_id: productId, quantity },
+    }),
+  update: (id, quantity) => 
+    apiFetch(`/api/cart/${id}`, {
+      method: 'PUT',
+      body: { quantity },
+    }),
+  remove: (id) => 
+    apiFetch(`/api/cart/${id}`, {
+      method: 'DELETE',
+    }),
+  clear: (sessionId) => 
+    apiFetch(`/api/cart/${sessionId}/clear`, {
+      method: 'DELETE',
+    }),
+};
+
+// ============================================
+// USERS API
+// ============================================
+
+export const usersApi = {
+  getAll: () => apiFetch('/api/users'),
+  getById: (id) => apiFetch(`/api/users/${id}`),
+  update: (id, user) => 
+    apiFetch(`/api/users/${id}`, {
+      method: 'PUT',
+      body: user,
+    }),
+  delete: (id) => 
+    apiFetch(`/api/users/${id}`, {
+      method: 'DELETE',
+    }),
+  create: (userData) =>
+    apiFetch('/api/users', {
+      method: 'POST',
+      body: userData,
+    }),
+};
+
+// ============================================
+// CREDIT HISTORY API
+// ============================================
+
+export const creditApi = {
+  getHistory: (userId) => apiFetch(`/api/users/${userId}/credit-history`),
+  getBalance: (userId) => apiFetch(`/api/users/${userId}/credit-balance`),
+  addTransaction: (userId, data) =>
+    apiFetch(`/api/users/${userId}/credit`, {
+      method: 'POST',
+      body: data,
+    }),
+  checkLimit: (customerId, amount) =>
+    apiFetch('/api/credit/check-limit', {
+      method: 'POST',
+      body: { customer_id: customerId, additional_amount: amount },
+    }),
+  getAgingReport: () => apiFetch('/api/credit/aging'),
+};
+
+// ============================================
+// CATEGORIES API
+// ============================================
+
+export const categoriesApi = {
+  getAll: () => apiFetch('/api/categories'),
+  getById: (id) => apiFetch(`/api/categories/${id}`),
+  create: (category) => 
+    apiFetch('/api/categories', {
+      method: 'POST',
+      body: category,
+    }),
+  update: (id, category) => 
+    apiFetch(`/api/categories/${id}`, {
+      method: 'PUT',
+      body: category,
+    }),
+  delete: (id) => 
+    apiFetch(`/api/categories/${id}`, {
+      method: 'DELETE',
+    }),
+};
+
+// ============================================
+// STATS API
+// ============================================
+
+export const statsApi = {
+  orders: () => apiFetch('/api/stats/orders'),
+  products: () => apiFetch('/api/stats/products'),
+};
+
+export const offersApi = {
+  getAll: () => apiFetch('/api/offers'),
+  create: (offer) =>
+    apiFetch('/api/offers', {
+      method: 'POST',
+      body: offer,
+    }),
+  update: (id, offer) =>
+    apiFetch(`/api/offers/${id}`, {
+      method: 'PUT',
+      body: offer,
+    }),
+  delete: (id) =>
+    apiFetch(`/api/offers/${id}`, {
+      method: 'DELETE',
+    }),
+};
+
+export const adminApi = {
+  getPasswordResetRequests: () => apiFetch('/api/admin/password-reset-requests'),
+  updatePasswordResetRequest: (id, payload) =>
+    apiFetch(`/api/admin/password-reset-requests/${id}`, {
+      method: 'PUT',
+      body: payload,
+    }),
+};
+
+// ============================================
+// BILLING API - Bill Generation System
+// ============================================
+
+export const billingApi = {
+  // Create a new bill
+  createBill: (billData) =>
+    apiFetch('/api/bills/create', {
+      method: 'POST',
+      body: billData,
+    }),
+  
+  // Get all bills
+  getAll: (params = {}) => {
+    const query = new URLSearchParams(params).toString();
+    return apiFetch(`/api/bills${query ? '?' + query : ''}`);
+  },
+  
+  // Get bill by ID or number
+  getById: (identifier) => apiFetch(`/api/bills/${identifier}`),
+  
+  // Update bill payment
+  updatePayment: (id, paymentData) =>
+    apiFetch(`/api/bills/${id}/payment`, {
+      method: 'PUT',
+      body: paymentData,
+    }),
+  
+  // Search customers for billing
+  searchCustomers: (query) =>
+    apiFetch(`/api/billing/customers/search?q=${encodeURIComponent(query)}`),
+  
+  // Search products for billing
+  searchProducts: (query, category) => {
+    const params = new URLSearchParams();
+    if (query) params.append('q', query);
+    if (category) params.append('category', category);
+    return apiFetch(`/api/billing/products/search?${params.toString()}`);
+  },
+  
+  // Get billing statistics
+  getStats: () => apiFetch('/api/bills/stats/summary'),
+  
+  // Verify stock before checkout
+  verifyStock: (items) =>
+    apiFetch('/api/stock/verify', {
+      method: 'POST',
+      body: { items },
+    }),
+};
+
+// ============================================
+// DISTRIBUTORS API
+// ============================================
+
+export const distributorsApi = {
+  getAll: () => apiFetch('/api/distributors'),
+  getById: (id) => apiFetch(`/api/distributors/${id}`),
+  create: (distributor) =>
+    apiFetch('/api/distributors', {
+      method: 'POST',
+      body: distributor,
+    }),
+  update: (id, distributor) =>
+    apiFetch(`/api/distributors/${id}`, {
+      method: 'PUT',
+      body: distributor,
+    }),
+  delete: (id) =>
+    apiFetch(`/api/distributors/${id}`, {
+      method: 'DELETE',
+    }),
+};
+
+// ============================================
+// PURCHASE ORDERS API
+// ============================================
+
+export const purchaseOrdersApi = {
+  getAll: (params = {}) => {
+    const query = new URLSearchParams(params).toString();
+    return apiFetch(`/api/purchase-orders${query ? '?' + query : ''}`);
+  },
+  getById: (id) => apiFetch(`/api/purchase-orders/${id}`),
+  create: (orderData) =>
+    apiFetch('/api/purchase-orders', {
+      method: 'POST',
+      body: orderData,
+    }),
+  update: (id, orderData) =>
+    apiFetch(`/api/purchase-orders/${id}`, {
+      method: 'PUT',
+      body: orderData,
+    }),
+  updateStatus: (id, status) =>
+    apiFetch(`/api/purchase-orders/${id}/status`, {
+      method: 'PUT',
+      body: { status },
+    }),
+  delete: (id) =>
+    apiFetch(`/api/purchase-orders/${id}`, {
+      method: 'DELETE',
+    }),
+  receive: (id, receiveData) =>
+    apiFetch(`/api/purchase-orders/${id}/receive`, {
+      method: 'POST',
+      body: receiveData,
+    }),
+};
+
+// ============================================
+// PURCHASE RETURNS API
+// ============================================
+
+export const purchaseReturnsApi = {
+  getAll: (params = {}) => {
+    const query = new URLSearchParams(params).toString();
+    return apiFetch(`/api/purchase-returns${query ? '?' + query : ''}`);
+  },
+  getById: (id) => apiFetch(`/api/purchase-returns/${id}`),
+  create: (returnData) =>
+    apiFetch('/api/purchase-returns', {
+      method: 'POST',
+      body: returnData,
+    }),
+  update: (id, returnData) =>
+    apiFetch(`/api/purchase-returns/${id}`, {
+      method: 'PUT',
+      body: returnData,
+    }),
+  delete: (id) =>
+    apiFetch(`/api/purchase-returns/${id}`, {
+      method: 'DELETE',
+    }),
+};
+
+// ============================================
+// STOCK LEDGER API
+// ============================================
+
+export const stockLedgerApi = {
+  getByProduct: (productId) => apiFetch(`/api/stock-ledger/product/${productId}`),
+  getByBatch: (batchNumber) => apiFetch(`/api/stock-ledger/batch/${batchNumber}`),
+  getAll: (params = {}) => {
+    const query = new URLSearchParams(params).toString();
+    return apiFetch(`/api/stock-ledger${query ? '?' + query : ''}`);
+  },
+  getSummary: () => apiFetch('/api/stock-ledger/summary'),
+};
+
+// ============================================
+// PRODUCT VERSIONS API
+// ============================================
+
+export const productVersionsApi = {
+  getByInternalId: (internalId) => apiFetch(`/api/product-versions/${internalId}`),
+  getBySku: (sku) => apiFetch(`/api/product-versions/sku/${encodeURIComponent(sku)}`),
+};
+
+// ============================================
+// UOM CONVERSIONS API
+// ============================================
+
+export const uomConversionsApi = {
+  getByProduct: (productId) => apiFetch(`/api/uom-conversions/${productId}`),
+  create: (conversionData) =>
+    apiFetch('/api/uom-conversions', {
+      method: 'POST',
+      body: conversionData,
+    }),
+  delete: (id) =>
+    apiFetch(`/api/uom-conversions/${id}`, {
+      method: 'DELETE',
+    }),
+};
+
+// ============================================
+// BATCH STOCK API
+// ============================================
+
+export const batchStockApi = {
+  getAll: (params = {}) => {
+    const query = new URLSearchParams(params).toString();
+    return apiFetch(`/api/batch-stock${query ? '?' + query : ''}`);
+  },
+  create: (batchData) =>
+    apiFetch('/api/batch-stock', {
+      method: 'POST',
+      body: batchData,
+    }),
+};

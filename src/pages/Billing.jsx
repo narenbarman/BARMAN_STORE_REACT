@@ -1,0 +1,877 @@
+import { useState, useEffect, useCallback, useRef } from 'react';
+import { useNavigate } from 'react-router-dom';
+import { 
+  Plus, Trash2, Calculator, Save, 
+  User, Phone, Package, DollarSign,
+  AlertCircle, CheckCircle, X, FileText, RefreshCw,
+  ChevronDown
+} from 'lucide-react';
+import { billingApi, productsApi } from '../services/api';
+import './Billing.css';
+
+const formatCurrency = (amount) => {
+  return new Intl.NumberFormat('en-IN', {
+    style: 'currency',
+    currency: 'INR',
+    minimumFractionDigits: 2,
+    maximumFractionDigits: 2
+  }).format(amount);
+};
+
+// Phone validation
+const validatePhone = (phone) => {
+  if (!phone) return { valid: false, message: 'Phone number is required' };
+  const digits = phone.toString().replace(/\D/g, '');
+  if (digits.length < 10) return { valid: false, message: 'Phone number must be at least 10 digits' };
+  if (digits.length > 15) return { valid: false, message: 'Phone number is too long' };
+  return { valid: true, phone: digits };
+};
+
+function Billing() {
+  const navigate = useNavigate();
+  const [loading, setLoading] = useState(false);
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState(null);
+  const [success, setSuccess] = useState(null);
+  
+  // Stats
+  const [stats, setStats] = useState({
+    todayBills: 0,
+    todayRevenue: 0,
+    pendingBalance: 0
+  });
+  
+  // Customer combobox state
+  const [customerQuery, setCustomerQuery] = useState('');
+  const [customerResults, setCustomerResults] = useState([]);
+  const [showCustomerDropdown, setShowCustomerDropdown] = useState(false);
+  const [selectedCustomer, setSelectedCustomer] = useState(null);
+  const [customerMode, setCustomerMode] = useState('selecting'); // 'selecting' | 'new'
+  const [newCustomer, setNewCustomer] = useState({
+    name: '',
+    phone: '',
+    email: '',
+    address: ''
+  });
+  const customerDropdownRef = useRef(null);
+  
+  // Product combobox state
+  const [productQuery, setProductQuery] = useState('');
+  const [productResults, setProductResults] = useState([]);
+  const [showProductDropdown, setShowProductDropdown] = useState(false);
+  const [productMode, setProductMode] = useState('selecting'); // 'selecting' | 'new'
+  const [newProduct, setNewProduct] = useState({
+    name: '',
+    mrp: '',
+    quantity: 1,
+    unit: 'pcs',
+    discount_percent: 0,
+    category: 'General'
+  });
+  const productDropdownRef = useRef(null);
+  
+  // Bill items
+  const [billItems, setBillItems] = useState([]);
+  
+  // Payment
+  const [paidAmount, setPaidAmount] = useState(0);
+  const [discountPercent, setDiscountPercent] = useState(0);
+  const [notes, setNotes] = useState('');
+  
+  // Current user
+  const [currentUser, setCurrentUser] = useState(null);
+  
+  // Close dropdowns when clicking outside
+  useEffect(() => {
+    const handleClickOutside = (event) => {
+      if (customerDropdownRef.current && !customerDropdownRef.current.contains(event.target)) {
+        setShowCustomerDropdown(false);
+      }
+      if (productDropdownRef.current && !productDropdownRef.current.contains(event.target)) {
+        setShowProductDropdown(false);
+      }
+    };
+    
+    document.addEventListener('mousedown', handleClickOutside);
+    return () => document.removeEventListener('mousedown', handleClickOutside);
+  }, []);
+  
+  useEffect(() => {
+    const savedUser = localStorage.getItem('user');
+    if (savedUser) {
+      setCurrentUser(JSON.parse(savedUser));
+    }
+    loadStats();
+  }, []);
+  
+  const loadStats = async () => {
+    try {
+      const data = await billingApi.getStats();
+      setStats({
+        todayBills: data.todayBills || 0,
+        todayRevenue: data.todayRevenue || 0,
+        pendingBalance: data.pendingBalance || 0
+      });
+    } catch (err) {
+      console.error('Error loading stats:', err);
+    }
+  };
+  
+  // ============ CUSTOMER COMBOBOX ============
+  
+  useEffect(() => {
+    if (customerQuery.length >= 2 && customerMode === 'selecting') {
+      searchCustomers();
+    } else if (customerQuery.length === 0 && selectedCustomer) {
+      // Clear selection if input is cleared
+      clearCustomerSelection();
+    } else {
+      setCustomerResults([]);
+      setShowCustomerDropdown(false);
+    }
+  }, [customerQuery]);
+  
+  const searchCustomers = async () => {
+    try {
+      const results = await billingApi.searchCustomers(customerQuery);
+      setCustomerResults(results);
+      setShowCustomerDropdown(true);
+    } catch (err) {
+      console.error('Error searching customers:', err);
+    }
+  };
+  
+  const selectCustomer = (customer) => {
+    setSelectedCustomer(customer);
+    setCustomerQuery(customer.name + ' - ' + customer.phone);
+    setShowCustomerDropdown(false);
+    setCustomerMode('selecting');
+    // Clear new customer form
+    setNewCustomer({ name: '', phone: '', email: '', address: '' });
+  };
+  
+  const clearCustomerSelection = () => {
+    setSelectedCustomer(null);
+    setCustomerQuery('');
+    setCustomerMode('new');
+  };
+  
+  const handleCustomerInputChange = (e) => {
+    const value = e.target.value;
+    setCustomerQuery(value);
+    
+    // If user types something that doesn't match a selection, switch to new mode
+    if (selectedCustomer && !value.includes(selectedCustomer.phone)) {
+      setSelectedCustomer(null);
+      setCustomerMode('new');
+    }
+    
+    // Check if we should switch to new mode based on input
+    if (value.length >= 2) {
+      const matchingCustomer = customerResults.find(c => 
+        c.name.toLowerCase().includes(value.toLowerCase()) ||
+        c.phone.includes(value)
+      );
+      if (!matchingCustomer) {
+        setCustomerMode('new');
+      }
+    }
+  };
+  
+  const handleCustomerInputFocus = () => {
+    if (customerQuery.length >= 2) {
+      searchCustomers();
+    }
+  };
+  
+  // ============ PRODUCT COMBOBOX ============
+  
+  useEffect(() => {
+    if (productQuery.length >= 2 && productMode === 'selecting') {
+      searchProducts();
+    } else if (productQuery.length === 0) {
+      setProductResults([]);
+      setShowProductDropdown(false);
+    }
+  }, [productQuery]);
+  
+  const searchProducts = async () => {
+    try {
+      const results = await billingApi.searchProducts(productQuery);
+      setProductResults(results);
+      setShowProductDropdown(true);
+    } catch (err) {
+      console.error('Error searching products:', err);
+    }
+  };
+  
+  const selectProduct = (product) => {
+    const existingIndex = billItems.findIndex(item => item.product_id === product.id);
+    
+    if (existingIndex >= 0) {
+      const updated = [...billItems];
+      updated[existingIndex].quantity += 1;
+      setBillItems(updated);
+    } else {
+      setBillItems([...billItems, {
+        product_id: product.id,
+        name: product.name,
+        mrp: product.price,
+        quantity: 1,
+        unit: 'pcs',
+        discount_percent: 0,
+        category: product.category || 'General'
+      }]);
+    }
+    
+    setProductQuery('');
+    setShowProductDropdown(false);
+    setProductMode('selecting');
+    setNewProduct({
+      name: '',
+      mrp: '',
+      quantity: 1,
+      unit: 'pcs',
+      discount_percent: 0,
+      category: 'General'
+    });
+  };
+  
+  const addNewProductToBill = () => {
+    if (!newProduct.name || !newProduct.mrp) {
+      setError('Please enter item name and MRP');
+      return;
+    }
+    
+    setBillItems([...billItems, {
+      product_id: null,
+      name: newProduct.name,
+      mrp: parseFloat(newProduct.mrp),
+      quantity: parseFloat(newProduct.quantity) || 1,
+      unit: newProduct.unit,
+      discount_percent: parseFloat(newProduct.discount_percent) || 0,
+      isNewItem: true,
+      category: newProduct.category
+    }]);
+    
+    setNewProduct({
+      name: '',
+      mrp: '',
+      quantity: 1,
+      unit: 'pcs',
+      discount_percent: 0,
+      category: 'General'
+    });
+    setProductQuery('');
+  };
+  
+  const handleProductInputChange = (e) => {
+    const value = e.target.value;
+    setProductQuery(value);
+    
+    if (value.length >= 2) {
+      const matchingProduct = productResults.find(p => 
+        p.name.toLowerCase().includes(value.toLowerCase())
+      );
+      if (!matchingProduct) {
+        setProductMode('new');
+      }
+    }
+  };
+  
+  const handleProductInputFocus = () => {
+    if (productQuery.length >= 2) {
+      searchProducts();
+    }
+  };
+  
+  // ============ BILL ITEM MANAGEMENT ============
+  
+  const updateBillItem = (index, field, value) => {
+    const updated = [...billItems];
+    updated[index][field] = value;
+    setBillItems(updated);
+  };
+  
+  const removeBillItem = (index) => {
+    setBillItems(billItems.filter((_, i) => i !== index));
+  };
+  
+  // ============ CALCULATIONS ============
+  
+  const calculateTotals = useCallback(() => {
+    let subtotal = 0;
+    
+    billItems.forEach(item => {
+      const mrp = parseFloat(item.mrp) || 0;
+      const quantity = parseFloat(item.quantity) || 0;
+      const discountPercent = parseFloat(item.discount_percent) || 0;
+      const discountAmount = (mrp * quantity * discountPercent) / 100;
+      subtotal += (mrp * quantity) - discountAmount;
+    });
+    
+    const discountAmount = (subtotal * discountPercent) / 100;
+    const totalAmount = subtotal - discountAmount;
+    const balanceAmount = totalAmount - (parseFloat(paidAmount) || 0);
+    
+    return {
+      subtotal,
+      discountAmount,
+      totalAmount,
+      balanceAmount
+    };
+  }, [billItems, discountPercent, paidAmount]);
+  
+  const totals = calculateTotals();
+  
+  // ============ FORM SUBMISSION ============
+  
+  const handleSubmit = async (e) => {
+    e.preventDefault();
+    setError(null);
+    setSaving(true);
+    
+    try {
+      let customerData;
+      
+      if (selectedCustomer) {
+        // Using existing customer
+        customerData = {
+          name: selectedCustomer.name,
+          phone: selectedCustomer.phone,
+          email: selectedCustomer.email || null,
+          address: selectedCustomer.address || null
+        };
+      } else {
+        // Creating new customer
+        const phoneValidation = validatePhone(newCustomer.phone);
+        if (!phoneValidation.valid) {
+          throw new Error(phoneValidation.message);
+        }
+        if (!newCustomer.name) {
+          throw new Error('Customer name is required');
+        }
+        customerData = {
+          name: newCustomer.name,
+          phone: phoneValidation.phone,
+          email: newCustomer.email || null,
+          address: newCustomer.address || null
+        };
+      }
+      
+      if (billItems.length === 0) {
+        throw new Error('Please add at least one item to the bill');
+      }
+      
+      const items = billItems.map(item => ({
+        name: item.name,
+        mrp: parseFloat(item.mrp),
+        quantity: parseFloat(item.quantity),
+        unit: item.unit,
+        discount_percent: parseFloat(item.discount_percent) || 0,
+        category: item.category || 'General'
+      }));
+      
+      const result = await billingApi.createBill({
+        customer: customerData,
+        items,
+        paid_amount: parseFloat(paidAmount) || 0,
+        discount_percent: parseFloat(discountPercent) || 0,
+        notes,
+        created_by: currentUser?.id
+      });
+      
+      setSuccess(`Bill ${result.bill.bill_number} created successfully!`);
+      setTimeout(() => {
+        navigate(`/billing/${result.bill.bill_number}`);
+      }, 2000);
+      
+      // Reset form
+      setBillItems([]);
+      setSelectedCustomer(null);
+      setCustomerQuery('');
+      setNewCustomer({ name: '', phone: '', email: '', address: '' });
+      setPaidAmount(0);
+      setDiscountPercent(0);
+      setNotes('');
+      loadStats();
+      
+    } catch (err) {
+      setError(err.message);
+    } finally {
+      setSaving(false);
+    }
+  };
+  
+  if (!currentUser || currentUser.role !== 'admin') {
+    return (
+      <div className="billing-page">
+        <div className="access-denied">
+          <AlertCircle size={48} />
+          <h2>Access Denied</h2>
+          <p>Only administrators can access billing.</p>
+        </div>
+      </div>
+    );
+  }
+  
+  return (
+    <div className="billing-page">
+      <div className="billing-header fade-in-up">
+        <h1>💰 Bill Generation</h1>
+        <p>Create bills and manage customer transactions</p>
+        
+        <div className="stats-row">
+          <div className="stat-card">
+            <FileText size={24} />
+            <div className="stat-info">
+              <span className="stat-value">{stats.todayBills}</span>
+              <span className="stat-label">Today's Bills</span>
+            </div>
+          </div>
+          <div className="stat-card">
+            <DollarSign size={24} />
+            <div className="stat-info">
+              <span className="stat-value">{formatCurrency(stats.todayRevenue)}</span>
+              <span className="stat-label">Today's Revenue</span>
+            </div>
+          </div>
+          <div className="stat-card warning">
+            <AlertCircle size={24} />
+            <div className="stat-info">
+              <span className="stat-value">{formatCurrency(stats.pendingBalance)}</span>
+              <span className="stat-label">Pending Balance</span>
+            </div>
+          </div>
+        </div>
+      </div>
+      
+      {error && (
+        <div className="alert error fade-in-up">
+          <AlertCircle size={20} />
+          <span>{error}</span>
+          <button onClick={() => setError(null)}><X size={16} /></button>
+        </div>
+      )}
+      
+      {success && (
+        <div className="alert success fade-in-up">
+          <CheckCircle size={20} />
+          <span>{success}</span>
+          <button onClick={() => setSuccess(null)}><X size={16} /></button>
+        </div>
+      )}
+      
+      <form onSubmit={handleSubmit} className="billing-form">
+        <div className="billing-content">
+          {/* Customer Section - Unified Combobox */}
+          <div className="form-section fade-in-up">
+            <h2><User size={20} /> Customer Information</h2>
+            
+            <div className="combobox-container" ref={customerDropdownRef}>
+              <label className="combobox-label">
+                {selectedCustomer ? 'Selected Customer' : 'Customer Name *'}
+              </label>
+              
+              <div className={`combobox-input-wrapper ${selectedCustomer ? 'has-selection' : ''}`}>
+                <input
+                  type="text"
+                  className="combobox-input"
+                  placeholder="Search or enter customer name..."
+                  value={customerQuery}
+                  onChange={handleCustomerInputChange}
+                  onFocus={handleCustomerInputFocus}
+                />
+                {selectedCustomer && (
+                  <button
+                    type="button"
+                    className="clear-selection-btn"
+                    onClick={clearCustomerSelection}
+                    title="Clear selection"
+                  >
+                    <X size={16} />
+                  </button>
+                )}
+                <ChevronDown size={18} className="combobox-arrow" />
+              </div>
+              
+              {showCustomerDropdown && customerResults.length > 0 && (
+                <div className="combobox-dropdown">
+                  {customerResults.map(customer => (
+                    <div
+                      key={customer.id}
+                      className="combobox-option"
+                      onClick={() => selectCustomer(customer)}
+                    >
+                      <div className="combobox-option-content">
+                        <span className="combobox-option-name">{customer.name}</span>
+                        <span className="combobox-option-detail">{customer.phone}</span>
+                      </div>
+                      {customer.pending_balance > 0 && (
+                        <span className="pending-badge">
+                          Balance: {formatCurrency(customer.pending_balance)}
+                        </span>
+                      )}
+                    </div>
+                  ))}
+                  <div 
+                    className="combobox-option new-option"
+                    onClick={() => {
+                      setCustomerMode('new');
+                      setShowCustomerDropdown(false);
+                      setNewCustomer({ ...newCustomer, name: customerQuery });
+                    }}
+                  >
+                    <Plus size={16} />
+                    <span>Create new customer: <strong>{customerQuery}</strong></span>
+                  </div>
+                </div>
+              )}
+            </div>
+            
+            {/* New Customer Fields - Show when creating new */}
+            {(!selectedCustomer) && (
+              <div className="new-entry-fields">
+                <div className="form-row">
+                  <div className="form-group">
+                    <label>Phone Number *</label>
+                    <input
+                      type="tel"
+                      value={newCustomer.phone}
+                      onChange={(e) => setNewCustomer({...newCustomer, phone: e.target.value})}
+                      placeholder="Enter phone number"
+                    />
+                  </div>
+                  <div className="form-group">
+                    <label>Email (Optional)</label>
+                    <input
+                      type="email"
+                      value={newCustomer.email}
+                      onChange={(e) => setNewCustomer({...newCustomer, email: e.target.value})}
+                      placeholder="Enter email"
+                    />
+                  </div>
+                </div>
+                <div className="form-group">
+                  <label>Address (Optional)</label>
+                  <input
+                    type="text"
+                    value={newCustomer.address}
+                    onChange={(e) => setNewCustomer({...newCustomer, address: e.target.value})}
+                    placeholder="Enter address"
+                  />
+                </div>
+              </div>
+            )}
+          </div>
+          
+          {/* Items Section - Unified Combobox */}
+          <div className="form-section fade-in-up">
+            <h2><Package size={20} /> Bill Items</h2>
+            
+            <div className="combobox-container" ref={productDropdownRef}>
+              <label className="combobox-label">Add Product</label>
+              
+              <div className="combobox-input-wrapper">
+                <input
+                  type="text"
+                  className="combobox-input"
+                  placeholder="Search or enter product name..."
+                  value={productQuery}
+                  onChange={handleProductInputChange}
+                  onFocus={handleProductInputFocus}
+                />
+                <ChevronDown size={18} className="combobox-arrow" />
+              </div>
+              
+              {showProductDropdown && productResults.length > 0 && (
+                <div className="combobox-dropdown">
+                  {productResults.map(product => (
+                    <div
+                      key={product.id}
+                      className="combobox-option"
+                      onClick={() => selectProduct(product)}
+                    >
+                      <div className="combobox-option-content">
+                        <span className="combobox-option-name">{product.name}</span>
+                        <span className="combobox-option-price">{formatCurrency(product.price)}</span>
+                      </div>
+                      {product.stock !== undefined && product.stock < 10 && (
+                        <span className="stock-warning">Low stock: {product.stock}</span>
+                      )}
+                    </div>
+                  ))}
+                  <div 
+                    className="combobox-option new-option"
+                    onClick={() => {
+                      setProductMode('new');
+                      setShowProductDropdown(false);
+                      setNewProduct({ ...newProduct, name: productQuery });
+                    }}
+                  >
+                    <Plus size={16} />
+                    <span>Create new product: <strong>{productQuery}</strong></span>
+                  </div>
+                </div>
+              )}
+            </div>
+            
+            {/* New Product Fields - Show when creating new */}
+            <div className="new-entry-fields">
+              <div className="form-row">
+                <div className="form-group">
+                  <label>MRP *</label>
+                  <input
+                    type="number"
+                    step="0.01"
+                    min="0"
+                    value={newProduct.mrp}
+                    onChange={(e) => setNewProduct({...newProduct, mrp: e.target.value})}
+                    placeholder="0.00"
+                  />
+                </div>
+                <div className="form-group">
+                  <label>Quantity</label>
+                  <input
+                    type="number"
+                    step="0.01"
+                    min="0"
+                    value={newProduct.quantity}
+                    onChange={(e) => setNewProduct({...newProduct, quantity: e.target.value})}
+                  />
+                </div>
+                <div className="form-group">
+                  <label>Unit</label>
+                  <select
+                    value={newProduct.unit}
+                    onChange={(e) => setNewProduct({...newProduct, unit: e.target.value})}
+                  >
+                    <option value="pcs">Pieces</option>
+                    <option value="kg">Kilograms</option>
+                    <option value="g">Grams</option>
+                    <option value="l">Liters</option>
+                    <option value="ml">Milliliters</option>
+                    <option value="box">Box</option>
+                    <option value="dozen">Dozen</option>
+                  </select>
+                </div>
+                <div className="form-group">
+                  <label>Discount %</label>
+                  <input
+                    type="number"
+                    step="0.01"
+                    min="0"
+                    max="100"
+                    value={newProduct.discount_percent}
+                    onChange={(e) => setNewProduct({...newProduct, discount_percent: e.target.value})}
+                  />
+                </div>
+              </div>
+              <button
+                type="button"
+                className="add-btn"
+                onClick={addNewProductToBill}
+                disabled={!newProduct.name || !newProduct.mrp}
+              >
+                <Plus size={16} /> Add Product
+              </button>
+            </div>
+          </div>
+          
+          {/* Bill Items Table */}
+          {billItems.length > 0 && (
+            <div className="form-section fade-in-up">
+              <h2><FileText size={20} /> Items in Bill ({billItems.length})</h2>
+              
+              <div className="bill-items-table">
+                <table>
+                  <thead>
+                    <tr>
+                      <th>Item</th>
+                      <th>MRP</th>
+                      <th>Qty</th>
+                      <th>Unit</th>
+                      <th>Discount %</th>
+                      <th>Amount</th>
+                      <th></th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {billItems.map((item, index) => (
+                      <tr key={index}>
+                        <td>
+                          <input
+                            type="text"
+                            value={item.name}
+                            onChange={(e) => updateBillItem(index, 'name', e.target.value)}
+                            className="item-name-input"
+                          />
+                        </td>
+                        <td>
+                          <input
+                            type="number"
+                            step="0.01"
+                            min="0"
+                            value={item.mrp}
+                            onChange={(e) => updateBillItem(index, 'mrp', e.target.value)}
+                            className="amount-input"
+                          />
+                        </td>
+                        <td>
+                          <input
+                            type="number"
+                            step="0.01"
+                            min="0"
+                            value={item.quantity}
+                            onChange={(e) => updateBillItem(index, 'quantity', e.target.value)}
+                            className="qty-input"
+                          />
+                        </td>
+                        <td>
+                          <select
+                            value={item.unit}
+                            onChange={(e) => updateBillItem(index, 'unit', e.target.value)}
+                          >
+                            <option value="pcs">Pcs</option>
+                            <option value="kg">Kg</option>
+                            <option value="g">G</option>
+                            <option value="l">L</option>
+                            <option value="ml">Ml</option>
+                            <option value="box">Box</option>
+                            <option value="dozen">Doz</option>
+                          </select>
+                        </td>
+                        <td>
+                          <input
+                            type="number"
+                            step="0.01"
+                            min="0"
+                            max="100"
+                            value={item.discount_percent}
+                            onChange={(e) => updateBillItem(index, 'discount_percent', e.target.value)}
+                            className="discount-input"
+                          />
+                        </td>
+                        <td className="amount-cell">
+                          {formatCurrency(
+                            (parseFloat(item.mrp) || 0) * 
+                            (parseFloat(item.quantity) || 0) * 
+                            (1 - (parseFloat(item.discount_percent) || 0) / 100)
+                          )}
+                        </td>
+                        <td>
+                          <button
+                            type="button"
+                            className="remove-btn"
+                            onClick={() => removeBillItem(index)}
+                          >
+                            <Trash2 size={16} />
+                          </button>
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          )}
+          
+          {/* Payment Section */}
+          <div className="form-section fade-in-up">
+            <h2><Calculator size={20} /> Payment Details</h2>
+            
+            <div className="form-row">
+              <div className="form-group">
+                <label>Paid Amount</label>
+                <input
+                  type="number"
+                  step="0.01"
+                  min="0"
+                  value={paidAmount}
+                  onChange={(e) => setPaidAmount(e.target.value)}
+                  placeholder="0.00"
+                />
+              </div>
+              <div className="form-group">
+                <label>Bill Discount %</label>
+                <input
+                  type="number"
+                  step="0.01"
+                  min="0"
+                  max="100"
+                  value={discountPercent}
+                  onChange={(e) => setDiscountPercent(e.target.value)}
+                />
+              </div>
+            </div>
+            
+            <div className="form-group">
+              <label>Notes (Optional)</label>
+              <textarea
+                value={notes}
+                onChange={(e) => setNotes(e.target.value)}
+                placeholder="Add any notes..."
+                rows={3}
+              />
+            </div>
+          </div>
+        </div>
+        
+        {/* Summary Sidebar */}
+        <div className="billing-summary slide-in-left">
+          <h3>Bill Summary</h3>
+          
+          <div className="summary-row">
+            <span>Subtotal</span>
+            <span>{formatCurrency(totals.subtotal)}</span>
+          </div>
+          
+          <div className="summary-row discount">
+            <span>Item Discounts</span>
+            <span>- {formatCurrency(totals.discountAmount)}</span>
+          </div>
+          
+          <div className="summary-row discount">
+            <span>Bill Discount ({discountPercent}%)</span>
+            <span>- {formatCurrency(totals.totalAmount < (totals.subtotal - totals.discountAmount) ? (totals.subtotal - totals.discountAmount - totals.totalAmount) : 0)}</span>
+          </div>
+          
+          <div className="summary-row total">
+            <span>Total Amount</span>
+            <span>{formatCurrency(totals.totalAmount)}</span>
+          </div>
+          
+          <div className="summary-row paid">
+            <span>Paid Amount</span>
+            <span>{formatCurrency(parseFloat(paidAmount) || 0)}</span>
+          </div>
+          
+          <div className={`summary-row balance ${totals.balanceAmount > 0 ? 'pending' : 'paid'}`}>
+            <span>Balance</span>
+            <span>{formatCurrency(totals.balanceAmount)}</span>
+          </div>
+          
+          <button
+            type="submit"
+            className="generate-bill-btn"
+            disabled={saving || billItems.length === 0}
+          >
+            {saving ? (
+              <>
+                <RefreshCw size={20} className="spinning" />
+                Processing...
+              </>
+            ) : (
+              <>
+                <Save size={20} />
+                Generate Bill
+              </>
+            )}
+          </button>
+        </div>
+      </form>
+    </div>
+  );
+}
+
+export default Billing;
