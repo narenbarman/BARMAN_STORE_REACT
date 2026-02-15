@@ -5,6 +5,8 @@ function PasswordResetRequests() {
   const [requests, setRequests] = useState([]);
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(true);
+  const [formInputs, setFormInputs] = useState({});
+  const [processingId, setProcessingId] = useState(null);
 
   const fetchRequests = async () => {
     try {
@@ -23,11 +25,30 @@ function PasswordResetRequests() {
 
   const handleAction = async (id, status) => {
     try {
-      await adminApi.updatePasswordResetRequest(id, { status });
+      setProcessingId(id);
+      setError('');
+      const inputs = formInputs[id] || {};
+      const payload = { status };
+      if (inputs.admin_note) payload.admin_note = inputs.admin_note;
+      if (status === 'approved' && inputs.new_password) payload.new_password = inputs.new_password;
+
+      await adminApi.updatePasswordResetRequest(id, payload);
+      // clear inputs for this id
+      setFormInputs((prev) => {
+        const copy = { ...prev };
+        delete copy[id];
+        return copy;
+      });
       await fetchRequests();
     } catch (e) {
       setError('Failed to update request');
+    } finally {
+      setProcessingId(null);
     }
+  };
+
+  const updateInput = (id, field, value) => {
+    setFormInputs((prev) => ({ ...prev, [id]: { ...(prev[id] || {}), [field]: value } }));
   };
 
   if (loading) return <div className="billing-content"><p>Loading reset requests...</p></div>;
@@ -57,11 +78,43 @@ function PasswordResetRequests() {
                 <td>{r.reason || '-'}</td>
                 <td>{r.status}</td>
                 <td>
-                  {r.status === 'pending' && (
-                    <>
-                      <button className="admin-btn" onClick={() => handleAction(r.id, 'approved')}>Approve</button>
-                      <button className="admin-btn" onClick={() => handleAction(r.id, 'rejected')}>Reject</button>
-                    </>
+                  {r.status === 'pending' ? (
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: '0.5rem' }}>
+                      <input
+                        type="password"
+                        placeholder="Set new password (optional, defaults to '1234')"
+                        value={(formInputs[r.id] && formInputs[r.id].new_password) || ''}
+                        onChange={(e) => updateInput(r.id, 'new_password', e.target.value)}
+                        style={{ padding: '6px 8px', borderRadius: 6, border: '1px solid var(--color-border)' }}
+                        disabled={processingId === r.id}
+                      />
+                      <textarea
+                        placeholder="Admin note (optional)"
+                        value={(formInputs[r.id] && formInputs[r.id].admin_note) || ''}
+                        onChange={(e) => updateInput(r.id, 'admin_note', e.target.value)}
+                        rows={2}
+                        style={{ padding: '6px 8px', borderRadius: 6, border: '1px solid var(--color-border)' }}
+                        disabled={processingId === r.id}
+                      />
+                      <div style={{ display: 'flex', gap: '0.5rem' }}>
+                        <button
+                          className="admin-btn"
+                          onClick={() => handleAction(r.id, 'approved')}
+                          disabled={processingId === r.id}
+                        >
+                          {processingId === r.id ? 'Processing...' : 'Approve'}
+                        </button>
+                        <button
+                          className="admin-btn"
+                          onClick={() => handleAction(r.id, 'rejected')}
+                          disabled={processingId === r.id}
+                        >
+                          Reject
+                        </button>
+                      </div>
+                    </div>
+                  ) : (
+                    <span>{r.status}</span>
                   )}
                 </td>
               </tr>

@@ -38,6 +38,192 @@ const getStatusConfig = (status) => {
   return configs[status] || { icon: Package, color: 'default', label: status };
 };
 
+const statusFilters = ['all', 'pending', 'confirmed', 'processing', 'shipped', 'delivered', 'cancelled'];
+
+const sortOptions = [
+  { value: 'date_desc', label: 'Newest First' },
+  { value: 'date_asc', label: 'Oldest First' },
+  { value: 'amount_desc', label: 'Highest Amount' },
+  { value: 'amount_asc', label: 'Lowest Amount' }
+];
+
+function HistoryHeader() {
+  return (
+    <div className="history-header fade-in-up">
+      <h1>Order History</h1>
+      <p>View and manage all your orders</p>
+    </div>
+  );
+}
+
+function OrderFilters({
+  searchTerm,
+  setSearchTerm,
+  statusFilter,
+  setStatusFilter,
+  sortBy,
+  setSortBy,
+  statusCounts
+}) {
+  return (
+    <div className="filters-section fade-in-up">
+      <div className="search-box">
+        <Search size={20} />
+        <input
+          type="text"
+          placeholder="Search by order number, name, or email..."
+          value={searchTerm}
+          onChange={(e) => setSearchTerm(e.target.value)}
+        />
+      </div>
+
+      <div className="filter-controls">
+        <div className="filter-group">
+          <Filter size={18} />
+          <select value={statusFilter} onChange={(e) => setStatusFilter(e.target.value)}>
+            {statusFilters.map((status) => (
+              <option key={status} value={status}>
+                {status === 'all'
+                  ? `All Orders (${statusCounts.all})`
+                  : `${getStatusConfig(status).label} (${statusCounts[status] || 0})`}
+              </option>
+            ))}
+          </select>
+        </div>
+
+        <div className="sort-group">
+          <select value={sortBy} onChange={(e) => setSortBy(e.target.value)}>
+            {sortOptions.map((option) => (
+              <option key={option.value} value={option.value}>
+                {option.label}
+              </option>
+            ))}
+          </select>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function StatusTabs({ statusCounts, statusFilter, setStatusFilter }) {
+  return (
+    <div className="status-tabs fade-in-up">
+      {Object.entries(statusCounts).map(([status, count]) => (
+        <button
+          key={status}
+          className={`status-tab ${statusFilter === status ? 'active' : ''}`}
+          onClick={() => setStatusFilter(status)}
+        >
+          {status === 'all' ? 'All' : getStatusConfig(status).label}
+          <span className="tab-count">{count}</span>
+        </button>
+      ))}
+    </div>
+  );
+}
+
+function EmptyOrdersState({ hasActiveFilters, onStartShopping }) {
+  return (
+    <div className="empty-state fade-in-up">
+      <Package size={80} />
+      <h2>No Orders Found</h2>
+      <p>{hasActiveFilters ? 'Try adjusting your filters' : 'You haven\'t placed any orders yet'}</p>
+      <button onClick={onStartShopping}>Start Shopping</button>
+    </div>
+  );
+}
+
+function OrderCard({ order, index, onViewOrder, onRetryPayment }) {
+  const statusConfig = getStatusConfig(order.status);
+  const StatusIcon = statusConfig.icon;
+
+  return (
+    <div
+      className="order-card slide-in-up"
+      style={{ animationDelay: `${index * 0.05}s` }}
+    >
+      <div className="order-header">
+        <div className="order-info">
+          <button
+            type="button"
+            className="order-number"
+            onClick={onViewOrder}
+            style={{
+              background: 'none',
+              border: 'none',
+              padding: 0,
+              cursor: 'pointer',
+              textDecoration: 'underline'
+            }}
+          >
+            {order.order_number || `#${order.id}`}
+          </button>
+          <span className="order-date">{formatDate(order.created_at)}</span>
+        </div>
+        <div className="order-status">
+          <StatusIcon size={18} className={`status-icon ${statusConfig.color}`} />
+          <span className={`status-text ${statusConfig.color}`}>{statusConfig.label}</span>
+        </div>
+      </div>
+
+      <div className="order-items-preview">
+        {order.items?.slice(0, 3).map((item, itemIndex) => (
+          <div key={item.id || itemIndex} className="item-preview">
+            <span className="item-name">{item.product_name || item.name}</span>
+            <span className="item-qty">x{item.quantity}</span>
+          </div>
+        ))}
+        {order.items?.length > 3 && (
+          <span className="more-items">+{order.items.length - 3} more</span>
+        )}
+      </div>
+
+      <div className="order-footer">
+        <div className="order-total">
+          <span className="total-label">Total</span>
+          <span className="total-amount">{formatCurrency(order.total_amount)}</span>
+        </div>
+        <div className="order-actions">
+          <button className="view-btn" onClick={onViewOrder}>
+            <Eye size={16} />
+            View Details
+          </button>
+          {order.status === 'pending' && (
+            <button className="retry-btn" onClick={onRetryPayment}>
+              Retry Payment
+            </button>
+          )}
+          {order.fulfillment_status === 'shipped' && order.shipping_tracking_number && (
+            <button className="track-btn">
+              <Truck size={16} />
+              Track
+            </button>
+          )}
+        </div>
+      </div>
+
+      {order.payment_status !== 'paid' && (
+        <div className={`payment-warning ${order.payment_status}`}>
+          {order.payment_status === 'pending' && 'Payment Pending'}
+          {order.payment_status === 'declined' && 'Payment Declined - Action Required'}
+          {order.payment_status === 'refunded' && 'Refund Processed'}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function ExportSection() {
+  return (
+    <div className="export-section fade-in-up">
+      <button className="export-btn">
+        <Download size={18} />
+        Export Order History
+      </button>
+    </div>
+  );
+}
+
 function OrderHistory() {
   const [orders, setOrders] = useState([]);
   const [filteredOrders, setFilteredOrders] = useState([]);
@@ -60,16 +246,13 @@ function OrderHistory() {
     setLoading(true);
     setError(null);
     try {
-      // Get current user
       const user = JSON.parse(localStorage.getItem('user') || '{}');
       if (!user.id) {
-        // Demo mode - load all orders
-        const allOrders = await ordersApi.getAll();
-        setOrders(allOrders);
-      } else {
-        const userOrders = await ordersApi.getByUser(user.id);
-        setOrders(userOrders);
+        navigate('/login');
+        return;
       }
+      const userOrders = await ordersApi.getByUser(user.id);
+      setOrders(userOrders || []);
     } catch (err) {
       setError(err.message || 'Failed to load orders');
     } finally {
@@ -130,8 +313,8 @@ function OrderHistory() {
 
   const statusCounts = getStatusCounts();
 
-  const handleViewOrder = (orderNumber) => {
-    navigate(`/order-tracking/${orderNumber}`);
+  const handleViewOrder = (orderId) => {
+    navigate(`/orders/${orderId}`);
   };
 
   const handleRetryPayment = (orderId) => {
@@ -164,170 +347,40 @@ function OrderHistory() {
 
   return (
     <div className="order-history-page">
-      {/* Header */}
-      <div className="history-header fade-in-up">
-        <h1>Order History</h1>
-        <p>View and manage all your orders</p>
-      </div>
-
-      {/* Filters Section */}
-      <div className="filters-section fade-in-up">
-        <div className="search-box">
-          <Search size={20} />
-          <input
-            type="text"
-            placeholder="Search by order number, name, or email..."
-            value={searchTerm}
-            onChange={(e) => setSearchTerm(e.target.value)}
-          />
-        </div>
-
-        <div className="filter-controls">
-          <div className="filter-group">
-            <Filter size={18} />
-            <select value={statusFilter} onChange={(e) => setStatusFilter(e.target.value)}>
-              <option value="all">All Orders ({statusCounts.all})</option>
-              <option value="pending">Pending ({statusCounts.pending})</option>
-              <option value="confirmed">Confirmed ({statusCounts.confirmed})</option>
-              <option value="processing">Processing ({statusCounts.processing})</option>
-              <option value="shipped">Shipped ({statusCounts.shipped})</option>
-              <option value="delivered">Delivered ({statusCounts.delivered})</option>
-              <option value="cancelled">Cancelled ({statusCounts.cancelled})</option>
-            </select>
-          </div>
-
-          <div className="sort-group">
-            <select value={sortBy} onChange={(e) => setSortBy(e.target.value)}>
-              <option value="date_desc">Newest First</option>
-              <option value="date_asc">Oldest First</option>
-              <option value="amount_desc">Highest Amount</option>
-              <option value="amount_asc">Lowest Amount</option>
-            </select>
-          </div>
-        </div>
-      </div>
-
-      {/* Status Tabs */}
-      <div className="status-tabs fade-in-up">
-        {Object.entries(statusCounts).map(([status, count]) => (
-          <button
-            key={status}
-            className={`status-tab ${statusFilter === status ? 'active' : ''}`}
-            onClick={() => setStatusFilter(status)}
-          >
-            {status === 'all' ? 'All' : getStatusConfig(status).label}
-            <span className="tab-count">{count}</span>
-          </button>
-        ))}
-      </div>
-
-      {/* Orders List */}
+      <HistoryHeader />
+      <OrderFilters
+        searchTerm={searchTerm}
+        setSearchTerm={setSearchTerm}
+        statusFilter={statusFilter}
+        setStatusFilter={setStatusFilter}
+        sortBy={sortBy}
+        setSortBy={setSortBy}
+        statusCounts={statusCounts}
+      />
+      <StatusTabs
+        statusCounts={statusCounts}
+        statusFilter={statusFilter}
+        setStatusFilter={setStatusFilter}
+      />
       {filteredOrders.length === 0 ? (
-        <div className="empty-state fade-in-up">
-          <Package size={80} />
-          <h2>No Orders Found</h2>
-          <p>
-            {searchTerm || statusFilter !== 'all' 
-              ? 'Try adjusting your filters' 
-              : 'You haven\'t placed any orders yet'}
-          </p>
-          <button onClick={() => navigate('/products')}>Start Shopping</button>
-        </div>
+        <EmptyOrdersState
+          hasActiveFilters={Boolean(searchTerm) || statusFilter !== 'all'}
+          onStartShopping={() => navigate('/products')}
+        />
       ) : (
         <div className="orders-list">
-          {filteredOrders.map((order, index) => {
-            const statusConfig = getStatusConfig(order.status);
-            const StatusIcon = statusConfig.icon;
-            
-            return (
-              <div 
-                key={order.id} 
-                className="order-card slide-in-up"
-                style={{ animationDelay: `${index * 0.05}s` }}
-              >
-                {/* Order Header */}
-                <div className="order-header">
-                  <div className="order-info">
-                    <span className="order-number">{order.order_number}</span>
-                    <span className="order-date">{formatDate(order.created_at)}</span>
-                  </div>
-                  <div className="order-status">
-                    <StatusIcon size={18} className={`status-icon ${statusConfig.color}`} />
-                    <span className={`status-text ${statusConfig.color}`}>
-                      {statusConfig.label}
-                    </span>
-                  </div>
-                </div>
-
-                {/* Order Items Preview */}
-                <div className="order-items-preview">
-                  {order.items?.slice(0, 3).map((item, itemIndex) => (
-                    <div key={item.id || itemIndex} className="item-preview">
-                      <span className="item-name">{item.product_name || item.name}</span>
-                      <span className="item-qty">x{item.quantity}</span>
-                    </div>
-                  ))}
-                  {order.items?.length > 3 && (
-                    <span className="more-items">+{order.items.length - 3} more</span>
-                  )}
-                </div>
-
-                {/* Order Footer */}
-                <div className="order-footer">
-                  <div className="order-total">
-                    <span className="total-label">Total</span>
-                    <span className="total-amount">
-                      {formatCurrency(order.total_amount)}
-                    </span>
-                  </div>
-                  <div className="order-actions">
-                    <button 
-                      className="view-btn"
-                      onClick={() => handleViewOrder(order.order_number)}
-                    >
-                      <Eye size={16} />
-                      View Details
-                    </button>
-                    {order.status === 'pending' && (
-                      <button 
-                        className="retry-btn"
-                        onClick={() => handleRetryPayment(order.id)}
-                      >
-                        Retry Payment
-                      </button>
-                    )}
-                    {order.fulfillment_status === 'shipped' && order.shipping_tracking_number && (
-                      <button className="track-btn">
-                        <Truck size={16} />
-                        Track
-                      </button>
-                    )}
-                  </div>
-                </div>
-
-                {/* Payment Status */}
-                {order.payment_status !== 'paid' && (
-                  <div className={`payment-warning ${order.payment_status}`}>
-                    {order.payment_status === 'pending' && 'Payment Pending'}
-                    {order.payment_status === 'declined' && 'Payment Declined - Action Required'}
-                    {order.payment_status === 'refunded' && 'Refund Processed'}
-                  </div>
-                )}
-              </div>
-            );
-          })}
+          {filteredOrders.map((order, index) => (
+            <OrderCard
+              key={order.id}
+              order={order}
+              index={index}
+              onViewOrder={() => handleViewOrder(order.id)}
+              onRetryPayment={() => handleRetryPayment(order.id)}
+            />
+          ))}
         </div>
       )}
-
-      {/* Export Option */}
-      {orders.length > 0 && (
-        <div className="export-section fade-in-up">
-          <button className="export-btn">
-            <Download size={18} />
-            Export Order History
-          </button>
-        </div>
-      )}
+      {orders.length > 0 && <ExportSection />}
     </div>
   );
 }

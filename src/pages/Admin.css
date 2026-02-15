@@ -10,7 +10,7 @@
   padding: 2rem;
   position: sticky;
   top: 80px;
-  height: calc(120vh - 80px);
+  height: calc(150vh - 80px);
 }
 
 .admin-sidebar h2 {

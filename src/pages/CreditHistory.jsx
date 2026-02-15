@@ -54,6 +54,12 @@ function CreditHistory({ user }) {
   const [success, setSuccess] = useState('');
   const fileInputRef = useRef(null);
 
+  // New: report states
+  const [fromDate, setFromDate] = useState(new Date().toISOString().split('T')[0]);
+  const [toDate, setToDate] = useState(new Date().toISOString().split('T')[0]);
+  const [reportText, setReportText] = useState('');
+  const [showReport, setShowReport] = useState(false);
+
   useEffect(() => {
     if (user && user.role !== 'admin') {
       navigate('/');
@@ -175,6 +181,90 @@ function CreditHistory({ user }) {
     }
   };
 
+  // Helper: normalize phone for WhatsApp link (assumes India if 10 digits)
+  const normalizePhoneForWhatsApp = (phone) => {
+    if (!phone) return '';
+    const digits = String(phone).replace(/\D/g, '');
+    if (digits.length === 10) {
+      return `91${digits}`; // assume India
+    }
+    return digits;
+  };
+
+  // Build a readable report text for a set of transactions
+  const buildCreditReport = (transactions, from, to) => {
+    const lines = [];
+    lines.push(`Credit Report for: ${customer?.name || 'Customer'}`);
+    lines.push(`Date Range: ${from} to ${to}`);
+    lines.push(`Generated: ${new Date().toLocaleString()}`);
+    lines.push('');
+    if (!transactions || transactions.length === 0) {
+      lines.push('No transactions in this range.');
+    } else {
+      lines.push('Transactions:');
+      let totalGiven = 0;
+      let totalPayment = 0;
+      transactions.forEach((t) => {
+        const date = new Date(t.created_at).toLocaleDateString('en-IN');
+        const typeLabel = getTypeLabel(t.type);
+        const amount = Number(t.amount) || 0;
+        if (t.type === 'given') totalGiven += amount;
+        else if (t.type === 'payment') totalPayment += amount;
+        const desc = t.reference ? `${t.description || ''} (${t.reference})`.trim() : (t.description || '-');
+        lines.push(`- ${date} | ${typeLabel} | ${formatCurrency(amount)} | Balance: ${formatCurrency(Number(t.balance || 0))}`);
+        lines.push(`  Desc: ${desc}`);
+      });
+      lines.push('');
+      lines.push(`Total Given: ${formatCurrency(totalGiven)}`);
+      lines.push(`Total Payment: ${formatCurrency(totalPayment)}`);
+      lines.push(`Net Change: ${formatCurrency(totalGiven - totalPayment)}`);
+      lines.push(`Current Balance (end): ${formatCurrency(parseFloat(transactions[transactions.length - 1].balance || 0))}`);
+    }
+    return lines.join('\n');
+  };
+
+  // Generate report for selected date range (client-side filter)
+  const handleGenerateReport = () => {
+    if (!fromDate || !toDate) {
+      setError('Please select both From and To dates for the report.');
+      return;
+    }
+    setError('');
+    setSuccess('');
+    const from = new Date(fromDate);
+    const to = new Date(toDate);
+    // normalize to include entire day for 'to'
+    to.setHours(23, 59, 59, 999);
+
+    const filtered = creditHistory.filter((t) => {
+      const d = new Date(t.created_at);
+      return d >= from && d <= to;
+    }).sort((a, b) => new Date(a.created_at) - new Date(b.created_at));
+
+    const report = buildCreditReport(filtered, fromDate, toDate);
+    setReportText(report);
+    setShowReport(true);
+  };
+
+  const handleCopyReport = async () => {
+    if (!reportText) return;
+    try {
+      await navigator.clipboard.writeText(reportText);
+      setSuccess('Report copied to clipboard');
+    } catch (err) {
+      setError('Failed to copy report');
+    }
+  };
+
+  const handleSendWhatsApp = () => {
+    if (!reportText) return;
+    // Prefer customer's phone; otherwise link opens basic wa.me page
+    const phone = normalizePhoneForWhatsApp(customer?.phone);
+    const encoded = encodeURIComponent(reportText);
+    const href = phone ? `https://wa.me/${phone}?text=${encoded}` : `https://wa.me/?text=${encoded}`;
+    window.open(href, '_blank', 'noopener noreferrer');
+  };
+
   if (loading) {
     return (
       <div className="credit-history-page">
@@ -208,6 +298,9 @@ function CreditHistory({ user }) {
         <button className="admin-btn primary" onClick={() => setShowAddModal(true)}>
           <Plus size={20} /> Add Transaction
         </button>
+
+        {/* New: Date range controls and generate report */}
+        
       </div>
 
       <div className="credit-table-container">
@@ -230,7 +323,11 @@ function CreditHistory({ user }) {
               </tr>
             </thead>
             <tbody>
-              {creditHistory.map((transaction) => (
+              {creditHistory.map((transaction) => {
+                const descriptionWithRef = transaction.reference 
+                  ? `${transaction.description || ''} (${transaction.reference})`.trim()
+                  : transaction.description || '-';
+                return (
                 <tr key={transaction.id}>
                   <td>{formatDate(transaction.created_at)}</td>
                   <td className="invoice-number">{transaction.invoice_number || '-'}</td>
@@ -242,7 +339,7 @@ function CreditHistory({ user }) {
                     {formatCurrencyColored(transaction.type === 'payment' ? -parseFloat(transaction.amount) : parseFloat(transaction.amount))}
                   </td>
                   <td>{formatCurrencyColored(parseFloat(transaction.balance))}</td>
-                  <td>{transaction.description || '-'}</td>
+                  <td>{descriptionWithRef}</td>
                   <td className="actions-cell">
                     {transaction.image_path && (
                       <a 
@@ -264,11 +361,36 @@ function CreditHistory({ user }) {
                     </button>
                   </td>
                 </tr>
-              ))}
+                );
+              })}
             </tbody>
           </table>
-        )}
+              )}
+         <div className="report-controls">
+            <label> From:<input type="date" value={fromDate} onChange={(e) => setFromDate(e.target.value)} />
+            </label>
+            <label> To:<input type="date" value={toDate} onChange={(e) => setToDate(e.target.value)} />
+            </label>
+            <button className="admin-btn" onClick={handleGenerateReport} title="Generate credit report for date range">
+            Generate Report
+            </button>
+         </div>
       </div>
+
+      {/* Report preview / share box */}
+      {showReport && (
+        <div className="report-box">
+          <div className="report-header">
+            <strong>Credit Report {customer?.name ? `- ${customer.name}` : ''}</strong>
+          </div>
+          <textarea className="report-text" readOnly value={reportText} />
+          <div className="report-actions">
+            <button className="report-btn" onClick={handleCopyReport}>Copy</button>
+            <button className="report-btn whatsapp" onClick={handleSendWhatsApp}>WhatsApp</button>
+            <button className="report-btn" onClick={() => setShowReport(false)}>Close</button>
+          </div>
+        </div>
+      )}
 
       {/* Add Transaction Modal */}
       {showAddModal && (
@@ -376,7 +498,7 @@ function CreditHistory({ user }) {
               <h1>INVOICE</h1>
               <div className="company-details">
                 <h3>Barman Store</h3>
-                <p>Premium Coffee & Barista Equipment</p>
+                <p>Quality Groceries & Everyday Essentials</p>
                 <p>Email: info@barmanstore.com</p>
               </div>
             </div>

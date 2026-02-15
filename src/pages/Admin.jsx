@@ -47,6 +47,81 @@ function Admin({ user }) {
   const [showUserForm, setShowUserForm] = useState(false);
   const [isCreatingUser, setIsCreatingUser] = useState(false);
   const [notification, setNotification] = useState(null);
+  const [showApproveModal, setShowApproveModal] = useState(false);
+  const [modalOrder, setModalOrder] = useState(null);
+  const [modalItems, setModalItems] = useState([]);
+  const [modalLoading, setModalLoading] = useState(false);
+
+  const refreshAdminData = async () => {
+    const [statsData, productsData, ordersData, usersData] = await Promise.all([
+      statsApi.orders(),
+      productsApi.getAll(),
+      ordersApi.getAll(),
+      usersApi.getAll()
+    ]);
+
+    setStats(statsData);
+    setProducts(productsData);
+    setOrders(ordersData);
+    setUsers(usersData);
+  };
+
+  const openApproveModal = async (orderId) => {
+    try {
+      setModalLoading(true);
+      const order = await ordersApi.getById(orderId);
+      setModalOrder(order);
+      // Fetch current stock for each product in order items.
+      const items = order.items || [];
+      const itemsWithStock = await Promise.all(items.map(async (it) => {
+        try {
+          const p = await productsApi.getById(it.product_id);
+          return { ...it, stock: p.stock };
+        } catch (_) {
+          return { ...it, stock: undefined };
+        }
+      }));
+      setModalItems(itemsWithStock);
+      setShowApproveModal(true);
+    } catch (err) {
+      showNotification(err.message || 'Failed to load order details', 'error');
+    } finally {
+      setModalLoading(false);
+    }
+  };
+
+  const confirmApprove = async () => {
+    if (!modalOrder) return;
+    try {
+      setModalLoading(true);
+      await ordersApi.updateStatus(modalOrder.id, 'confirmed', 'Approved via admin modal', user.id);
+      setShowApproveModal(false);
+      await refreshAdminData();
+      showNotification('Order approved and stock applied', 'success');
+      await fetch(`/api/notify-order/${modalOrder.id}`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ action: 'approved' })
+      }).catch(() => {});
+    } catch (err) {
+      showNotification(err.message || 'Failed to approve order', 'error');
+    } finally {
+      setModalLoading(false);
+    }
+  };
+
+  const handleUpdateOrderStatus = async (id, status) => {
+    if (status === 'cancelled' && !window.confirm('Are you sure you want to cancel this order?')) return;
+    if (status === 'confirmed' && !window.confirm('Approve this order and apply stock?')) return;
+    try {
+      await ordersApi.updateStatus(id, status, `Order ${status} via admin panel`, user.id);
+      await refreshAdminData();
+      showNotification(`Order ${status} successfully`, 'success');
+    } catch (error) {
+      console.error('Failed to update order status', error);
+      showNotification(error.message || 'Failed to update order status', 'error');
+    }
+  };
 
   useEffect(() => {
     // Check if user is admin
@@ -60,17 +135,7 @@ function Admin({ user }) {
 
   const fetchData = async () => {
     try {
-      const [statsData, productsData, ordersData, usersData] = await Promise.all([
-        statsApi.orders(),
-        productsApi.getAll(),
-        ordersApi.getAll(),
-        usersApi.getAll()
-      ]);
-
-      setStats(statsData);
-      setProducts(productsData);
-      setOrders(ordersData);
-      setUsers(usersData);
+      await refreshAdminData();
     } catch (error) {
       console.error('Error fetching data:', error);
     } finally {
@@ -385,6 +450,7 @@ function Admin({ user }) {
                     <th>Email</th>
                     <th>Amount</th>
                     <th>Status</th>
+                    <th>Actions</th>
                     <th>Date</th>
                   </tr>
                 </thead>
@@ -397,6 +463,16 @@ function Admin({ user }) {
                       <td>{formatCurrencyColored(order.total_amount)}</td>
                       <td>
                         <span className={`status ${order.status}`}>{order.status}</span>
+                      </td>
+                      <td>
+                        {order.status === 'pending' ? (
+                          <div style={{ display: 'flex', gap: '0.5rem' }}>
+                            <button className="admin-btn" onClick={() => openApproveModal(order.id)}>Approve</button>
+                            <button className="admin-btn" onClick={() => handleUpdateOrderStatus(order.id, 'cancelled')}>Cancel</button>
+                          </div>
+                        ) : (
+                          <span style={{ opacity: 0.8 }}>—</span>
+                        )}
                       </td>
                       <td>{new Date(order.created_at).toLocaleDateString()}</td>
                     </tr>
@@ -523,6 +599,46 @@ function Admin({ user }) {
           onSave={handleProductSave}
         />
       )}
+    {showApproveModal && modalOrder && (
+      <div className="modal-backdrop">
+        <div className="modal-card">
+          <h2>Approve Order {modalOrder.order_number || `#${modalOrder.id}`}</h2>
+          {modalLoading ? (
+            <p>Loading...</p>
+          ) : (
+            <>
+              <p>Customer: {modalOrder.customer_name} ({modalOrder.customer_email})</p>
+              <div style={{ maxHeight: 300, overflow: 'auto', marginTop: 8 }}>
+                <table style={{ width: '100%', borderCollapse: 'collapse' }}>
+                  <thead>
+                    <tr>
+                      <th>Product</th>
+                      <th>Qty</th>
+                      <th>Stock</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {modalItems.map(it => (
+                      <tr key={it.id}>
+                        <td style={{ padding: 6 }}>{it.product_name || it.name}</td>
+                        <td style={{ padding: 6 }}>{it.quantity}</td>
+                        <td style={{ padding: 6 }}>{/* we will fetch current stock via server when loading */}
+                          {it.stock !== undefined ? it.stock : '—'}
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+              <div style={{ display: 'flex', gap: 8, marginTop: 12, justifyContent: 'flex-end' }}>
+                <button className="admin-btn" onClick={() => setShowApproveModal(false)} disabled={modalLoading}>Close</button>
+                <button className="admin-btn primary" onClick={confirmApprove} disabled={modalLoading}>Confirm Approve</button>
+              </div>
+            </>
+          )}
+        </div>
+      </div>
+    )}
       {/* Category Management Modal */}
       {showCategoryManagement && (
         <CategoryManagement

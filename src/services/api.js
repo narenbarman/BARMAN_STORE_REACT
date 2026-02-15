@@ -183,7 +183,10 @@ export const ordersApi = {
       method: 'PUT',
       body: { status, description, created_by: createdBy },
     }),
-  
+
+  // Get order history (status changes and events)
+  getHistory: (id) => apiFetch(`/api/orders/${id}/history`),
+
   // Cancel order
   cancel: (id, reason, userId) => 
     apiFetch(`/api/orders/${id}/cancel`, {

@@ -1,6 +1,6 @@
 ﻿import React, { useState, useCallback, useEffect, useRef } from 'react';
 import { Plus, Trash2 } from 'lucide-react';
-import { customersApi, productsApi, billingApi } from '../services/api';
+import { customersApi, productsApi, billingApi, creditApi, usersApi } from '../services/api';
 import './BillingTab.css';
 
 const createEmptyItem = () => ({
@@ -20,6 +20,9 @@ const BillingSystem = () => {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState(null);
   const [isSubmitting, setIsSubmitting] = useState(false);
+  const [paidAmount, setPaidAmount] = useState(0);
+  const [lastShareText, setLastShareText] = useState('');
+  const [lastShareNumber, setLastShareNumber] = useState('');
 
   const [customersList, setCustomersList] = useState([]);
   const [productsList, setProductsList] = useState([]);
@@ -138,6 +141,8 @@ const BillingSystem = () => {
   };
 
   const totalBill = items.reduce((sum, item) => sum + item.amount, 0);
+  const paidClamped = Math.max(0, Math.min(Number(paidAmount || 0), Number(totalBill || 0)));
+  const creditAmount = Math.max(0, Number(totalBill) - paidClamped);
   const totalDiscount = items.reduce((sum, item) => {
     const priceNum = Number(item.price) || 0;
     const qtyNum = Math.max(1, Number(item.qty) || 1);
@@ -206,10 +211,29 @@ const BillingSystem = () => {
 
   const handleCreateBill = async () => {
     const hasItems = items.some((it) => it.name && it.amount > 0);
-    if (!customer.name || !hasItems) {
-      alert('Please enter customer name and at least one item.');
+
+    if (!hasItems) {
+      alert('Please add at least one item to the bill.');
       return;
     }
+
+    const paid = paidClamped;
+    const normalizePhone = (value) => String(value || '').replace(/\D/g, '');
+    const isSame = (a, b) => String(a || '').trim().toLowerCase() === String(b || '').trim().toLowerCase();
+    const findCustomerMatch = () => {
+      const phone = normalizePhone(customer.phone);
+      if (phone) {
+        const match = customersList.find((c) => normalizePhone(c.phone) === phone);
+        if (match) return match;
+      }
+      const name = String(customer.name || '').trim().toLowerCase();
+      if (!name) return null;
+      const email = String(customer.email || '').trim().toLowerCase();
+      return customersList.find((c) => {
+        if (email && String(c.email || '').trim().toLowerCase() === email) return true;
+        return String(c.name || '').trim().toLowerCase() === name;
+      }) || null;
+    };
 
     const payload = {
       customer_id: customer.id || null,
@@ -219,8 +243,10 @@ const BillingSystem = () => {
       customer_address: customer.address || null,
       discount_amount: Number(totalDiscount.toFixed(2)),
       total_amount: Number(totalBill.toFixed(2)),
+      paid_amount: Number(paid.toFixed(2)),
+      credit_amount: Number(creditAmount.toFixed(2)),
       payment_method: 'cash',
-      payment_status: 'paid',
+      payment_status: paid < Number(totalBill || 0) ? 'pending' : 'paid',
       bill_type: 'sales',
       items: items
         .filter((it) => it.name && Number(it.amount) > 0)
@@ -240,15 +266,232 @@ const BillingSystem = () => {
 
     try {
       setIsSubmitting(true);
-      await billingApi.createBill(payload);
+
+      // Ensure customer exists (create or update) with phone/email/name checks
+      let resolvedCustomerId = payload.customer_id || null;
+      let customerRecord = null;
+
+      const phone = normalizePhone(payload.customer_phone);
+
+      // 1) If phone provided, check by phone first
+      if (phone) {
+        customerRecord = customersList.find((c) => normalizePhone(c.phone) === phone) || null;
+
+        if (customerRecord) {
+          const nameMatches = isSame(customerRecord.name, payload.customer_name);
+          const emailMatches = isSame(customerRecord.email, payload.customer_email);
+
+          if (nameMatches && emailMatches) {
+            // exact match, reuse
+            resolvedCustomerId = customerRecord.id;
+          } else {
+            // phone exists but details differ -> ask user whether to update existing customer
+            const confirmUpdate = window.confirm(
+              'A customer with this phone number already exists but name/email differ.\n' +
+              'OK to update the existing customer with entered details, Cancel to use existing customer as-is.'
+            );
+            if (confirmUpdate) {
+              // update on server and update local list
+              const updated = await usersApi.update(customerRecord.id, {
+                name: payload.customer_name,
+                email: payload.customer_email,
+                phone: payload.customer_phone,
+                address: payload.customer_address,
+                role: 'customer'
+              });
+              // handle different API shapes: try to extract user object
+              const updatedUser = updated?.user || updated || null;
+              if (updatedUser) {
+                setCustomersList((prev) => prev.map((c) => (c.id === customerRecord.id ? updatedUser : c)));
+              }
+              resolvedCustomerId = customerRecord.id;
+            } else {
+              // use existing record without modification
+              resolvedCustomerId = customerRecord.id;
+            }
+          }
+        }
+      }
+
+      // 2) If no phone-match found, and no resolved id yet, check if email is new or existing
+      if (!resolvedCustomerId) {
+        const email = String(payload.customer_email || '').trim().toLowerCase();
+        const emailMatch = email ? customersList.find((c) => String(c.email || '').trim().toLowerCase() === email) : null;
+
+        if (emailMatch) {
+          // Email exists but phone did not match - ask whether to update phone on existing record
+          const confirmUpdatePhone = window.confirm(
+            'A customer with this email already exists but phone number differs.\n' +
+            'OK to update the existing customer phone to the entered phone, Cancel to create a new customer.'
+          );
+          if (confirmUpdatePhone) {
+            const updated = await usersApi.update(emailMatch.id, {
+              name: payload.customer_name || emailMatch.name,
+              email: payload.customer_email || emailMatch.email,
+              phone: payload.customer_phone || emailMatch.phone,
+              address: payload.customer_address || emailMatch.address,
+              role: 'customer'
+            });
+            const updatedUser = updated?.user || updated || null;
+            if (updatedUser) {
+              setCustomersList((prev) => prev.map((c) => (c.id === emailMatch.id ? updatedUser : c)));
+            }
+            resolvedCustomerId = emailMatch.id;
+          } else {
+            // create new customer (even though email exists) per request - but warn about possible duplicate
+            const created = await usersApi.create({
+              name: payload.customer_name,
+              email: payload.customer_email,
+              phone: payload.customer_phone,
+              address: payload.customer_address,
+              role: 'customer'
+            });
+            resolvedCustomerId = created?.user?.id || null;
+            if (created?.user) {
+              setCustomersList((prev) => [...prev, created.user]);
+            }
+          }
+        } else {
+          // Neither phone nor email found -> create new customer
+          const created = await usersApi.create({
+            name: payload.customer_name,
+            email: payload.customer_email,
+            phone: payload.customer_phone,
+            address: payload.customer_address,
+            role: 'customer'
+          });
+          resolvedCustomerId = created?.user?.id || null;
+          if (created?.user) {
+            setCustomersList((prev) => [...prev, created.user]);
+          }
+        }
+      }
+
+      // Ensure products exist (create or update)
+      const productUpdates = [];
+      const itemsWithProducts = payload.items.map((it) => {
+        let product = null;
+        if (it.product_id) {
+          product = productsList.find((p) => p.id === it.product_id) || null;
+        }
+        if (!product) {
+          const name = String(it.product_name || '').trim().toLowerCase();
+          product = productsList.find((p) => String(p.name || '').trim().toLowerCase() === name) || null;
+        }
+        if (product) {
+          it.product_id = product.id;
+          const needsUpdate =
+            Number(product.price || 0) !== Number(it.mrp || 0) ||
+            String(product.uom || '').toLowerCase() !== String(it.unit || '').toLowerCase();
+          if (needsUpdate) {
+            productUpdates.push(productsApi.update(product.id, {
+              name: product.name,
+              price: Number(it.mrp || 0),
+              mrp: Number(it.mrp || 0),
+              uom: it.unit || 'pcs',
+              category: product.category || 'Groceries'
+            }));
+          }
+          return it;
+        }
+        productUpdates.push(productsApi.create({
+          name: it.product_name,
+          price: Number(it.mrp || 0),
+          mrp: Number(it.mrp) || 0,
+          uom: it.unit || 'pcs',
+          category: 'Groceries',
+          stock: 0
+        }).then((createdProduct) => {
+          if (createdProduct?.id) {
+            it.product_id = createdProduct.id;
+            setProductsList((prev) => [...prev, createdProduct]);
+          }
+          return it;
+        }));
+        return it;
+      });
+
+      if (productUpdates.length) {
+        await Promise.all(productUpdates);
+      }
+
+      payload.customer_id = resolvedCustomerId;
+      payload.items = itemsWithProducts;
+
+      const result = await billingApi.createBill(payload);
+      if (payload.customer_id && creditAmount > 0) {
+        await creditApi.addTransaction(payload.customer_id, {
+          type: 'given',
+          amount: Number(creditAmount.toFixed(2)),
+          description: `Bill credit | Paid: ${formatCurrency(Number(paid))} | Credit: ${formatCurrency(Number(creditAmount))}`,
+          reference: result?.bill_number || null
+        });
+      }
+      const shareText = buildShareText({
+        bill_number: result?.bill_number,
+        created_at: new Date().toISOString(),
+        customer_name: payload.customer_name,
+        customer_phone: payload.customer_phone,
+        customer_email: payload.customer_email,
+        customer_address: payload.customer_address,
+        items: payload.items,
+        total_amount: payload.total_amount,
+        paid_amount: payload.paid_amount,
+        credit_amount: payload.credit_amount,
+        payment_status: payload.payment_status
+      });
+      setLastShareText(shareText);
+      setLastShareNumber(result?.bill_number || '');
       alert('✓ Bill created successfully!');
       setCustomer({ name: '', email: '', phone: '', address: '' });
       setItems([createEmptyItem()]);
+      setPaidAmount(0);
     } catch (err) {
       console.error('Error creating bill:', err);
       alert(`Failed to create bill: ${err.message || 'Unknown error'}`);
     } finally {
       setIsSubmitting(false);
+    }
+  };
+
+  const buildShareText = (bill) => {
+    const items = Array.isArray(bill.items) ? bill.items : [];
+    const lines = [
+      `BILL #${bill.bill_number || ''}`,
+      `Date: ${new Date(bill.created_at || Date.now()).toLocaleString()}`,
+      `Customer: ${bill.customer_name || ''}`,
+      bill.customer_phone ? `Phone: ${bill.customer_phone}` : null,
+      bill.customer_email ? `Email: ${bill.customer_email}` : null,
+      bill.customer_address ? `Address: ${bill.customer_address}` : null,
+      '',
+      'Items:'
+    ];
+    if (items.length === 0) {
+      lines.push('- None');
+    } else {
+      items.forEach((it) => {
+        const name = it.product_name || it.name || 'Item';
+        const qty = Number(it.qty || it.quantity || 0);
+        const unit = it.unit || '';
+        const amount = Number(it.amount || 0);
+        lines.push(`- ${name} ${qty}${unit ? ' ' + unit : ''} : Rs ${amount}`);
+      });
+    }
+    lines.push('');
+    lines.push(`Total: Rs ${Number(bill.total_amount || 0)}`);
+    lines.push(`Paid: Rs ${Number(bill.paid_amount || 0)}`);
+    lines.push(`Credit: Rs ${Number(bill.credit_amount || 0)}`);
+    lines.push(`Status: ${bill.payment_status || ''}`);
+    return lines.filter(Boolean).join('\n');
+  };
+
+  const handleCopyShare = async () => {
+    if (!lastShareText) return;
+    try {
+      await navigator.clipboard.writeText(lastShareText);
+      alert('Bill text copied.');
+    } catch (err) {
+      alert('Failed to copy bill text.');
     }
   };
 
@@ -442,17 +685,64 @@ const BillingSystem = () => {
         </div>
       </div>
 
+      <div className="form-section">
+        <div className="form-row">
+          <label className="form-label" htmlFor="paidAmount">Paid Amount</label>
+          <input
+            id="paidAmount"
+            type="number"
+            min="0"
+            step="0.01"
+            className="form-input"
+            value={paidAmount}
+            onChange={(e) => setPaidAmount(e.target.value)}
+            placeholder="0.00"
+          />
+        </div>
+        <div className="form-row">
+          <label className="form-label">Credit </label>
+          <div className="form-input" aria-live="polite">
+            {formatCurrency(creditAmount)}
+          </div>
+        </div>
+      </div>
+
       <div className="billing-form-controls">
         <button className="reset" onClick={() => {
           setCustomer({ name: '', email: '', phone: '', address: '' });
           setItems([createEmptyItem()]);
+          setPaidAmount(0);
         }}>
           Clear
         </button>
-        <button className="submit" onClick={handleCreateBill} disabled={isSubmitting}>
+        <button 
+          className="submit" 
+          onClick={handleCreateBill} 
+          disabled={isSubmitting}
+        >
           ✓ Create Bill
         </button>
       </div>
+
+      {lastShareText && (
+        <div className="share-box">
+          <div className="share-header">
+            <strong>Share Bill {lastShareNumber ? `#${lastShareNumber}` : ''}</strong>
+          </div>
+          <textarea className="share-text" readOnly value={lastShareText} />
+          <div className="share-actions">
+            <button className="share-btn" onClick={handleCopyShare}>Copy</button>
+            <a
+              className="share-btn whatsapp"
+              href={`https://wa.me/?text=${encodeURIComponent(lastShareText)}`}
+              target="_blank"
+              rel="noreferrer"
+            >
+              WhatsApp
+            </a>
+          </div>
+        </div>
+      )}
     </div>
   );
 };

@@ -273,6 +273,8 @@ const initDB = () => {
       subtotal REAL NOT NULL DEFAULT 0,
       discount_amount REAL NOT NULL DEFAULT 0,
       total_amount REAL NOT NULL DEFAULT 0,
+      paid_amount REAL NOT NULL DEFAULT 0,
+      credit_amount REAL NOT NULL DEFAULT 0,
       payment_method TEXT DEFAULT 'cash',
       payment_status TEXT DEFAULT 'pending',
       bill_type TEXT DEFAULT 'sales',
@@ -313,6 +315,15 @@ const initDB = () => {
       admin_note TEXT,
       created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
       updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+    );
+
+    CREATE TABLE IF NOT EXISTS order_status_history (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      order_id INTEGER NOT NULL,
+      status TEXT NOT NULL,
+      description TEXT,
+      created_by INTEGER,
+      created_at DATETIME DEFAULT CURRENT_TIMESTAMP
     );
 
     CREATE TABLE IF NOT EXISTS offers (
@@ -368,6 +379,8 @@ const initDB = () => {
   alterTableSafe(`ALTER TABLE stock_ledger ADD COLUMN user_id INTEGER`);
   alterTableSafe(`ALTER TABLE stock_ledger ADD COLUMN user_name TEXT`);
   alterTableSafe(`ALTER TABLE stock_ledger ADD COLUMN notes TEXT`);
+  alterTableSafe(`ALTER TABLE bills ADD COLUMN paid_amount REAL DEFAULT 0`);
+  alterTableSafe(`ALTER TABLE bills ADD COLUMN credit_amount REAL DEFAULT 0`);
 
   // Backfill from legacy "password" column if present.
   try {
@@ -378,6 +391,24 @@ const initDB = () => {
         dbRun(`UPDATE users SET password_hash = ? WHERE id = ?`, [normalized, u.id]);
       }
     });
+
+// Simple notify endpoint used by admin UI to send in-app messages to customers when order status changes.
+app.post('/api/notify-order/:orderId', (req, res) => {
+  try {
+    const orderId = req.params.orderId;
+    const order = dbGet(`SELECT * FROM orders WHERE id = ?`, [orderId]);
+    if (!order) return res.status(404).json({ error: 'Order not found' });
+    const userId = order.user_id;
+    const action = req.body?.action || 'updated';
+    const message = `Your order ${order.order_number || `#${order.id}`} was ${action}.`;
+    if (userId) {
+      dbRun(`INSERT INTO messages (sender_id, recipient_id, subject, body, read) VALUES (?, ?, ?, ?, 0)`, [null, userId, `Order ${action}`, message]);
+    }
+    return res.json({ success: true });
+  } catch (error) {
+    return res.status(500).json({ error: error.message });
+  }
+});
   } catch (_) {
     // ignore when legacy password column does not exist
   }
@@ -982,6 +1013,22 @@ app.get('/api/orders/:id', (req, res) => {
   }
 });
 
+app.get('/api/orders/:id/history', (req, res) => {
+  try {
+    const rows = dbAll(
+      `SELECT h.id, h.order_id, h.status, h.description, h.created_by, h.created_at, u.name as created_by_name
+       FROM order_status_history h
+       LEFT JOIN users u ON u.id = h.created_by
+       WHERE h.order_id = ?
+       ORDER BY h.created_at DESC`,
+      [req.params.id]
+    );
+    return res.json(rows);
+  } catch (error) {
+    return res.status(500).json({ error: error.message });
+  }
+});
+
 app.get('/api/orders/number/:orderNumber', (req, res) => {
   try {
     const order = dbGet(`SELECT * FROM orders WHERE order_number = ?`, [req.params.orderNumber]);
@@ -1065,6 +1112,17 @@ const placeOrder = (payload) => {
       );
     });
 
+    // Add order placed entry to credit history if user has a credit account
+    if (user_id) {
+      const last = dbGet(`SELECT balance FROM credit_history WHERE user_id = ? ORDER BY created_at DESC LIMIT 1`, [user_id]);
+      const currentBalance = Number(last?.balance || 0);
+      const orderRef = orderNumber || `ORDER-${orderId}`;
+      dbRun(
+        `INSERT INTO credit_history (user_id, type, amount, balance, description, reference) VALUES (?, ?, ?, ?, ?, ?)`,
+        [user_id, 'order_placed', 0, currentBalance, `Order placed (Order #${orderRef})`, orderRef]
+      );
+    }
+
     return { orderId, orderNumber, totalAmount: total };
   });
 
@@ -1108,6 +1166,23 @@ app.put('/api/orders/:id/status', (req, res) => {
     const order = dbGet(`SELECT * FROM orders WHERE id = ?`, [req.params.id]);
     if (!order) return res.status(404).json({ error: 'Order not found' });
 
+    // record status change in history
+    const createdBy = req.body?.created_by || null;
+    const description = req.body?.description || null;
+    dbRun(`INSERT INTO order_status_history (order_id, status, description, created_by) VALUES (?, ?, ?, ?)`, [req.params.id, status, description, createdBy]);
+
+    // Update credit history with status change
+    if (order.user_id) {
+      const last = dbGet(`SELECT balance FROM credit_history WHERE user_id = ? ORDER BY created_at DESC LIMIT 1`, [order.user_id]);
+      const currentBalance = Number(last?.balance || 0);
+      const orderRef = order.order_number || `ORDER-${order.id}`;
+      const statusDescription = `Order status updated to ${status} (Order #${orderRef})`;
+      dbRun(
+        `INSERT INTO credit_history (user_id, type, amount, balance, description, reference) VALUES (?, ?, ?, ?, ?, ?)`,
+        [order.user_id, 'status_update', 0, currentBalance, statusDescription, orderRef]
+      );
+    }
+
     if (status === 'confirmed' && Number(order.stock_applied || 0) === 0) {
       const items = dbAll(`SELECT * FROM order_items WHERE order_id = ?`, [req.params.id]);
       const tx = db.transaction(() => {
@@ -1136,9 +1211,10 @@ app.put('/api/orders/:id/status', (req, res) => {
           const last = dbGet(`SELECT balance FROM credit_history WHERE user_id = ? ORDER BY created_at DESC LIMIT 1`, [order.user_id]);
           const currentBalance = Number(last?.balance || 0);
           const nextBalance = currentBalance + Number(order.total_amount || 0);
+          const orderRef = order.order_number || `ORDER-${order.id}`;
           dbRun(
             `INSERT INTO credit_history (user_id, type, amount, balance, description, reference) VALUES (?, ?, ?, ?, ?, ?)`,
-            [order.user_id, 'given', Number(order.total_amount || 0), nextBalance, 'Approved credit order', order.order_number || `ORDER-${order.id}`]
+            [order.user_id, 'given', Number(order.total_amount || 0), nextBalance, `Approved credit order (Order #${orderRef})`, orderRef]
           );
         }
 
@@ -1755,11 +1831,14 @@ app.post('/api/bills/create', (req, res) => {
     const items = Array.isArray(b.items) ? b.items : [];
     if (!b.customer_name || !items.length) return res.status(400).json({ error: 'customer_name and items are required' });
     const subtotal = items.reduce((sum, it) => sum + Number(it.amount || 0), 0);
+    const paidAmount = Math.max(0, Number(b.paid_amount || 0));
+    const totalAmount = Number(b.total_amount || subtotal);
+    const creditAmount = Math.max(0, Number(b.credit_amount || Math.max(0, totalAmount - paidAmount)));
     const billNumber = generateBillNumber();
     const tx = db.transaction(() => {
       const header = dbRun(
-        `INSERT INTO bills (bill_number, customer_id, customer_name, customer_email, customer_phone, customer_address, subtotal, discount_amount, total_amount, payment_method, payment_status, bill_type, created_by)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        `INSERT INTO bills (bill_number, customer_id, customer_name, customer_email, customer_phone, customer_address, subtotal, discount_amount, total_amount, paid_amount, credit_amount, payment_method, payment_status, bill_type, created_by)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
         [
           billNumber,
           b.customer_id || null,
@@ -1769,7 +1848,9 @@ app.post('/api/bills/create', (req, res) => {
           b.customer_address || null,
           subtotal,
           Number(b.discount_amount || 0),
-          Number(b.total_amount || subtotal),
+          totalAmount,
+          paidAmount,
+          creditAmount,
           b.payment_method || 'cash',
           b.payment_status || 'paid',
           b.bill_type || 'sales',

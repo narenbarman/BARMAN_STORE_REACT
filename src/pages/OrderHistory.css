@@ -242,8 +242,10 @@
   border-radius: 16px;
   padding: 24px;
   box-shadow: 0 2px 8px rgba(0,0,0,0.08);
+  border: 1px solid #edf2f7;
   animation: slideUp 0.4s ease forwards;
-  opacity: 0;
+  opacity: 1;
+  overflow: hidden;
 }
 
 @keyframes slideUp {
@@ -271,6 +273,7 @@
   display: flex;
   flex-direction: column;
   gap: 4px;
+  min-width: 0;
 }
 
 .order-number {
@@ -278,6 +281,13 @@
   font-weight: 600;
   color: #2d3748;
   font-family: monospace;
+  line-height: 1.2;
+  text-align: left;
+  width: fit-content;
+}
+
+.order-number:hover {
+  color: #1a202c;
 }
 
 .order-date {
@@ -336,6 +346,10 @@
 .item-name {
   font-size: 0.9rem;
   color: #2d3748;
+  max-width: 260px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 .item-qty {
@@ -379,6 +393,8 @@
 .order-actions {
   display: flex;
   gap: 10px;
+  flex-wrap: wrap;
+  justify-content: flex-end;
 }
 
 .view-btn, .retry-btn, .track-btn {
@@ -390,6 +406,8 @@
   font-size: 0.9rem;
   cursor: pointer;
   transition: all 0.2s;
+  min-height: 40px;
+  white-space: nowrap;
 }
 
 .view-btn {
@@ -503,7 +521,8 @@
   }
 
   .order-actions {
-    justify-content: stretch;
+    width: 100%;
+    justify-content: flex-start;
   }
 
   .view-btn, .retry-btn, .track-btn {
@@ -527,6 +546,7 @@
 
   .order-actions {
     flex-direction: column;
+    width: 100%;
   }
 
   .status-tab {

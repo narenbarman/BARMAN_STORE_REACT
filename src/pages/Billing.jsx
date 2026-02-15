@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useNavigate, useParams } from 'react-router-dom';
 import { 
   Plus, Trash2, Calculator, Save, 
   User, Phone, Package, DollarSign,
@@ -29,10 +29,13 @@ const validatePhone = (phone) => {
 
 function Billing() {
   const navigate = useNavigate();
+  const { billNumber: routeBillNumber } = useParams();
   const [loading, setLoading] = useState(false);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState(null);
   const [success, setSuccess] = useState(null);
+  const [shareText, setShareText] = useState('');
+  const [shareBillNumber, setShareBillNumber] = useState('');
   
   // Stats
   const [stats, setStats] = useState({
@@ -103,6 +106,21 @@ function Billing() {
     }
     loadStats();
   }, []);
+
+  useEffect(() => {
+    const raw = localStorage.getItem('lastBillShare');
+    if (!raw) return;
+    try {
+      const data = JSON.parse(raw);
+      const ageMs = Date.now() - Number(data.ts || 0);
+      if (ageMs < 10 * 60 * 1000 && data.text) {
+        setShareText(data.text);
+        setShareBillNumber(data.billNumber || routeBillNumber || '');
+      }
+    } catch {
+      // ignore malformed storage
+    }
+  }, [routeBillNumber]);
   
   const loadStats = async () => {
     try {
@@ -363,27 +381,63 @@ function Billing() {
         throw new Error('Please add at least one item to the bill');
       }
       
-      const items = billItems.map(item => ({
-        name: item.name,
-        mrp: parseFloat(item.mrp),
-        quantity: parseFloat(item.quantity),
-        unit: item.unit,
-        discount_percent: parseFloat(item.discount_percent) || 0,
-        category: item.category || 'General'
-      }));
-      
+      const items = billItems.map(item => {
+        const mrp = parseFloat(item.mrp) || 0;
+        const quantity = parseFloat(item.quantity) || 0;
+        const discountPercent = parseFloat(item.discount_percent) || 0;
+        const discountAmount = (mrp * quantity * discountPercent) / 100;
+        const amount = (mrp * quantity) - discountAmount;
+        return {
+          product_id: item.product_id || null,
+          product_name: item.name,
+          mrp,
+          qty: quantity,
+          unit: item.unit || 'pcs',
+          discount: discountAmount,
+          amount
+        };
+      });
+
       const result = await billingApi.createBill({
-        customer: customerData,
-        items,
+        customer_name: customerData.name,
+        customer_email: customerData.email || null,
+        customer_phone: customerData.phone || null,
+        customer_address: customerData.address || null,
+        subtotal: totals.subtotal,
+        discount_amount: totals.discountAmount,
+        total_amount: totals.totalAmount,
         paid_amount: parseFloat(paidAmount) || 0,
-        discount_percent: parseFloat(discountPercent) || 0,
-        notes,
-        created_by: currentUser?.id
+        credit_amount: Math.max(0, totals.balanceAmount),
+        payment_method: 'cash',
+        payment_status: totals.balanceAmount > 0 ? 'pending' : 'paid',
+        bill_type: 'sales',
+        created_by: currentUser?.id,
+        items
       });
       
-      setSuccess(`Bill ${result.bill.bill_number} created successfully!`);
+      setSuccess(`Bill ${result.bill_number} created successfully!`);
+      const share = buildShareText({
+        bill_number: result.bill_number,
+        created_at: new Date().toISOString(),
+        customer_name: customerData.name,
+        customer_phone: customerData.phone,
+        customer_email: customerData.email,
+        customer_address: customerData.address,
+        items,
+        total_amount: totals.totalAmount,
+        paid_amount: parseFloat(paidAmount) || 0,
+        credit_amount: Math.max(0, totals.balanceAmount),
+        payment_status: totals.balanceAmount > 0 ? 'pending' : 'paid'
+      });
+      setShareText(share);
+      setShareBillNumber(result.bill_number);
+      localStorage.setItem('lastBillShare', JSON.stringify({
+        text: share,
+        billNumber: result.bill_number,
+        ts: Date.now()
+      }));
       setTimeout(() => {
-        navigate(`/billing/${result.bill.bill_number}`);
+        navigate(`/billing/${result.bill_number}`);
       }, 2000);
       
       // Reset form
@@ -400,6 +454,47 @@ function Billing() {
       setError(err.message);
     } finally {
       setSaving(false);
+    }
+  };
+
+  const buildShareText = (bill) => {
+    const itemsList = Array.isArray(bill.items) ? bill.items : [];
+    const lines = [
+      `BILL #${bill.bill_number || ''}`,
+      `Date: ${new Date(bill.created_at || Date.now()).toLocaleString()}`,
+      `Customer: ${bill.customer_name || ''}`,
+      bill.customer_phone ? `Phone: ${bill.customer_phone}` : null,
+      bill.customer_email ? `Email: ${bill.customer_email}` : null,
+      bill.customer_address ? `Address: ${bill.customer_address}` : null,
+      '',
+      'Items:'
+    ];
+    if (itemsList.length === 0) {
+      lines.push('- None');
+    } else {
+      itemsList.forEach((it) => {
+        const name = it.product_name || it.name || 'Item';
+        const qty = Number(it.qty || it.quantity || 0);
+        const unit = it.unit || '';
+        const amount = Number(it.amount || 0);
+        lines.push(`- ${name} ${qty}${unit ? ' ' + unit : ''} : Rs ${amount}`);
+      });
+    }
+    lines.push('');
+    lines.push(`Total: Rs ${Number(bill.total_amount || 0)}`);
+    lines.push(`Paid: Rs ${Number(bill.paid_amount || 0)}`);
+    lines.push(`Credit: Rs ${Number(bill.credit_amount || 0)}`);
+    lines.push(`Status: ${bill.payment_status || ''}`);
+    return lines.filter(Boolean).join('\n');
+  };
+
+  const handleCopyShare = async () => {
+    if (!shareText) return;
+    try {
+      await navigator.clipboard.writeText(shareText);
+      alert('Bill text copied.');
+    } catch {
+      alert('Failed to copy bill text.');
     }
   };
   
@@ -459,6 +554,26 @@ function Billing() {
           <CheckCircle size={20} />
           <span>{success}</span>
           <button onClick={() => setSuccess(null)}><X size={16} /></button>
+        </div>
+      )}
+
+      {shareText && (
+        <div className="share-panel fade-in-up">
+          <div className="share-header">
+            <strong>Share Bill {shareBillNumber ? `#${shareBillNumber}` : ''}</strong>
+          </div>
+          <textarea className="share-text" readOnly value={shareText} />
+          <div className="share-actions">
+            <button type="button" className="share-btn" onClick={handleCopyShare}>Copy</button>
+            <a
+              className="share-btn whatsapp"
+              href={`https://wa.me/?text=${encodeURIComponent(shareText)}`}
+              target="_blank"
+              rel="noreferrer"
+            >
+              WhatsApp
+            </a>
+          </div>
         </div>
       )}
       

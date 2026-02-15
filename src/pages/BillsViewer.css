@@ -271,6 +271,47 @@
   transform: translateY(-2px);
 }
 
+.share-btn {
+  background: var(--color-primary);
+  color: #fff;
+}
+
+.share-btn:hover {
+  transform: translateY(-2px);
+  box-shadow: var(--shadow-md);
+}
+
+.print-btn {
+  background: #1f2937;
+  color: #fff;
+}
+
+.print-btn:hover {
+  transform: translateY(-2px);
+  box-shadow: var(--shadow-md);
+}
+
+.sms-btn {
+  background: #0ea5e9;
+  color: #fff;
+}
+
+.sms-btn:hover {
+  transform: translateY(-2px);
+  box-shadow: var(--shadow-md);
+}
+
+.whatsapp-btn {
+  background: #16a34a;
+  color: #fff;
+  text-decoration: none;
+}
+
+.whatsapp-btn:hover {
+  transform: translateY(-2px);
+  box-shadow: var(--shadow-md);
+}
+
 .bill-details-section {
   margin-bottom: 1.5rem;
 }

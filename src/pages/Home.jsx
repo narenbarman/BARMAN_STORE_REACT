@@ -1,6 +1,7 @@
 import { Link } from 'react-router-dom';
 import { Coffee, ShoppingBag, Truck, Shield } from 'lucide-react';
 import './Home.css';
+import * as info from './info';
 
 function Home() {
   return (
@@ -9,13 +10,10 @@ function Home() {
       <section className="hero">
         <div className="hero-content fade-in-up">
           <h1 className="hero-title">
-            <span className="hero-title-main">BARMAN STORE</span>
-            <span className="hero-title-sub">Quality Groceries & Everyday Essentials</span>
+            <span className="hero-title-main">{info.TITLE}</span>
+            <span className="hero-title-sub">{info.SUB_TITLE}</span>
           </h1>
-          <p className="hero-description">
-            Elevate your coffee experience with our curated collection of artisan beans,
-            professional equipment, and exclusive barista essentials.
-          </p>
+          <p className="hero-description">{}info.DESCRIPTION</p>
           <Link to="/products" className="hero-cta">
             Explore Collection
           </Link>

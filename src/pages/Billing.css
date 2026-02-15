@@ -856,6 +856,55 @@
   box-shadow: 0 0 0 3px rgba(0, 0, 0, 0.1);
 }
 
+.share-panel {
+  margin-bottom: 20px;
+  padding: 16px;
+  border-radius: 12px;
+  border: 2px solid var(--color-border);
+  background: var(--color-bg);
+}
+
+.share-panel .share-header {
+  margin-bottom: 10px;
+  color: var(--color-primary);
+}
+
+.share-panel .share-text {
+  width: 100%;
+  min-height: 160px;
+  border-radius: 10px;
+  border: 1px solid var(--color-border);
+  padding: 10px;
+  font-family: var(--font-mono);
+  font-size: 0.9rem;
+  background: #fff;
+  resize: vertical;
+}
+
+.share-panel .share-actions {
+  display: flex;
+  gap: 10px;
+  margin-top: 10px;
+}
+
+.share-panel .share-btn {
+  border: 1px solid var(--color-primary);
+  background: var(--color-primary);
+  color: #fff;
+  padding: 8px 14px;
+  border-radius: 10px;
+  cursor: pointer;
+  text-decoration: none;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.share-panel .share-btn.whatsapp {
+  background: #16a34a;
+  border-color: #16a34a;
+}
+
 /* Full width for some fields */
 .form-group.full-width {
   grid-column: 1 / -1;

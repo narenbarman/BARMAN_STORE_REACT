@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { Download, Trash2, Search } from 'lucide-react';
 import { billingApi } from '../services/api';
+import company from '../config/company';
 import './BillsViewer.css';
 
 const BillsViewer = () => {
@@ -86,6 +87,175 @@ Payment Status: ${bill.payment_status}
     document.body.removeChild(element);
   };
 
+  const buildShareText = (bill) => {
+    const items = Array.isArray(bill.items) ? bill.items : [];
+    const lines = [
+      `BILL #${bill.bill_number || ''}`,
+      `Date: ${new Date(bill.created_at || Date.now()).toLocaleString()}`,
+      `Customer: ${bill.customer_name || ''}`,
+      bill.customer_phone ? `Phone: ${bill.customer_phone}` : null,
+      bill.customer_email ? `Email: ${bill.customer_email}` : null,
+      bill.customer_address ? `Address: ${bill.customer_address}` : null,
+      '',
+      'Items:'
+    ];
+    if (items.length === 0) {
+      lines.push('- None');
+    } else {
+      items.forEach((it) => {
+        const name = it.product_name || it.name || 'Item';
+        const qty = Number(it.qty || it.quantity || 0);
+        const unit = it.unit || '';
+        const amount = Number(it.amount || 0);
+        lines.push(`- ${name} ${qty}${unit ? ' ' + unit : ''} : Rs ${amount}`);
+      });
+    }
+    lines.push('');
+    lines.push(`Total: Rs ${Number(bill.total_amount || 0)}`);
+    lines.push(`Paid: Rs ${Number(bill.paid_amount || 0)}`);
+    lines.push(`Credit: Rs ${Number(bill.credit_amount || 0)}`);
+    lines.push(`Status: ${bill.payment_status || ''}`);
+    return lines.filter(Boolean).join('\n');
+  };
+
+  const buildSmsText = (bill) => {
+    const text = `BILL ${bill.bill_number || ''} Total Rs ${Number(bill.total_amount || 0)} Paid Rs ${Number(bill.paid_amount || 0)} Credit Rs ${Number(bill.credit_amount || 0)}. ${company.name}`;
+    return text.length > 160 ? text.slice(0, 157) + '...' : text;
+  };
+
+  const buildInvoiceHtml = (bill) => {
+    const items = Array.isArray(bill.items) ? bill.items : [];
+    const rows = items.map((it) => {
+      const name = it.product_name || it.name || 'Item';
+      const qty = Number(it.qty || it.quantity || 0);
+      const unit = it.unit || '';
+      const mrp = Number(it.mrp || 0);
+      const discount = Number(it.discount || 0);
+      const amount = Number(it.amount || 0);
+      return `
+        <tr>
+          <td>${name}</td>
+          <td>${qty}${unit ? ' ' + unit : ''}</td>
+          <td>Rs ${mrp.toFixed(2)}</td>
+          <td>Rs ${discount.toFixed(2)}</td>
+          <td>Rs ${amount.toFixed(2)}</td>
+        </tr>
+      `;
+    }).join('');
+
+    return `
+      <div class="invoice">
+        <div class="invoice-header">
+          <div class="invoice-brand">
+            ${company.logoPath ? `<img src="${company.logoPath}" alt="Logo" />` : ''}
+            <div>
+              <div class="company-name">${company.name}</div>
+              <div class="company-meta">GST: ${company.gstNumber}</div>
+              <div class="company-meta">${company.address}</div>
+              <div class="company-meta">${company.phone} | ${company.email}</div>
+            </div>
+          </div>
+          <div class="invoice-info">
+            <div><strong>Bill #</strong> ${bill.bill_number || ''}</div>
+            <div><strong>Date</strong> ${new Date(bill.created_at || Date.now()).toLocaleString()}</div>
+            <div><strong>Status</strong> ${bill.payment_status || ''}</div>
+          </div>
+        </div>
+
+        <div class="invoice-section">
+          <div><strong>Customer</strong></div>
+          <div>${bill.customer_name || ''}</div>
+          ${bill.customer_phone ? `<div>${bill.customer_phone}</div>` : ''}
+          ${bill.customer_email ? `<div>${bill.customer_email}</div>` : ''}
+          ${bill.customer_address ? `<div>${bill.customer_address}</div>` : ''}
+        </div>
+
+        <table class="invoice-table">
+          <thead>
+            <tr>
+              <th>Item</th>
+              <th>Qty</th>
+              <th>MRP</th>
+              <th>Discount</th>
+              <th>Amount</th>
+            </tr>
+          </thead>
+          <tbody>
+            ${rows || '<tr><td colspan="5">No items</td></tr>'}
+          </tbody>
+        </table>
+
+        <div class="invoice-summary">
+          <div><span>Subtotal</span><span>Rs ${Number(bill.subtotal || 0).toFixed(2)}</span></div>
+          <div><span>Discount</span><span>Rs ${Number(bill.discount_amount || 0).toFixed(2)}</span></div>
+          <div><span>Total</span><span>Rs ${Number(bill.total_amount || 0).toFixed(2)}</span></div>
+          <div><span>Paid</span><span>Rs ${Number(bill.paid_amount || 0).toFixed(2)}</span></div>
+          <div><span>Credit</span><span>Rs ${Number(bill.credit_amount || 0).toFixed(2)}</span></div>
+        </div>
+
+        <div class="invoice-footer">
+          <div>Thank you for your business.</div>
+        </div>
+      </div>
+    `;
+  };
+
+  const handlePrint = (bill) => {
+    const html = buildInvoiceHtml(bill);
+    const w = window.open('', '_blank');
+    if (!w) {
+      alert('Popup blocked. Please allow popups to print.');
+      return;
+    }
+    w.document.write(`
+      <html>
+        <head>
+          <title>Bill ${bill.bill_number || ''}</title>
+          <style>
+            body { font-family: Arial, sans-serif; padding: 24px; color: #111; }
+            .invoice { max-width: 800px; margin: 0 auto; }
+            .invoice-header { display: flex; justify-content: space-between; gap: 16px; margin-bottom: 16px; }
+            .invoice-brand { display: flex; gap: 12px; align-items: center; }
+            .invoice-brand img { width: 60px; height: 60px; object-fit: contain; }
+            .company-name { font-size: 18px; font-weight: 700; }
+            .company-meta { font-size: 12px; color: #444; }
+            .invoice-info { text-align: right; font-size: 12px; }
+            .invoice-section { margin: 12px 0 16px; font-size: 12px; }
+            .invoice-table { width: 100%; border-collapse: collapse; font-size: 12px; }
+            .invoice-table th, .invoice-table td { border: 1px solid #ddd; padding: 6px; text-align: left; }
+            .invoice-summary { margin-top: 12px; display: grid; gap: 6px; font-size: 12px; }
+            .invoice-summary div { display: flex; justify-content: space-between; }
+            .invoice-footer { margin-top: 16px; font-size: 12px; text-align: center; color: #444; }
+          </style>
+        </head>
+        <body>${html}</body>
+      </html>
+    `);
+    w.document.close();
+    w.focus();
+    w.print();
+  };
+
+  const handleCopyShare = async (bill) => {
+    const text = buildShareText(bill);
+    try {
+      await navigator.clipboard.writeText(text);
+      alert('Bill text copied.');
+    } catch (err) {
+      alert('Failed to copy bill text.');
+    }
+  };
+
+  const handleCopySms = async (bill) => {
+    const text = buildSmsText(bill);
+    try {
+      await navigator.clipboard.writeText(text);
+      alert('SMS text copied.');
+    } catch (err) {
+      alert('Failed to copy SMS text.');
+    }
+  };
+
   const filteredBills = bills.filter(bill =>
     bill.bill_number?.toLowerCase().includes(searchTerm.toLowerCase()) ||
     bill.customer_name?.toLowerCase().includes(searchTerm.toLowerCase()) ||
@@ -161,12 +331,42 @@ Payment Status: ${bill.payment_status}
                 <h2>{selectedBill.bill_number}</h2>
                 <div className="bill-details-actions">
                   <button
+                    className="action-btn print-btn"
+                    onClick={() => handlePrint(selectedBill)}
+                    title="Print / Save as PDF"
+                  >
+                    Print/PDF
+                  </button>
+                  <button
                     className="action-btn download-btn"
                     onClick={() => downloadBillPDF(selectedBill)}
                     title="Download bill"
                   >
                     <Download size={18} /> Download
                   </button>
+                  <button
+                    className="action-btn share-btn"
+                    onClick={() => handleCopyShare(selectedBill)}
+                    title="Copy bill text"
+                  >
+                    Copy
+                  </button>
+                  <button
+                    className="action-btn sms-btn"
+                    onClick={() => handleCopySms(selectedBill)}
+                    title="Copy SMS text"
+                  >
+                    SMS
+                  </button>
+                  <a
+                    className="action-btn whatsapp-btn"
+                    href={`https://wa.me/?text=${encodeURIComponent(buildShareText(selectedBill))}`}
+                    target="_blank"
+                    rel="noreferrer"
+                    title="Share via WhatsApp"
+                  >
+                    WhatsApp
+                  </a>
                   <button
                     className="action-btn delete-btn"
                     onClick={() => deleteBill(selectedBill.id)}
@@ -242,6 +442,14 @@ Payment Status: ${bill.payment_status}
                 <div className="summary-row highlight">
                   <span>Total:</span>
                   <span>₹{selectedBill.total_amount}</span>
+                </div>
+                <div className="summary-row">
+                  <span>Paid Amount:</span>
+                  <span>₹{selectedBill.paid_amount ?? 0}</span>
+                </div>
+                <div className="summary-row">
+                  <span>Credit Amount:</span>
+                  <span>₹{selectedBill.credit_amount ?? 0}</span>
                 </div>
                 <div className="summary-row">
                   <span>Payment Method:</span>

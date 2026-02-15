@@ -11,11 +11,16 @@ import Admin from './pages/Admin';
 import CreditHistory from './pages/CreditHistory';
 import OrderHistory from './pages/OrderHistory';
 import OrderTracking from './pages/OrderTracking';
+import MyOrders from './pages/MyOrders';
+import OrderDetails from './pages/OrderDetails';
 import Profile from './pages/Profile';
 import Billing from './pages/Billing';
 import UserMenu from './components/UserMenu';
+import ErrorBoundary from './components/ErrorBoundary';
 import './index.css';
 import './App.css';
+
+
 
 // React Router v7 future flags to opt-in early and suppress warnings
 const routerFuture = {
@@ -37,13 +42,14 @@ function App() {
   }, []);
 
   return (
-    <Router future={routerFuture}>
+    <ErrorBoundary>
+      <Router future={routerFuture}>
       <div className="app">
         {/* Header */}
         <header className="header">
           <div className="header-content">
             <Link to="/" className="logo">
-              <img src="/logo.png" alt="Logo" className="logo-image" />
+              <img src='.\logo.png' alt="Logo" className="logo-image" />
               <span className="logo-bar">BAR</span>
               <span className="logo-man">MAN</span>
               <span className="logo-store">STORE</span>
@@ -92,6 +98,8 @@ function App() {
             <Route path="/admin" element={<Admin user={user} />} />
             <Route path="/admin/users/:userId/credit" element={<CreditHistory user={user} />} />
             <Route path="/order-history" element={<OrderHistory />} />
+            <Route path="/my-orders" element={<MyOrders />} />
+            <Route path="/orders/:id" element={<OrderDetails />} />
             <Route path="/order-tracking" element={<OrderTracking />} />
             <Route path="/order-tracking/:orderId" element={<OrderTracking />} />
             <Route path="/profile" element={<Profile />} />
@@ -105,7 +113,7 @@ function App() {
           <div className="footer-content">
             <div className="footer-section">
               <h3>BARMAN STORE</h3>
-              <p>Premium coffee and barista equipment</p>
+              <p>Quality Groceries & Everyday Essentials</p>
             </div>
             <div className="footer-section">
               <h4>Quick Links</h4>
@@ -124,6 +132,7 @@ function App() {
         </footer>
       </div>
     </Router>
+    </ErrorBoundary>
   );
 }
 

@@ -76,6 +76,10 @@ function UserMenu({ user, setUser }) {
                     <span>Admin Panel</span>
                   </Link>
                 )}
+                <Link to="/my-orders" className="dropdown-item" onClick={() => setMenuOpen(false)}>
+                  <User size={18} />
+                  <span>My Orders</span>
+                </Link>
 
                 <div className="dropdown-divider"></div>
 
