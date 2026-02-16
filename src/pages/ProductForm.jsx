@@ -31,6 +31,7 @@ function ProductForm({ product, onClose, onSave }) {
   const [error, setError] = useState('');
   const [errors, setErrors] = useState({});
   const [showImageSearch, setShowImageSearch] = useState(false);
+  const [isDescriptionAuto, setIsDescriptionAuto] = useState(true);
 
   // UOM options for groceries
   const uomOptions = [
@@ -69,6 +70,9 @@ function ProductForm({ product, onClose, onSave }) {
         defaultDiscount: product.defaultDiscount?.toString() || '',
         discountType: product.discountType || 'fixed'
       });
+      setIsDescriptionAuto(false);
+    } else {
+      setIsDescriptionAuto(true);
     }
   }, [product]);
 
@@ -82,12 +86,42 @@ function ProductForm({ product, onClose, onSave }) {
   };
 
   // Auto-generate SKU when relevant fields change
-  const generateAutoSKU = () => {
-    const namePart = (formData.name || 'XX').substring(0, 2).toUpperCase();
-    const brandPart = (formData.brand || 'XX').substring(0, 2).toUpperCase();
-    const contentPart = (formData.content || 'XX').substring(0, 2).toUpperCase();
-    const pricePart = (parseFloat(formData.mrp) || parseFloat(formData.price) || 0).toString().padStart(4, '0').substring(0, 4);
+  const generateAutoSKU = (data = formData) => {
+    const sanitize = (v) => String(v || '').replace(/[^a-zA-Z0-9]/g, '').toUpperCase();
+    const namePart = sanitize(data.name).slice(0, 4).padEnd(4, 'X');
+    const brandPart = sanitize(data.brand).slice(0, 4).padEnd(4, 'X');
+    const contentPart = sanitize(data.content).slice(0, 2).padEnd(2, 'X');
+    const mrpRounded = Math.round(parseFloat(data.mrp) || parseFloat(data.price) || 0);
+    const pricePart = String(mrpRounded).replace(/\D/g, '').slice(-4).padStart(4, '0');
     return `${namePart}${brandPart}${contentPart}${pricePart}`;
+  };
+
+  const generateDescriptionSuggestion = (data = formData) => {
+    const name = (data.name || '').trim();
+    if (!name) return '';
+
+    const brand = (data.brand || '').trim();
+    const content = (data.content || '').trim();
+    const category = (data.category || '').trim();
+    const color = (data.color || '').trim();
+
+    const parts = [name];
+    if (brand) parts.push(`by ${brand}`);
+    if (content) parts.push(`(${content})`);
+
+    let description = parts.join(' ');
+    if (category) description += ` in ${category} category`;
+    if (color) description += `, ${color} variant`;
+    description += '. Quality product for daily use.';
+
+    return description;
+  };
+
+  const handleSuggestDescription = () => {
+    const suggested = generateDescriptionSuggestion(formData);
+    if (!suggested) return;
+    setFormData(prev => ({ ...prev, description: suggested }));
+    setIsDescriptionAuto(true);
   };
 
   const validateForm = () => {
@@ -119,7 +153,7 @@ function ProductForm({ product, onClose, onSave }) {
 
   const handleChange = (e) => {
     const { name, value } = e.target;
-    setFormData(prev => ({ ...prev, [name]: value }));
+    const nextFormData = { ...formData, [name]: value };
     
     // Clear error when user starts typing
     if (errors[name]) {
@@ -127,10 +161,25 @@ function ProductForm({ product, onClose, onSave }) {
     }
     
     // Auto-generate SKU when relevant fields change
-    if (['name', 'brand', 'content', 'price'].includes(name)) {
-      const newSku = generateAutoSKU();
-      setFormData(prev => ({ ...prev, sku: newSku }));
+    if (['name', 'brand', 'content', 'price', 'mrp'].includes(name)) {
+      nextFormData.sku = generateAutoSKU(nextFormData);
     }
+
+    if (name === 'description') {
+      setIsDescriptionAuto(false);
+    }
+
+    if (['name', 'brand', 'content', 'category', 'color'].includes(name)) {
+      if (!nextFormData.description.trim() || isDescriptionAuto) {
+        const suggested = generateDescriptionSuggestion(nextFormData);
+        if (suggested) {
+          nextFormData.description = suggested;
+          setIsDescriptionAuto(true);
+        }
+      }
+    }
+
+    setFormData(nextFormData);
   };
 
   const handleSubmit = async (e) => {
@@ -215,7 +264,12 @@ function ProductForm({ product, onClose, onSave }) {
             </div>
 
             <div className="form-group">
-              <label htmlFor="description">Description *</label>
+              <div className="description-header">
+                <label htmlFor="description">Description *</label>
+                <button type="button" className="suggest-description-btn" onClick={handleSuggestDescription}>
+                  Suggest
+                </button>
+              </div>
               <textarea
                 id="description"
                 name="description"
@@ -225,6 +279,7 @@ function ProductForm({ product, onClose, onSave }) {
                 rows="3"
                 className={`input-field ${errors.description ? 'error' : ''}`}
               />
+              <small className="field-help">Description is auto-suggested from product name. You can edit it anytime.</small>
               {errors.description && <span className="field-error">{errors.description}</span>}
             </div>
 
@@ -477,7 +532,7 @@ function ProductForm({ product, onClose, onSave }) {
                   className="input-field"
                   readOnly={!isEditing}
                 />
-                <small className="field-help">Format: Name[:2] + Brand[:2] + Content[:2] + Price</small>
+                <small className="field-help">Format: Name[:4] + Brand[:4] + Content[:2] + MRP[:4]</small>
               </div>
 
               <div className="form-group">

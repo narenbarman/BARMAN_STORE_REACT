@@ -831,7 +831,7 @@ function PurchaseManagement({ user }) {
                       <td><strong>{order.po_number}</strong></td>
                       <td>{order.distributor_name}</td>
                       <td>{order.items?.length || 0}</td>
-                      <td>{formatCurrency(toNumber(order.total_amount ?? getOrderDisplayTotal(order)))}</td>
+                      <td>{formatCurrency(getOrderDisplayTotal_AM(order))}</td>
                       <td>{getStatusBadge(order.status)}</td>
                       <td>{order.expected_delivery ? new Date(order.expected_delivery).toLocaleDateString() : '-'}</td>
                       <td className="actions-cell">
@@ -902,7 +902,7 @@ function PurchaseManagement({ user }) {
                       <td>{new Date(entry.created_at || entry.transaction_date || Date.now()).toLocaleDateString()}</td>
                       <td>{getDistributorName(entry)}</td>
                       <td>{getLedgerTypeLabel(entry)}</td>
-                      <td>{formatCurrency(toNumber(entry.total_amount ?? entry.grand_total ?? entry.line_total ?? entry.amount))}</td>
+                      <td>{formatCurrency(toNumber(entry.amount))}</td>
                       <td>{formatCurrency(toNumber(entry.computed_balance ?? entry.balance))}</td>
                       <td>{entry.payment_mode || entry.method || '-'}</td>
                       <td>{entry.reference || entry.po_number || '-'}</td>

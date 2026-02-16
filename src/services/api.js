@@ -616,10 +616,10 @@ export const purchaseOrdersApi = {
       method: 'PUT',
       body: orderData,
     }),
-  updateStatus: (id, status) =>
+  updateStatus: (id, status, extra = {}) =>
     apiFetch(`/api/purchase-orders/${id}/status`, {
       method: 'PUT',
-      body: { status },
+      body: { status, ...extra },
     }),
   delete: (id) =>
     apiFetch(`/api/purchase-orders/${id}`, {

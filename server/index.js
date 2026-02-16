@@ -85,11 +85,11 @@ const normalizePaymentMethod = (method) => {
 
 const generateSku = (name, brand, content, mrp) => {
   const part = (v) => String(v || '').replace(/[^a-zA-Z0-9]/g, '').toUpperCase();
-  const n = part(name).slice(0, 2).padEnd(2, 'X');
-  const b = part(brand).slice(0, 2).padEnd(2, 'X');
+  const n = part(name).slice(0, 4).padEnd(4, 'X');
+  const b = part(brand).slice(0, 4).padEnd(4, 'X');
   const c = part(content).slice(0, 2).padEnd(2, 'X');
   const p = String(Math.round(Number(mrp || 0))).replace(/\D/g, '').slice(-4).padStart(4, '0');
-  return `${n}${b}${c}${p}`.slice(0, 10);
+  return `${n}${b}${c}${p}`;
 };
 
 const dbRun = (sql, params = []) => db.prepare(sql).run(params);
@@ -384,6 +384,7 @@ const initDB = () => {
   alterTableSafe(`ALTER TABLE purchase_orders ADD COLUMN subtotal REAL DEFAULT 0`);
   alterTableSafe(`ALTER TABLE purchase_orders ADD COLUMN tax_amount REAL DEFAULT 0`);
   alterTableSafe(`ALTER TABLE purchase_orders ADD COLUMN total_amount REAL DEFAULT 0`);
+  alterTableSafe(`ALTER TABLE purchase_orders ADD COLUMN bill_number TEXT`);
   alterTableSafe(`ALTER TABLE purchase_order_items ADD COLUMN rate REAL DEFAULT 0`);
   alterTableSafe(`ALTER TABLE purchase_order_items ADD COLUMN gst_rate REAL DEFAULT 0`);
   alterTableSafe(`ALTER TABLE purchase_order_items ADD COLUMN discount_type TEXT DEFAULT 'percent'`);
@@ -1598,8 +1599,25 @@ app.put('/api/purchase-orders/:id', (req, res) => {
 app.put('/api/purchase-orders/:id/status', (req, res) => {
   try {
     const status = req.body?.status;
+    const billNumberRaw = req.body?.bill_number ?? req.body?.invoice_number;
+    const billNumber = billNumberRaw === undefined || billNumberRaw === null ? null : String(billNumberRaw).trim();
     if (!status) return res.status(400).json({ error: 'status is required' });
-    dbRun(`UPDATE purchase_orders SET status = ?, updated_at=CURRENT_TIMESTAMP WHERE id = ?`, [status, req.params.id]);
+    const order = dbGet(`SELECT * FROM purchase_orders WHERE id = ?`, [req.params.id]);
+    if (!order) return res.status(404).json({ error: 'Purchase order not found' });
+
+    if (status === 'confirmed') {
+      dbRun(
+        `UPDATE purchase_orders
+         SET status = ?,
+             bill_number = COALESCE(?, bill_number),
+             invoice_number = COALESCE(?, invoice_number),
+             updated_at = CURRENT_TIMESTAMP
+         WHERE id = ?`,
+        [status, billNumber || null, billNumber || null, req.params.id]
+      );
+    } else {
+      dbRun(`UPDATE purchase_orders SET status = ?, updated_at=CURRENT_TIMESTAMP WHERE id = ?`, [status, req.params.id]);
+    }
     return res.json({ success: true });
   } catch (error) {
     return res.status(500).json({ error: error.message });

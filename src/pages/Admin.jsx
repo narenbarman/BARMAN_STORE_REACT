@@ -51,6 +51,28 @@ function Admin({ user }) {
   const [modalOrder, setModalOrder] = useState(null);
   const [modalItems, setModalItems] = useState([]);
   const [modalLoading, setModalLoading] = useState(false);
+  const tabGroupMap = {
+    dashboard: 'general',
+    orders: 'general',
+    offers: 'general',
+    'credit-aging': 'general',
+    products: 'products',
+    categories: 'products',
+    billing: 'billing',
+    'view-bills': 'billing',
+    purchases: 'purchase',
+    distributors: 'purchase',
+    'stock-ledger': 'purchase',
+    users: 'users',
+    'password-resets': 'users'
+  };
+  const [expandedGroups, setExpandedGroups] = useState({
+    general: true,
+    products: false,
+    billing: false,
+    purchase: false,
+    users: false
+  });
 
   const refreshAdminData = async () => {
     const [statsData, productsData, ordersData, usersData] = await Promise.all([
@@ -132,6 +154,16 @@ function Admin({ user }) {
 
     fetchData();
   }, [user, navigate]);
+
+  useEffect(() => {
+    const group = tabGroupMap[activeTab];
+    if (!group) return;
+    setExpandedGroups(prev => ({ ...prev, [group]: true }));
+  }, [activeTab]);
+
+  const toggleSidebarGroup = (groupKey) => {
+    setExpandedGroups(prev => ({ ...prev, [groupKey]: !prev[groupKey] }));
+  };
 
   const fetchData = async () => {
     try {
@@ -260,86 +292,161 @@ function Admin({ user }) {
       <div className="admin-sidebar">
         <h2>Admin Panel</h2>
         <nav>
-          <button 
-            className={activeTab === 'dashboard' ? 'active' : ''}
-            onClick={() => setActiveTab('dashboard')}
-          >
-            <TrendingUp size={20} /> Dashboard
-          </button>
-          <button 
-            className={activeTab === 'products' ? 'active' : ''}
-            onClick={() => setActiveTab('products')}
-          >
-            <Package size={20} /> Products
-          </button>
-          <button 
-            className={activeTab === 'orders' ? 'active' : ''}
-            onClick={() => setActiveTab('orders')}
-          >
-            <ShoppingCart size={20} /> Orders
-          </button>
-          <button 
-            className={activeTab === 'categories' ? 'active' : ''}
-            onClick={() => setActiveTab('categories')}
-          >
-            <FolderOpen size={20} /> Categories
-          </button>
-          <button 
-            className={activeTab === 'users' ? 'active' : ''}
-            onClick={() => setActiveTab('users')}
-          >
-            <Users size={20} /> Users
-          </button>
-          <button 
-            className={activeTab === 'billing' ? 'active' : ''}
-            onClick={() => setActiveTab('billing')}
-          >
-            <FileText size={20} /> Billing
-          </button>
-          <button 
-            className={activeTab === 'view-bills' ? 'active' : ''}
-            onClick={() => setActiveTab('view-bills')}
-          >
-            <Eye size={20} /> View Bills
-          </button>
-          <button 
-            className={activeTab === 'distributors' ? 'active' : ''}
-            onClick={() => setActiveTab('distributors')}
-          >
-            <Truck size={20} /> Distributors
-          </button>
-          <button 
-            className={activeTab === 'purchases' ? 'active' : ''}
-            onClick={() => setActiveTab('purchases')}
-          >
-            <ShoppingBag size={20} /> Purchases
-          </button>
-          <button 
-            className={activeTab === 'stock-ledger' ? 'active' : ''}
-            onClick={() => setActiveTab('stock-ledger')}
-          >
-            <History size={20} /> Stock History
-          </button>
-          <button 
-            className={activeTab === 'credit-aging' ? 'active' : ''}
-            onClick={() => setActiveTab('credit-aging')}
-          >
-            <BarChart2 size={20} /> Credit Aging
-          </button>
-          <button
-            className={activeTab === 'offers' ? 'active' : ''}
-            onClick={() => setActiveTab('offers')}
-          >
-            <Gift size={20} /> Offers
-          </button>
-          <button
-            className={activeTab === 'password-resets' ? 'active' : ''}
-            onClick={() => setActiveTab('password-resets')}
-          >
-            <KeyRound size={20} /> Password Resets
-          </button>
+          <div className="sidebar-group">
+            <button
+              type="button"
+              className={`sidebar-group-toggle ${expandedGroups.general ? 'expanded' : ''}`}
+              data-label="General"
+              onClick={() => toggleSidebarGroup('general')}
+            >
+              <TrendingUp size={20} />
+            </button>
+            {expandedGroups.general && (
+              <div className="sidebar-group-items">
+                <button 
+                  className={activeTab === 'dashboard' ? 'active' : ''}
+                  onClick={() => setActiveTab('dashboard')}
+                >
+                  <TrendingUp size={20} /> Dashboard
+                </button>
+                <button 
+                  className={activeTab === 'orders' ? 'active' : ''}
+                  onClick={() => setActiveTab('orders')}
+                >
+                  <ShoppingCart size={20} /> Orders
+                </button>
+                <button
+                  className={activeTab === 'offers' ? 'active' : ''}
+                  onClick={() => setActiveTab('offers')}
+                >
+                  <Gift size={20} /> Offers
+                </button>
+                <button 
+                  className={activeTab === 'credit-aging' ? 'active' : ''}
+                  onClick={() => setActiveTab('credit-aging')}
+                >
+                  <BarChart2 size={20} /> Credit Aging
+                </button>
+              </div>
+            )}
+          </div>
+
+          <div className="sidebar-group">
+            <button
+              type="button"
+              className={`sidebar-group-toggle ${expandedGroups.products ? 'expanded' : ''}`}
+              data-label="Products"
+              onClick={() => toggleSidebarGroup('products')}
+            >
+              <Package size={20} />
+            </button>
+            {expandedGroups.products && (
+              <div className="sidebar-group-items">
+                <button 
+                  className={activeTab === 'products' ? 'active' : ''}
+                  onClick={() => setActiveTab('products')}
+                >
+                  <Package size={20} /> Products
+                </button>
+                <button 
+                  className={`${activeTab === 'categories' ? 'active' : ''} sub-item`}
+                  onClick={() => setActiveTab('categories')}
+                >
+                  <FolderOpen size={18} /> Categories
+                </button>
+              </div>
+            )}
+          </div>
+
+          <div className="sidebar-group">
+            <button
+              type="button"
+              className={`sidebar-group-toggle ${expandedGroups.billing ? 'expanded' : ''}`}
+              data-label="Billing"
+              onClick={() => toggleSidebarGroup('billing')}
+            >
+              <FileText size={20} />
+            </button>
+            {expandedGroups.billing && (
+              <div className="sidebar-group-items">
+                <button 
+                  className={activeTab === 'billing' ? 'active' : ''}
+                  onClick={() => setActiveTab('billing')}
+                >
+                  <FileText size={20} /> Billing
+                </button>
+                <button 
+                  className={`${activeTab === 'view-bills' ? 'active' : ''} sub-item`}
+                  onClick={() => setActiveTab('view-bills')}
+                >
+                  <Eye size={18} /> Bills History
+                </button>
+              </div>
+            )}
+          </div>
+
+          <div className="sidebar-group">
+            <button
+              type="button"
+              className={`sidebar-group-toggle ${expandedGroups.purchase ? 'expanded' : ''}`}
+              data-label="Purchase"
+              onClick={() => toggleSidebarGroup('purchase')}
+            >
+              <ShoppingBag size={20} />
+            </button>
+            {expandedGroups.purchase && (
+              <div className="sidebar-group-items">
+                <button 
+                  className={activeTab === 'purchases' ? 'active' : ''}
+                  onClick={() => setActiveTab('purchases')}
+                >
+                  <ShoppingBag size={20} /> Purchases
+                </button>
+                <button 
+                  className={`${activeTab === 'distributors' ? 'active' : ''} sub-item`}
+                  onClick={() => setActiveTab('distributors')}
+                >
+                  <Truck size={18} /> Distributors
+                </button>
+                <button 
+                  className={`${activeTab === 'stock-ledger' ? 'active' : ''} sub-item`}
+                  onClick={() => setActiveTab('stock-ledger')}
+                >
+                  <History size={18} /> Stock History
+                </button>
+              </div>
+            )}
+          </div>
+
+          <div className="sidebar-group">
+            <button
+              type="button"
+              className={`sidebar-group-toggle ${expandedGroups.users ? 'expanded' : ''}`}
+              data-label="Users"
+              onClick={() => toggleSidebarGroup('users')}
+            >
+              <Users size={20} />
+            </button>
+            {expandedGroups.users && (
+              <div className="sidebar-group-items">
+                <button 
+                  className={activeTab === 'users' ? 'active' : ''}
+                  onClick={() => setActiveTab('users')}
+                >
+                  <Users size={20} /> Users
+                </button>
+                <button
+                  className={`${activeTab === 'password-resets' ? 'active' : ''} sub-item`}
+                  onClick={() => setActiveTab('password-resets')}
+                >
+                  <KeyRound size={18} /> Password Resets
+                </button>
+              </div>
+            )}
+          </div>
+
           <Link to="/" className="logout-link">
-            <LogOut size={20} /> Back to Site
+            <LogOut size={20} /> 
           </Link>
         </nav>
       </div>
