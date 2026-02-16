@@ -1,9 +1,229 @@
 import { useState, useEffect } from 'react';
 import { Plus, Edit, Trash2, X, Search, Package, Truck, RotateCcw, Eye, Check, Clock, ArrowUpDown } from 'lucide-react';
-import { purchaseOrdersApi, distributorsApi, productsApi, purchaseReturnsApi, stockLedgerApi } from '../services/api';
+import { purchaseOrdersApi, distributorsApi, productsApi, purchaseReturnsApi, stockLedgerApi, distributorLedgerApi } from '../services/api';
 import './PurchaseManagement.css';
 
 function PurchaseManagement({ user }) {
+  const getTodayDate = () => new Date().toISOString().split('T')[0];
+  const LOCAL_LEDGER_KEY = 'purchase_distributor_ledger_local_entries';
+
+  const getDefaultLedgerFormData = () => ({
+    distributor_id: '',
+    type: 'payment',
+    amount: '',
+    payment_mode: 'cash',
+    transaction_date: getTodayDate(),
+    reference: '',
+    description: ''
+  });
+
+  const toNumber = (value) => {
+    const num = Number(value);
+    return Number.isFinite(num) ? num : 0;
+  };
+
+  const getRecordDate = (entry) => new Date(entry.created_at || entry.transaction_date || entry.date || Date.now()).getTime();
+  const getLedgerDistributorKey = (entry) => {
+    if (entry?.distributor_id !== undefined && entry?.distributor_id !== null) return String(entry.distributor_id);
+    if (entry?.distributor_name) return `name:${String(entry.distributor_name).toLowerCase()}`;
+    return 'unknown';
+  };
+
+  const getLedgerTypeKey = (entry) => String(entry?.type || entry?.transaction_type || '').toLowerCase();
+
+  const getSignedLedgerAmount = (entry) => {
+    const amount = Math.abs(toNumber(entry?.amount));
+    const type = getLedgerTypeKey(entry);
+    if (type === 'payment') return -amount;
+    return amount;
+  };
+
+  const calculateOrderBalanceAmount = (order) => {
+    const explicitTotal = toNumber(
+      order?.total_amount ??
+      order?.grand_total ??
+      order?.line_total
+    );
+    if (explicitTotal > 0) return explicitTotal;
+
+    const items = Array.isArray(order?.items) ? order.items : [];
+    const itemsTotal = items.reduce((sum, item) => {
+      const lineTotal = toNumber(item?.line_total ?? item?.total_amount ?? item?.total);
+      if (lineTotal > 0) return sum + lineTotal;
+      const lineTaxable = toNumber(item?.taxable_value);
+      const lineTax = toNumber(item?.tax_amount);
+      if (lineTaxable > 0 || lineTax > 0) return sum + lineTaxable + lineTax;
+      const qty = toNumber(item?.quantity);
+      const rate = toNumber(item?.rate ?? item?.unit_price);
+      return sum + (qty * rate);
+    }, 0);
+    if (itemsTotal > 0) return itemsTotal;
+
+    const taxable = toNumber(order?.taxable_value);
+    const tax = toNumber(order?.tax_amount);
+    if (taxable > 0 || tax > 0) return taxable + tax;
+
+    return toNumber(order?.total);
+  };
+
+  const getOrderDisplayTotal = (order) => {
+    return calculateOrderBalanceAmount(order);
+  };
+
+  const getLocalLedgerEntries = () => {
+    try {
+      const raw = localStorage.getItem(LOCAL_LEDGER_KEY);
+      const parsed = raw ? JSON.parse(raw) : [];
+      return Array.isArray(parsed) ? parsed : [];
+    } catch (e) {
+      return [];
+    }
+  };
+
+  const saveLocalLedgerEntries = (entries) => {
+    try {
+      localStorage.setItem(LOCAL_LEDGER_KEY, JSON.stringify(entries));
+    } catch (e) {
+      // ignore storage failure
+    }
+  };
+
+  const addLocalLedgerEntry = (entry) => {
+    const existing = getLocalLedgerEntries();
+    saveLocalLedgerEntries([entry, ...existing]);
+  };
+
+  const getDerivedLedgerFromOrders = (orders, selectedDistributorId) => {
+    const validStatuses = new Set(['confirmed', 'shipped', 'received']);
+    const derived = (orders || [])
+      .filter(order => validStatuses.has(String(order.status || '').toLowerCase()))
+      .map(order => ({
+      id: `po-${order.id}`,
+      distributor_id: order.distributor_id,
+      distributor_name: order.distributor_name,
+      type: 'credit',
+      transaction_type: 'credit',
+      amount: calculateOrderBalanceAmount(order),
+      payment_mode: 'credit',
+      reference: order.po_number,
+      description: `Purchase Order ${order.po_number || ''}`.trim(),
+      transaction_date: order.created_at || order.order_date || order.expected_delivery || getTodayDate(),
+      mode: 'automatic'
+    }));
+
+    if (!selectedDistributorId) return derived;
+    return derived.filter(entry => String(entry.distributor_id) === String(selectedDistributorId));
+  };
+
+  const mergeLedgerRecords = (apiRecords, localRecords, derivedRecords) => {
+    const baseRecords = Array.isArray(apiRecords) ? apiRecords : [];
+    const merged = baseRecords.length > 0
+      ? [...baseRecords, ...localRecords]
+      : [...localRecords, ...derivedRecords];
+
+    const deduped = [];
+    const seen = new Set();
+    for (const entry of merged) {
+      const key = entry.id || `${entry.distributor_id || ''}-${entry.reference || ''}-${entry.amount || ''}-${getRecordDate(entry)}`;
+      if (seen.has(key)) continue;
+      seen.add(key);
+      deduped.push(entry);
+    }
+
+    const runningBalanceByDistributor = {};
+    const chronological = [...deduped].sort((a, b) => getRecordDate(a) - getRecordDate(b));
+    const withBalances = chronological.map(entry => {
+      const distributorKey = getLedgerDistributorKey(entry);
+      const prevBalance = runningBalanceByDistributor[distributorKey] || 0;
+      const nextBalance = prevBalance + getSignedLedgerAmount(entry);
+      runningBalanceByDistributor[distributorKey] = nextBalance;
+      return {
+        ...entry,
+        computed_balance: nextBalance
+      };
+    });
+
+    return withBalances.sort((a, b) => getRecordDate(b) - getRecordDate(a));
+  };
+
+  const getLedgerBalanceSummary = (records, selectedDistributorId) => {
+    const balancesByDistributor = {};
+    for (const entry of records || []) {
+      const key = getLedgerDistributorKey(entry);
+      if (balancesByDistributor[key] === undefined) {
+        balancesByDistributor[key] = toNumber(entry.computed_balance ?? entry.balance);
+      }
+    }
+
+    if (selectedDistributorId) {
+      const selectedKey = String(selectedDistributorId);
+      let selectedBalance = 0;
+      for (const [key, balance] of Object.entries(balancesByDistributor)) {
+        if (key === selectedKey) {
+          selectedBalance = balance;
+          break;
+        }
+      }
+      return {
+        label: 'Distributor Balance',
+        value: selectedBalance
+      };
+    }
+
+    const totalBalance = Object.values(balancesByDistributor).reduce((sum, value) => sum + toNumber(value), 0);
+    return {
+      label: 'Total Balance (All Distributors)',
+      value: totalBalance
+    };
+  };
+
+  const calculateOrderItem = (item) => {
+    const quantity = toNumber(item.quantity);
+    const rate = toNumber(item.rate ?? item.unit_price);
+    const grossAmount = quantity * rate;
+    const discountType = item.discount_type === 'fixed' ? 'fixed' : 'percent';
+    const discountValue = toNumber(item.discount_value);
+    const discountAmountRaw = discountType === 'percent'
+      ? (grossAmount * discountValue) / 100
+      : discountValue;
+    const discountAmount = Math.max(0, Math.min(discountAmountRaw, grossAmount));
+    const taxableValue = Math.max(0, grossAmount - discountAmount);
+    const gstRate = Math.max(0, toNumber(item.gst_rate));
+    const taxAmount = (taxableValue * gstRate) / 100;
+    const totalAmount = taxableValue + taxAmount;
+
+    return {
+      quantity,
+      rate,
+      grossAmount,
+      discountType,
+      discountValue,
+      discountAmount,
+      taxableValue,
+      gstRate,
+      taxAmount,
+      totalAmount
+    };
+  };
+
+  const calculateOrderTotals = (items = []) => {
+    return items.reduce((totals, item) => {
+      const line = calculateOrderItem(item);
+      totals.grossAmount += line.grossAmount;
+      totals.discountAmount += line.discountAmount;
+      totals.taxableValue += line.taxableValue;
+      totals.taxAmount += line.taxAmount;
+      totals.totalAmount += line.totalAmount;
+      return totals;
+    }, {
+      grossAmount: 0,
+      discountAmount: 0,
+      taxableValue: 0,
+      taxAmount: 0,
+      totalAmount: 0
+    });
+  };
+
   const [activeSubTab, setActiveSubTab] = useState('orders');
   const [purchaseOrders, setPurchaseOrders] = useState([]);
   const [purchaseReturns, setPurchaseReturns] = useState([]);
@@ -24,8 +244,12 @@ function PurchaseManagement({ user }) {
   const [showOrderForm, setShowOrderForm] = useState(false);
   const [showReceiveModal, setShowReceiveModal] = useState(false);
   const [showReturnForm, setShowReturnForm] = useState(false);
+  const [showLedgerForm, setShowLedgerForm] = useState(false);
   const [selectedOrder, setSelectedOrder] = useState(null);
   const [selectedReturn, setSelectedReturn] = useState(null);
+  const [ledgerRecords, setLedgerRecords] = useState([]);
+  const [ledgerLoading, setLedgerLoading] = useState(false);
+  const [ledgerFormData, setLedgerFormData] = useState(getDefaultLedgerFormData());
 
   // Order form data
   const [orderFormData, setOrderFormData] = useState({
@@ -57,6 +281,12 @@ function PurchaseManagement({ user }) {
   useEffect(() => {
     fetchOrders();
   }, [filters]);
+
+  useEffect(() => {
+    if (activeSubTab === 'orders') {
+      fetchDistributorLedger();
+    }
+  }, [activeSubTab, filters.distributor_id, purchaseOrders]);
 
   const fetchData = async () => {
     try {
@@ -101,8 +331,57 @@ function PurchaseManagement({ user }) {
   const handleOrderItemAdd = () => {
     setOrderFormData(prev => ({
       ...prev,
-      items: [...prev.items, { product_id: '', product_name: '', quantity: 1, uom: 'pcs', unit_price: 0 }]
+      items: [...prev.items, {
+        product_id: '',
+        product_name: '',
+        quantity: 1,
+        uom: 'pcs',
+        unit_price: 0,
+        rate: 0,
+        gst_rate: 18,
+        discount_type: 'percent',
+        discount_value: 0
+      }]
     }));
+  };
+
+  const fetchDistributorLedger = async () => {
+    try {
+      setLedgerLoading(true);
+      const localEntries = getLocalLedgerEntries().filter(entry => !filters.distributor_id || String(entry.distributor_id) === String(filters.distributor_id));
+      const derivedEntries = getDerivedLedgerFromOrders(purchaseOrders, filters.distributor_id);
+      const response = filters.distributor_id
+        ? await distributorLedgerApi.getByDistributor(filters.distributor_id, { limit: 100 })
+        : await distributorLedgerApi.getAll({ limit: 100 });
+      const apiRecords = Array.isArray(response)
+        ? response
+        : (response?.rows || response?.data || response?.transactions || []);
+      setLedgerRecords(mergeLedgerRecords(apiRecords, localEntries, derivedEntries));
+    } catch (err) {
+      const localEntries = getLocalLedgerEntries().filter(entry => !filters.distributor_id || String(entry.distributor_id) === String(filters.distributor_id));
+      const derivedEntries = getDerivedLedgerFromOrders(purchaseOrders, filters.distributor_id);
+      setLedgerRecords(mergeLedgerRecords([], localEntries, derivedEntries));
+    } finally {
+      setLedgerLoading(false);
+    }
+  };
+
+  const createAutoDistributorCredit = async ({ distributorId, amount, poNumber, orderId }) => {
+    if (!distributorId || amount <= 0) return;
+
+    await distributorLedgerApi.addTransaction(distributorId, {
+      type: 'credit',
+      transaction_type: 'credit',
+      amount: Number(amount.toFixed(2)),
+      payment_mode: 'credit',
+      reference: poNumber || (orderId ? `PO-${orderId}` : ''),
+      description: `Purchase Order ${poNumber || ''}`.trim(),
+      transactionDate: getTodayDate(),
+      source: 'purchase_order',
+      source_id: orderId,
+      mode: 'automatic',
+      created_by: user?.id
+    });
   };
 
   const handleOrderItemChange = (index, field, value) => {
@@ -114,8 +393,17 @@ function PurchaseManagement({ user }) {
       if (product) {
         items[index].product_name = product.name;
         items[index].unit_price = product.price;
+        items[index].rate = product.price;
         items[index].uom = product.uom || 'pcs';
       }
+    }
+
+    if (field === 'rate') {
+      items[index].unit_price = toNumber(value);
+    }
+
+    if (field === 'unit_price') {
+      items[index].rate = toNumber(value);
     }
 
     setOrderFormData(prev => ({ ...prev, items }));
@@ -139,11 +427,35 @@ function PurchaseManagement({ user }) {
         return;
       }
 
+      const calculatedItems = validItems.map(item => {
+        const line = calculateOrderItem(item);
+        return {
+          ...item,
+          quantity: line.quantity,
+          unit_price: line.rate,
+          rate: line.rate,
+          gst_rate: line.gstRate,
+          discount_type: line.discountType,
+          discount_value: line.discountValue,
+          taxable_value: line.taxableValue,
+          tax_amount: line.taxAmount,
+          line_total: line.totalAmount
+        };
+      });
+
+      const orderTotals = calculateOrderTotals(calculatedItems);
+
       await purchaseOrdersApi.create({
         distributor_id: orderFormData.distributor_id,
         expected_delivery: orderFormData.expected_delivery,
         notes: orderFormData.notes,
-        items: validItems,
+        subtotal: orderTotals.taxableValue,
+        taxable_value: orderTotals.taxableValue,
+        tax_amount: orderTotals.taxAmount,
+        total_amount: orderTotals.totalAmount,
+        grand_total: orderTotals.totalAmount,
+        total: orderTotals.totalAmount,
+        items: calculatedItems,
         created_by: user?.id
       });
 
@@ -208,7 +520,31 @@ function PurchaseManagement({ user }) {
   const handleUpdateStatus = async (orderId, status) => {
     try {
       await purchaseOrdersApi.updateStatus(orderId, status);
+      if (status === 'confirmed') {
+        let order = purchaseOrders.find(po => String(po.id) === String(orderId));
+        try {
+          const detailedOrder = await purchaseOrdersApi.getById(orderId);
+          if (detailedOrder) {
+            order = detailedOrder;
+          }
+        } catch (detailErr) {
+          // keep list-order fallback
+        }
+        if (order) {
+          try {
+            await createAutoDistributorCredit({
+              distributorId: order.distributor_id,
+              amount: calculateOrderBalanceAmount(order),
+              poNumber: order.po_number,
+              orderId: order.id
+            });
+          } catch (ledgerErr) {
+            console.warn('Auto distributor credit entry failed on confirmation:', ledgerErr);
+          }
+        }
+      }
       fetchOrders();
+      fetchDistributorLedger();
     } catch (err) {
       setError('Failed to update status');
     }
@@ -315,6 +651,83 @@ function PurchaseManagement({ user }) {
     }).format(amount);
   };
 
+  const getLedgerTypeLabel = (entry) => {
+    const rawType = String(entry?.type || entry?.transaction_type || '').toLowerCase();
+    if (rawType === 'payment') return 'Payment';
+    if (rawType === 'credit' || rawType === 'given') return 'Credit';
+    return rawType ? rawType.charAt(0).toUpperCase() + rawType.slice(1) : '-';
+  };
+
+  const getDistributorName = (entry) => {
+    if (entry?.distributor_name) return entry.distributor_name;
+    const distributorId = entry?.distributor_id;
+    if (!distributorId) return '-';
+    const distributor = distributors.find(d => String(d.id) === String(distributorId));
+    return distributor?.name || '-';
+  };
+
+  const handleOpenLedgerForm = () => {
+    setLedgerFormData({
+      ...getDefaultLedgerFormData(),
+      distributor_id: filters.distributor_id || ''
+    });
+    setShowLedgerForm(true);
+  };
+
+  const handleLedgerSubmit = async (e) => {
+    e.preventDefault();
+    setError('');
+
+    const amount = toNumber(ledgerFormData.amount);
+    if (!ledgerFormData.distributor_id) {
+      setError('Please select a distributor for ledger entry');
+      return;
+    }
+    if (amount <= 0) {
+      setError('Please enter a valid amount');
+      return;
+    }
+
+    try {
+      await distributorLedgerApi.addTransaction(ledgerFormData.distributor_id, {
+        type: ledgerFormData.type,
+        transaction_type: ledgerFormData.type,
+        amount: Number(amount.toFixed(2)),
+        payment_mode: ledgerFormData.payment_mode,
+        reference: ledgerFormData.reference,
+        description: ledgerFormData.description || `Manual ${ledgerFormData.type} entry`,
+        transactionDate: ledgerFormData.transaction_date,
+        mode: 'manual',
+        created_by: user?.id
+      });
+
+      setShowLedgerForm(false);
+      setLedgerFormData(getDefaultLedgerFormData());
+      fetchDistributorLedger();
+    } catch (err) {
+      const localEntry = {
+        id: `local-${Date.now()}`,
+        distributor_id: ledgerFormData.distributor_id,
+        type: ledgerFormData.type,
+        transaction_type: ledgerFormData.type,
+        amount: Number(amount.toFixed(2)),
+        payment_mode: ledgerFormData.payment_mode,
+        reference: ledgerFormData.reference,
+        description: ledgerFormData.description || `Manual ${ledgerFormData.type} entry`,
+        transaction_date: ledgerFormData.transaction_date,
+        created_at: new Date().toISOString(),
+        mode: 'manual'
+      };
+      addLocalLedgerEntry(localEntry);
+      setShowLedgerForm(false);
+      setLedgerFormData(getDefaultLedgerFormData());
+      fetchDistributorLedger();
+    }
+  };
+
+  const orderTotals = calculateOrderTotals(orderFormData.items);
+  const ledgerBalanceSummary = getLedgerBalanceSummary(ledgerRecords, filters.distributor_id);
+
   if (loading) {
     return (
       <div className="purchase-management">
@@ -381,6 +794,9 @@ function PurchaseManagement({ user }) {
           <div className="actions-bar">
             <h2>Purchase Orders</h2>
             <div className="action-buttons">
+              <button className="admin-btn secondary" onClick={handleOpenLedgerForm}>
+                <Plus size={18} /> Payment / Credit Entry
+              </button>
               <button className="admin-btn secondary" onClick={handleReturnFormOpen}>
                 <RotateCcw size={18} /> Return / Exchange
               </button>
@@ -415,7 +831,7 @@ function PurchaseManagement({ user }) {
                       <td><strong>{order.po_number}</strong></td>
                       <td>{order.distributor_name}</td>
                       <td>{order.items?.length || 0}</td>
-                      <td>{formatCurrency(order.total)}</td>
+                      <td>{formatCurrency(toNumber(order.total_amount ?? getOrderDisplayTotal(order)))}</td>
                       <td>{getStatusBadge(order.status)}</td>
                       <td>{order.expected_delivery ? new Date(order.expected_delivery).toLocaleDateString() : '-'}</td>
                       <td className="actions-cell">
@@ -424,9 +840,9 @@ function PurchaseManagement({ user }) {
                             <button className="action-btn" title="Confirm" onClick={() => handleUpdateStatus(order.id, 'confirmed')}>
                               <Check size={16} />
                             </button>
-                            <button className="action-btn" title="Ship" onClick={() => handleUpdateStatus(order.id, 'shipped')}>
+                            {/*<button className="action-btn" title="Ship" onClick={() => handleUpdateStatus(order.id, 'shipped')}>
                               <Truck size={16} />
-                            </button>
+                            </button>*/}
                           </>
                         )}
                         {order.status === 'shipped' && (
@@ -440,6 +856,57 @@ function PurchaseManagement({ user }) {
                           </button>
                         )}
                       </td>
+                    </tr>
+                  ))
+                )}
+              </tbody>
+            </table>
+          </div>
+
+          {/* Distributor Ledger */}
+          <div className="actions-bar ledger-header">
+            <h2>Distributor Credit / Payment Ledger</h2>
+          </div>
+          <div className="ledger-balance-summary">
+            <span className="ledger-balance-label">{ledgerBalanceSummary.label}</span>
+            <strong className={`ledger-balance-value ${ledgerBalanceSummary.value >= 0 ? 'positive' : 'negative'}`}>
+              {formatCurrency(ledgerBalanceSummary.value)}
+            </strong>
+          </div>
+          <div className="data-table">
+            <table>
+              <thead>
+                <tr>
+                  <th>Date</th>
+                  <th>Distributor</th>
+                  <th>Type</th>
+                  <th>Amount</th>
+                  <th>Balance</th>
+                  <th>Mode</th>
+                  <th>Reference</th>
+                  <th>Description</th>
+                </tr>
+              </thead>
+              <tbody>
+                {ledgerLoading ? (
+                  <tr>
+                    <td colSpan="8" className="empty-state">Loading ledger records...</td>
+                  </tr>
+                ) : ledgerRecords.length === 0 ? (
+                  <tr>
+                    <td colSpan="8" className="empty-state">No distributor payment/credit records found</td>
+                  </tr>
+                ) : (
+                  ledgerRecords.map((entry, index) => (
+                    <tr key={entry.id || index}>
+                      <td>{new Date(entry.created_at || entry.transaction_date || Date.now()).toLocaleDateString()}</td>
+                      <td>{getDistributorName(entry)}</td>
+                      <td>{getLedgerTypeLabel(entry)}</td>
+                      <td>{formatCurrency(toNumber(entry.total_amount ?? entry.grand_total ?? entry.line_total ?? entry.amount))}</td>
+                      <td>{formatCurrency(toNumber(entry.computed_balance ?? entry.balance))}</td>
+                      <td>{entry.payment_mode || entry.method || '-'}</td>
+                      <td>{entry.reference || entry.po_number || '-'}</td>
+                      <td>{entry.description || '-'}</td>
                     </tr>
                   ))
                 )}
@@ -559,55 +1026,121 @@ function PurchaseManagement({ user }) {
                   </button>
                 </div>
                 <div className="items-list">
-                  {orderFormData.items.map((item, index) => (
-                    <div key={index} className="item-row">
-                      <div className="item-field product">
-                        <label>Product</label>
-                        <select
-                          value={item.product_id}
-                          onChange={e => handleOrderItemChange(index, 'product_id', e.target.value)}
-                        >
-                          <option value="">Select product</option>
-                          {products.map(p => (
-                            <option key={p.id} value={p.id}>{p.name} ({p.sku})</option>
-                          ))}
-                        </select>
+                  {orderFormData.items.map((item, index) => {
+                    const line = calculateOrderItem(item);
+                    return (
+                      <div key={index} className="item-row order-item-row">
+                        <div className="item-field product">
+                          <label>Product</label>
+                          <select
+                            value={item.product_id}
+                            onChange={e => handleOrderItemChange(index, 'product_id', e.target.value)}
+                          >
+                            <option value="">Select product</option>
+                            {products.map(p => (
+                              <option key={p.id} value={p.id}>{p.name} ({p.sku})</option>
+                            ))}
+                          </select>
+                        </div>
+                        <div className="item-field qty">
+                          <label>Qty</label>
+                          <input
+                            type="number"
+                            min="1"
+                            value={item.quantity}
+                            onChange={e => handleOrderItemChange(index, 'quantity', toNumber(e.target.value))}
+                          />
+                        </div>
+                        <div className="item-field uom">
+                          <label>UOM</label>
+                          <input type="text" value={item.uom} readOnly />
+                        </div>
+                        <div className="item-field price">
+                          <label>Rate</label>
+                          <input
+                            type="number"
+                            step="0.01"
+                            min="0"
+                            value={item.rate ?? item.unit_price}
+                            onChange={e => handleOrderItemChange(index, 'rate', toNumber(e.target.value))}
+                          />
+                        </div>
+                        <div className="item-field gst">
+                          <label>GST %</label>
+                          <input
+                            type="number"
+                            step="0.01"
+                            min="0"
+                            value={item.gst_rate ?? 0}
+                            onChange={e => handleOrderItemChange(index, 'gst_rate', toNumber(e.target.value))}
+                          />
+                        </div>
+                        <div className="item-field discount-type">
+                          <label>Discount Type</label>
+                          <select
+                            value={item.discount_type || 'percent'}
+                            onChange={e => handleOrderItemChange(index, 'discount_type', e.target.value)}
+                          >
+                            <option value="percent">%</option>
+                            <option value="fixed">Fixed</option>
+                          </select>
+                        </div>
+                        <div className="item-field discount-value">
+                          <label>Discount</label>
+                          <input
+                            type="number"
+                            step="0.01"
+                            min="0"
+                            value={item.discount_value ?? 0}
+                            onChange={e => handleOrderItemChange(index, 'discount_value', toNumber(e.target.value))}
+                          />
+                        </div>
+                        <div className="item-field taxable">
+                          <label>Taxable Value</label>
+                          <span>{formatCurrency(line.taxableValue)}</span>
+                        </div>
+                        <div className="item-field tax">
+                          <label>Tax</label>
+                          <span>{formatCurrency(line.taxAmount)}</span>
+                        </div>
+                        <div className="item-field total">
+                          <label>Total Amount</label>
+                          <span>{formatCurrency(line.totalAmount)}</span>
+                        </div>
+                        <button type="button" className="remove-item-btn" onClick={() => handleOrderItemRemove(index)}>
+                          <X size={16} />
+                        </button>
                       </div>
-                      <div className="item-field qty">
-                        <label>Qty</label>
-                        <input
-                          type="number"
-                          min="1"
-                          value={item.quantity}
-                          onChange={e => handleOrderItemChange(index, 'quantity', parseFloat(e.target.value))}
-                        />
-                      </div>
-                      <div className="item-field uom">
-                        <label>UOM</label>
-                        <input type="text" value={item.uom} readOnly />
-                      </div>
-                      <div className="item-field price">
-                        <label>Unit Price</label>
-                        <input
-                          type="number"
-                          step="0.01"
-                          value={item.unit_price}
-                          onChange={e => handleOrderItemChange(index, 'unit_price', parseFloat(e.target.value))}
-                        />
-                      </div>
-                      <div className="item-field total">
-                        <label>Total</label>
-                        <span>{formatCurrency(item.quantity * item.unit_price)}</span>
-                      </div>
-                      <button type="button" className="remove-item-btn" onClick={() => handleOrderItemRemove(index)}>
-                        <X size={16} />
-                      </button>
-                    </div>
-                  ))}
+                    );
+                  })}
                   {orderFormData.items.length === 0 && (
                     <p className="no-items">No items added. Click "Add Item" to add products.</p>
                   )}
                 </div>
+                {orderFormData.items.length > 0 && (
+                  <div className="order-summary">
+                    <div className="summary-row">
+                      <span>Gross Amount</span>
+                      <strong>{formatCurrency(orderTotals.grossAmount)}</strong>
+                    </div>
+                    <div className="summary-row">
+                      <span>Discount</span>
+                      <strong>{formatCurrency(orderTotals.discountAmount)}</strong>
+                    </div>
+                    <div className="summary-row">
+                      <span>Taxable Value</span>
+                      <strong>{formatCurrency(orderTotals.taxableValue)}</strong>
+                    </div>
+                    <div className="summary-row">
+                      <span>Tax</span>
+                      <strong>{formatCurrency(orderTotals.taxAmount)}</strong>
+                    </div>
+                    <div className="summary-row grand-total">
+                      <span>Total Amount</span>
+                      <strong>{formatCurrency(orderTotals.totalAmount)}</strong>
+                    </div>
+                  </div>
+                )}
               </div>
 
               <div className="modal-actions">
@@ -693,6 +1226,110 @@ function PurchaseManagement({ user }) {
                 </button>
                 <button type="submit" className="submit-btn">
                   Confirm Receipt
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {/* Manual Distributor Ledger Modal */}
+      {showLedgerForm && (
+        <div className="modal-overlay" onClick={() => setShowLedgerForm(false)}>
+          <div className="modal-content" onClick={e => e.stopPropagation()}>
+            <div className="modal-header">
+              <h2>Add Distributor Payment / Credit</h2>
+              <button className="close-btn" onClick={() => setShowLedgerForm(false)}>
+                <X size={24} />
+              </button>
+            </div>
+            <form onSubmit={handleLedgerSubmit}>
+              <div className="form-row">
+                <div className="form-group">
+                  <label>Distributor *</label>
+                  <select
+                    value={ledgerFormData.distributor_id}
+                    onChange={e => setLedgerFormData(prev => ({ ...prev, distributor_id: e.target.value }))}
+                    required
+                  >
+                    <option value="">Select distributor</option>
+                    {distributors.map(d => (
+                      <option key={d.id} value={d.id}>{d.name}</option>
+                    ))}
+                  </select>
+                </div>
+                <div className="form-group">
+                  <label>Type *</label>
+                  <select
+                    value={ledgerFormData.type}
+                    onChange={e => setLedgerFormData(prev => ({ ...prev, type: e.target.value }))}
+                  >
+                    <option value="payment">Payment (Reduce due)</option>
+                    <option value="credit">Credit (Increase due)</option>
+                  </select>
+                </div>
+              </div>
+              <div className="form-row">
+                <div className="form-group">
+                  <label>Amount *</label>
+                  <input
+                    type="number"
+                    step="0.01"
+                    min="0.01"
+                    value={ledgerFormData.amount}
+                    onChange={e => setLedgerFormData(prev => ({ ...prev, amount: e.target.value }))}
+                    placeholder="Enter amount"
+                    required
+                  />
+                </div>
+                <div className="form-group">
+                  <label>Payment Mode</label>
+                  <select
+                    value={ledgerFormData.payment_mode}
+                    onChange={e => setLedgerFormData(prev => ({ ...prev, payment_mode: e.target.value }))}
+                  >
+                    <option value="cash">Cash</option>
+                    <option value="bank">Bank Transfer</option>
+                    <option value="upi">UPI</option>
+                    <option value="cheque">Cheque</option>
+                    <option value="credit">Credit</option>
+                  </select>
+                </div>
+              </div>
+              <div className="form-row">
+                <div className="form-group">
+                  <label>Transaction Date</label>
+                  <input
+                    type="date"
+                    value={ledgerFormData.transaction_date}
+                    onChange={e => setLedgerFormData(prev => ({ ...prev, transaction_date: e.target.value }))}
+                  />
+                </div>
+                <div className="form-group">
+                  <label>Reference</label>
+                  <input
+                    type="text"
+                    value={ledgerFormData.reference}
+                    onChange={e => setLedgerFormData(prev => ({ ...prev, reference: e.target.value }))}
+                    placeholder="Invoice / PO / Bank ref"
+                  />
+                </div>
+              </div>
+              <div className="form-group">
+                <label>Description</label>
+                <textarea
+                  rows="2"
+                  value={ledgerFormData.description}
+                  onChange={e => setLedgerFormData(prev => ({ ...prev, description: e.target.value }))}
+                  placeholder="Optional notes"
+                />
+              </div>
+              <div className="modal-actions">
+                <button type="button" className="cancel-btn" onClick={() => setShowLedgerForm(false)}>
+                  Cancel
+                </button>
+                <button type="submit" className="submit-btn">
+                  Save Entry
                 </button>
               </div>
             </form>

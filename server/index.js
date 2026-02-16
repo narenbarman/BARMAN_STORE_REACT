@@ -381,6 +381,16 @@ const initDB = () => {
   alterTableSafe(`ALTER TABLE stock_ledger ADD COLUMN notes TEXT`);
   alterTableSafe(`ALTER TABLE bills ADD COLUMN paid_amount REAL DEFAULT 0`);
   alterTableSafe(`ALTER TABLE bills ADD COLUMN credit_amount REAL DEFAULT 0`);
+  alterTableSafe(`ALTER TABLE purchase_orders ADD COLUMN subtotal REAL DEFAULT 0`);
+  alterTableSafe(`ALTER TABLE purchase_orders ADD COLUMN tax_amount REAL DEFAULT 0`);
+  alterTableSafe(`ALTER TABLE purchase_orders ADD COLUMN total_amount REAL DEFAULT 0`);
+  alterTableSafe(`ALTER TABLE purchase_order_items ADD COLUMN rate REAL DEFAULT 0`);
+  alterTableSafe(`ALTER TABLE purchase_order_items ADD COLUMN gst_rate REAL DEFAULT 0`);
+  alterTableSafe(`ALTER TABLE purchase_order_items ADD COLUMN discount_type TEXT DEFAULT 'percent'`);
+  alterTableSafe(`ALTER TABLE purchase_order_items ADD COLUMN discount_value REAL DEFAULT 0`);
+  alterTableSafe(`ALTER TABLE purchase_order_items ADD COLUMN taxable_value REAL DEFAULT 0`);
+  alterTableSafe(`ALTER TABLE purchase_order_items ADD COLUMN tax_amount REAL DEFAULT 0`);
+  alterTableSafe(`ALTER TABLE purchase_order_items ADD COLUMN line_total REAL DEFAULT 0`);
 
   // Backfill from legacy "password" column if present.
   try {
@@ -1493,19 +1503,55 @@ app.post('/api/purchase-orders', (req, res) => {
     if (!b.distributor_id) return res.status(400).json({ error: 'distributor_id is required' });
     const items = Array.isArray(b.items) ? b.items : [];
     if (!items.length) return res.status(400).json({ error: 'At least one item is required' });
-    const total = items.reduce((sum, it) => sum + Number(it.quantity || 0) * Number(it.unit_price || 0), 0);
+
+    const normalizedItems = items.map((it) => {
+      const qty = Number(it.quantity || 0);
+      const rate = Number(it.rate ?? it.unit_price ?? 0);
+      const gross = qty * rate;
+      const discountType = String(it.discount_type || 'percent').toLowerCase() === 'fixed' ? 'fixed' : 'percent';
+      const discountValue = Number(it.discount_value || 0);
+      const discountAmountRaw = discountType === 'percent' ? (gross * discountValue) / 100 : discountValue;
+      const discountAmount = Math.max(0, Math.min(discountAmountRaw, gross));
+      const taxableValue = Number(it.taxable_value ?? (gross - discountAmount));
+      const gstRate = Number(it.gst_rate || 0);
+      const taxAmount = Number(it.tax_amount ?? ((taxableValue * gstRate) / 100));
+      const lineTotal = Number(it.line_total ?? (taxableValue + taxAmount));
+
+      return {
+        ...it,
+        quantity: qty,
+        rate,
+        unit_price: rate,
+        discount_type: discountType,
+        discount_value: discountValue,
+        taxable_value: taxableValue,
+        gst_rate: gstRate,
+        tax_amount: taxAmount,
+        line_total: lineTotal
+      };
+    });
+
+    const subtotal = Number(b.subtotal ?? b.taxable_value ?? normalizedItems.reduce((sum, it) => sum + Number(it.taxable_value || 0), 0));
+    const taxAmount = Number(b.tax_amount ?? normalizedItems.reduce((sum, it) => sum + Number(it.tax_amount || 0), 0));
+    const totalAmount = Number(
+      b.total_amount ??
+      b.grand_total ??
+      b.total ??
+      normalizedItems.reduce((sum, it) => sum + Number(it.line_total || 0), 0)
+    );
+
     const poNumber = generatePONumber();
     const tx = db.transaction(() => {
       const header = dbRun(
-        `INSERT INTO purchase_orders (po_number, distributor_id, total, status, notes, expected_delivery, created_by)
-         VALUES (?, ?, ?, ?, ?, ?, ?)`,
-        [poNumber, b.distributor_id, total, 'pending', b.notes || null, b.expected_delivery || null, b.created_by || null]
+        `INSERT INTO purchase_orders (po_number, distributor_id, subtotal, tax_amount, total_amount, total, status, notes, expected_delivery, created_by)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        [poNumber, b.distributor_id, subtotal, taxAmount, totalAmount, totalAmount, 'pending', b.notes || null, b.expected_delivery || null, b.created_by || null]
       );
       const orderId = header.lastInsertRowid;
-      items.forEach((it) => {
+      normalizedItems.forEach((it) => {
         dbRun(
-          `INSERT INTO purchase_order_items (order_id, product_id, product_name, quantity, received_quantity, uom, unit_price, total)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+          `INSERT INTO purchase_order_items (order_id, product_id, product_name, quantity, received_quantity, uom, unit_price, rate, gst_rate, discount_type, discount_value, taxable_value, tax_amount, line_total, total)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
           [
             orderId,
             it.product_id || null,
@@ -1514,7 +1560,14 @@ app.post('/api/purchase-orders', (req, res) => {
             0,
             it.uom || 'pcs',
             Number(it.unit_price || 0),
-            Number(it.quantity || 0) * Number(it.unit_price || 0),
+            Number(it.rate || it.unit_price || 0),
+            Number(it.gst_rate || 0),
+            it.discount_type || 'percent',
+            Number(it.discount_value || 0),
+            Number(it.taxable_value || 0),
+            Number(it.tax_amount || 0),
+            Number(it.line_total || 0),
+            Number(it.line_total || 0),
           ]
         );
       });
