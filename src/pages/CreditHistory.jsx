@@ -1,7 +1,8 @@
 import { useState, useEffect, useRef } from 'react';
-import { useParams, useNavigate, Link } from 'react-router-dom';
-import { ArrowLeft, Plus, DollarSign, CreditCard, RefreshCw, Printer, Upload, FileText, Eye, Download } from 'lucide-react';
+import { useParams, useNavigate, Link, useLocation } from 'react-router-dom';
+import { ArrowLeft, Plus, DollarSign, CreditCard, RefreshCw, Printer, Upload, FileText, Eye, Download, MessageCircle } from 'lucide-react';
 import { creditApi, usersApi } from '../services/api';
+import { openWhatsApp } from '../utils/whatsapp';
 import jsPDF from 'jspdf';
 import 'jspdf-autotable';
 import * as info from './info';
@@ -34,9 +35,12 @@ const formatDate = (dateStr) => {
   });
 };
 
+const FIVE_DAYS_MS = 5 * 24 * 60 * 60 * 1000;
+
 function CreditHistory({ user }) {
   const { userId } = useParams();
   const navigate = useNavigate();
+  const location = useLocation();
   const [creditHistory, setCreditHistory] = useState([]);
   const [balance, setBalance] = useState(0);
   const [customer, setCustomer] = useState(null);
@@ -62,6 +66,7 @@ function CreditHistory({ user }) {
   const [toDate, setToDate] = useState(new Date().toISOString().split('T')[0]);
   const [reportText, setReportText] = useState('');
   const [showReport, setShowReport] = useState(false);
+  const [entryShareText, setEntryShareText] = useState('');
 
   useEffect(() => {
     if (user && user.role !== 'admin') {
@@ -82,13 +87,19 @@ function CreditHistory({ user }) {
       setCreditHistory(historyData);
       setBalance(balanceData.balance);
       setCustomer(customerData);
+      return {
+        history: historyData,
+        balance: Number(balanceData?.balance || 0),
+        customer: customerData
+      };
     } catch (err) {
       if (err?.status === 401) {
         localStorage.removeItem('user');
         navigate('/login');
-        return;
+        return null;
       }
       setError(err.message || 'Failed to load credit history');
+      return null;
     } finally {
       setLoading(false);
     }
@@ -143,12 +154,21 @@ function CreditHistory({ user }) {
     }
 
     try {
+      const previousBalance = Number(balance || 0);
+      const txSnapshot = {
+        type: newTransaction.type,
+        amount: parseFloat(newTransaction.amount),
+        description: String(newTransaction.description || '').trim(),
+        reference: String(newTransaction.reference || '').trim(),
+        transactionDate: newTransaction.transactionDate || new Date().toISOString().split('T')[0]
+      };
       const result = await creditApi.addTransaction(userId, {
         ...newTransaction,
         amount: parseFloat(newTransaction.amount),
         created_by: user?.id
       });
       setSuccess('Transaction added successfully');
+      setEntryShareText('');
       setNewTransaction({
         type: 'given',
         amount: '',
@@ -158,7 +178,24 @@ function CreditHistory({ user }) {
         imagePath: ''
       });
       setShowAddModal(false);
-      fetchCreditData();
+      const refreshed = await fetchCreditData();
+      let updatedBalance = Number(refreshed?.balance);
+      if (!Number.isFinite(updatedBalance)) {
+        const delta = txSnapshot.type === 'payment' ? -txSnapshot.amount : txSnapshot.amount;
+        updatedBalance = Number(previousBalance + delta);
+      }
+      const manualShare = buildManualEntryText({
+        companyTitle: info.TITLE || 'BARMAN STORE',
+        entryType: txSnapshot.type,
+        amount: txSnapshot.amount,
+        description: txSnapshot.description,
+        reference: txSnapshot.reference,
+        entryDate: txSnapshot.transactionDate,
+        previousBalance,
+        updatedBalance,
+        thankYouLine: 'Thank you for your payment and trust.'
+      });
+      setEntryShareText(manualShare);
     } catch (err) {
       if (err?.status === 401) {
         localStorage.removeItem('user');
@@ -194,25 +231,18 @@ function CreditHistory({ user }) {
     }
   };
 
-  // Helper: normalize phone for WhatsApp link (assumes India if 10 digits)
-  const normalizePhoneForWhatsApp = (phone) => {
-    if (!phone) return '';
-    const digits = String(phone).replace(/\D/g, '');
-    if (digits.length === 10) {
-      return `91${digits}`; // assume India
-    }
-    return digits;
-  };
-
   // Build a readable report text for a set of transactions
   const buildCreditReport = (transactions, from, to) => {
     const lines = [];
+    lines.push(info.TITLE || 'BARMAN STORE');
+    lines.push('');
     lines.push(`Credit Report for: ${customer?.name || 'Customer'}`);
     lines.push(`Date Range: ${from} to ${to}`);
     lines.push(`Generated: ${new Date().toLocaleString()}`);
     lines.push('');
     if (!transactions || transactions.length === 0) {
       lines.push('No transactions in this range.');
+      lines.push(`Current Total Credit: ${formatCurrency(parseFloat(balance || 0))}`);
     } else {
       lines.push('Transactions:');
       let totalGiven = 0;
@@ -232,7 +262,10 @@ function CreditHistory({ user }) {
       lines.push(`Total Payment: ${formatCurrency(totalPayment)}`);
       lines.push(`Net Change: ${formatCurrency(totalGiven - totalPayment)}`);
       lines.push(`Current Balance (end): ${formatCurrency(parseFloat(transactions[transactions.length - 1].balance || 0))}`);
+      lines.push(`Current Total Credit: ${formatCurrency(parseFloat(transactions[transactions.length - 1].balance || 0))}`);
     }
+    lines.push('');
+    lines.push('Thank you for shopping with us.');
     return lines.join('\n');
   };
 
@@ -271,11 +304,95 @@ function CreditHistory({ user }) {
 
   const handleSendWhatsApp = () => {
     if (!reportText) return;
-    // Prefer customer's phone; otherwise link opens basic wa.me page
-    const phone = normalizePhoneForWhatsApp(customer?.phone);
-    const encoded = encodeURIComponent(reportText);
-    const href = phone ? `https://wa.me/${phone}?text=${encoded}` : `https://wa.me/?text=${encoded}`;
-    window.open(href, '_blank', 'noopener noreferrer');
+    openWhatsApp({
+      phone: customer?.phone,
+      text: reportText,
+    });
+  };
+
+  const buildManualEntryText = ({
+    companyTitle,
+    entryType,
+    amount,
+    description,
+    reference,
+    entryDate,
+    previousBalance,
+    updatedBalance,
+    thankYouLine
+  }) => {
+    const lines = [];
+    lines.push(companyTitle || 'BARMAN STORE');
+    lines.push('');
+    lines.push('Credit Ledger Update');
+    lines.push(`Date: ${new Date(entryDate || Date.now()).toLocaleDateString('en-IN')}`);
+    lines.push('');
+    lines.push(`New Entry: ${getTypeLabel(entryType)} | ${formatCurrency(Number(amount || 0))}`);
+    lines.push(`Description: ${description || 'No additional note'}`);
+    if (reference) {
+      lines.push(`Reference: ${reference}`);
+    }
+    lines.push('');
+    lines.push(`Previous Balance: ${formatCurrency(Number(previousBalance || 0))}`);
+    lines.push(`Updated Balance: ${formatCurrency(Number(updatedBalance || 0))}`);
+    lines.push(`Current Total Credit: ${formatCurrency(Number(updatedBalance || 0))}`);
+    lines.push('');
+    lines.push(thankYouLine || 'Thank you for shopping with us.');
+    return lines.join('\n');
+  };
+
+  const handleCopyEntryShare = async () => {
+    if (!entryShareText) return;
+    try {
+      await navigator.clipboard.writeText(entryShareText);
+      setSuccess('Entry message copied to clipboard');
+    } catch {
+      setError('Failed to copy entry message');
+    }
+  };
+
+  const handleSendEntryWhatsApp = () => {
+    if (!entryShareText) return;
+    openWhatsApp({
+      phone: customer?.phone,
+      text: entryShareText,
+    });
+  };
+
+  const isTransactionWithinFiveDays = (dateStr) => {
+    const txTime = new Date(dateStr).getTime();
+    if (!Number.isFinite(txTime)) return false;
+    const now = Date.now();
+    return now >= txTime && (now - txTime) <= FIVE_DAYS_MS;
+  };
+
+  const buildTransactionShareText = (transaction) => {
+    const amount = Number(transaction?.amount || 0);
+    const updatedBalance = Number(transaction?.balance || 0);
+    const lines = [];
+    lines.push(info.TITLE || 'BARMAN STORE');
+    lines.push('');
+    lines.push('Transaction Update');
+    lines.push(`Date: ${new Date(transaction?.created_at || Date.now()).toLocaleDateString('en-IN')}`);
+    lines.push(`Type: ${getTypeLabel(transaction?.type)}`);
+    lines.push(`Amount: ${formatCurrency(amount)}`);
+    lines.push(`Description: ${transaction?.description || 'No additional note'}`);
+    if (transaction?.reference) {
+      lines.push(`Reference: ${transaction.reference}`);
+    }
+    lines.push(`Updated Balance: ${formatCurrency(updatedBalance)}`);
+    lines.push(`Current Total Credit: ${formatCurrency(updatedBalance)}`);
+    lines.push('');
+    lines.push('Thank you for shopping with us.');
+    return lines.join('\n');
+  };
+
+  const handleSendTransactionWhatsApp = (transaction) => {
+    if (!isTransactionWithinFiveDays(transaction?.created_at)) return;
+    openWhatsApp({
+      phone: customer?.phone,
+      text: buildTransactionShareText(transaction),
+    });
   };
 
   // Generate PDF report with company branding
@@ -460,10 +577,17 @@ function CreditHistory({ user }) {
     );
   }
 
+  const getBackToAdminUrl = () => {
+    const params = new URLSearchParams(location.search || '');
+    const returnTab = params.get('returnTab') || location.state?.returnTab;
+    if (returnTab) return `/admin?tab=${encodeURIComponent(returnTab)}`;
+    return '/admin';
+  };
+
   return (
     <div className="credit-history-page">
       <div className="page-header">
-        <Link to="/admin" className="back-link">
+        <Link to={getBackToAdminUrl()} className="back-link">
           <ArrowLeft size={20} /> Back to Admin
         </Link>
         <div className="header-content">
@@ -510,12 +634,13 @@ function CreditHistory({ user }) {
               </tr>
             </thead>
             <tbody>
-              {creditHistory.map((transaction) => {
-                const descriptionWithRef = transaction.reference 
-                  ? `${transaction.description || ''} (${transaction.reference})`.trim()
-                  : transaction.description || '-';
-                return (
-                <tr key={transaction.id}>
+	              {creditHistory.map((transaction) => {
+	                const descriptionWithRef = transaction.reference 
+	                  ? `${transaction.description || ''} (${transaction.reference})`.trim()
+	                  : transaction.description || '-';
+                  const canShareTransaction = isTransactionWithinFiveDays(transaction.created_at);
+	                return (
+	                <tr key={transaction.id}>
                   <td>{formatDate(transaction.created_at)}</td>
                   <td className="invoice-number">{transaction.invoice_number || '-'}</td>
                   <td>
@@ -539,17 +664,26 @@ function CreditHistory({ user }) {
                         <Eye size={16} />
                       </a>
                     )}
-                    <button 
-                      className="action-icon print"
-                      onClick={() => handlePrintInvoice(transaction)}
-                      title="Print Invoice"
-                    >
-                      <Printer size={16} />
-                    </button>
-                  </td>
-                </tr>
-                );
-              })}
+	                    <button 
+	                      className="action-icon print"
+	                      onClick={() => handlePrintInvoice(transaction)}
+	                      title="Print Invoice"
+	                    >
+	                      <Printer size={16} />
+	                    </button>
+                      {canShareTransaction && (
+                        <button
+                          className="action-icon whatsapp"
+                          onClick={() => handleSendTransactionWhatsApp(transaction)}
+                          title="Share on WhatsApp"
+                        >
+                          <MessageCircle size={16} />
+                        </button>
+                      )}
+	                  </td>
+	                </tr>
+	                );
+	              })}
             </tbody>
           </table>
               )}
@@ -576,6 +710,20 @@ function CreditHistory({ user }) {
             <button className="report-btn whatsapp" onClick={handleSendWhatsApp}>WhatsApp</button>
             <button className="report-btn pdf" onClick={generatePDFReport}><Download size={14} /> PDF</button>
             <button className="report-btn" onClick={() => setShowReport(false)}>Close</button>
+          </div>
+        </div>
+      )}
+
+      {entryShareText && (
+        <div className="report-box">
+          <div className="report-header">
+            <strong>Manual Entry Message</strong>
+          </div>
+          <textarea className="report-text" readOnly value={entryShareText} />
+          <div className="report-actions">
+            <button className="report-btn" onClick={handleCopyEntryShare}>Copy</button>
+            <button className="report-btn whatsapp" onClick={handleSendEntryWhatsApp}>WhatsApp</button>
+            <button className="report-btn" onClick={() => setEntryShareText('')}>Close</button>
           </div>
         </div>
       )}

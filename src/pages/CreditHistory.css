@@ -391,6 +391,15 @@
   background: #e9ecef;
 }
 
+.credit-history-page .action-icon.whatsapp {
+  background: #e7f9ef;
+  color: #1da851;
+}
+
+.credit-history-page .action-icon.whatsapp:hover {
+  background: #d2f4e1;
+}
+
 /* Invoice Modal Styles */
 .credit-history-page .invoice-modal-overlay {
   background: rgba(0, 0, 0, 0.7);

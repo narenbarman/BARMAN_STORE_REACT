@@ -6,6 +6,13 @@ import './PurchaseManagement.css';
 function PurchaseManagement({ user }) {
   const getTodayDate = () => new Date().toISOString().split('T')[0];
   const LOCAL_LEDGER_KEY = 'purchase_distributor_ledger_local_entries';
+  const getDefaultQuickOrderFormData = () => ({
+    distributor_id: '',
+    distributor_name: '',
+    order_date: getTodayDate(),
+    notes: '',
+    items: []
+  });
 
   const getDefaultLedgerFormData = () => ({
     distributor_id: '',
@@ -243,6 +250,7 @@ function PurchaseManagement({ user }) {
 
   // Form states
   const [showOrderForm, setShowOrderForm] = useState(false);
+  const [showQuickOrderForm, setShowQuickOrderForm] = useState(false);
   const [showReceiveModal, setShowReceiveModal] = useState(false);
   const [showReturnForm, setShowReturnForm] = useState(false);
   const [showLedgerForm, setShowLedgerForm] = useState(false);
@@ -254,6 +262,7 @@ function PurchaseManagement({ user }) {
   const [showOrderDetail, setShowOrderDetail] = useState(false);
   const [orderDetail, setOrderDetail] = useState(null);
   const [orderDetailLoading, setOrderDetailLoading] = useState(false);
+  const [editingOrderId, setEditingOrderId] = useState(null);
 
   // Order form data
   const [orderFormData, setOrderFormData] = useState({
@@ -263,6 +272,7 @@ function PurchaseManagement({ user }) {
     notes: '',
     items: []
   });
+  const [quickOrderFormData, setQuickOrderFormData] = useState(getDefaultQuickOrderFormData());
 
   // Receive form data
   const [receiveData, setReceiveData] = useState({
@@ -360,6 +370,24 @@ function PurchaseManagement({ user }) {
       distributor_name: value,
       distributor_id: match ? String(match.id) : ''
     }));
+  };
+
+  const handleQuickDistributorInputChange = (value) => {
+    const match = resolveDistributorByInput(value);
+    setQuickOrderFormData(prev => ({
+      ...prev,
+      distributor_name: value,
+      distributor_id: match ? String(match.id) : ''
+    }));
+  };
+
+  const toDateInputValue = (value) => {
+    if (!value) return '';
+    const raw = String(value);
+    if (/^\d{4}-\d{2}-\d{2}/.test(raw)) return raw.slice(0, 10);
+    const dt = new Date(value);
+    if (Number.isNaN(dt.getTime())) return '';
+    return dt.toISOString().split('T')[0];
   };
 
   // Order form handlers
@@ -507,6 +535,22 @@ function PurchaseManagement({ user }) {
     }));
   };
 
+  const resetOrderForm = () => {
+    setOrderFormData({ distributor_id: '', distributor_name: '', expected_delivery: '', notes: '', items: [] });
+    setEditingOrderId(null);
+  };
+
+  const openCreateOrderForm = () => {
+    setError('');
+    resetOrderForm();
+    setShowOrderForm(true);
+  };
+
+  const closeOrderForm = () => {
+    setShowOrderForm(false);
+    resetOrderForm();
+  };
+
   const handleOrderSubmit = async (e) => {
     e.preventDefault();
     setError('');
@@ -549,8 +593,7 @@ function PurchaseManagement({ user }) {
       });
 
       const orderTotals = calculateOrderTotals(calculatedItems);
-
-      await purchaseOrdersApi.create({
+      const payload = {
         distributor_id: orderFormData.distributor_id,
         expected_delivery: orderFormData.expected_delivery,
         notes: orderFormData.notes,
@@ -562,13 +605,174 @@ function PurchaseManagement({ user }) {
         total: orderTotals.totalAmount,
         items: calculatedItems,
         created_by: user?.id
+      };
+
+      if (editingOrderId) {
+        await purchaseOrdersApi.update(editingOrderId, payload);
+      } else {
+        await purchaseOrdersApi.create(payload);
+      }
+
+      closeOrderForm();
+      await fetchOrders();
+    } catch (err) {
+      setError(err.message || (editingOrderId ? 'Failed to update purchase order' : 'Failed to create purchase order'));
+    }
+  };
+
+  const handleEditOrder = async (orderId) => {
+    try {
+      setError('');
+      const order = await purchaseOrdersApi.getById(orderId);
+      if (!order || String(order.status || '').toLowerCase() !== 'pending') {
+        setError('Only pending orders can be edited');
+        return;
+      }
+
+      const mappedItems = (order.items || []).map(item => ({
+        product_id: item.product_id ? String(item.product_id) : '',
+        product_query: item.product_name || '',
+        product_name: item.product_name || '',
+        quantity: toNumber(item.quantity),
+        uom: item.uom || 'pcs',
+        unit_price: toNumber(item.unit_price ?? item.rate),
+        rate: toNumber(item.rate ?? item.unit_price),
+        gst_rate: toNumber(item.gst_rate),
+        discount_type: item.discount_type === 'fixed' ? 'fixed' : 'percent',
+        discount_value: toNumber(item.discount_value),
+        last_purchase_hint: ''
+      }));
+
+      setOrderFormData({
+        distributor_id: order.distributor_id ? String(order.distributor_id) : '',
+        distributor_name: order.distributor_name || distributors.find(d => String(d.id) === String(order.distributor_id))?.name || '',
+        expected_delivery: toDateInputValue(order.expected_delivery),
+        notes: order.notes || '',
+        items: mappedItems
+      });
+      setEditingOrderId(order.id);
+      setShowOrderForm(true);
+    } catch (err) {
+      setError(err.message || 'Failed to load order for edit');
+    }
+  };
+
+  const handleQuickOrderItemAdd = () => {
+    setQuickOrderFormData(prev => ({
+      ...prev,
+      items: [...prev.items, {
+        product_id: '',
+        product_query: '',
+        product_name: '',
+        quantity: 1,
+        uom: 'pcs'
+      }]
+    }));
+  };
+
+  const handleQuickOrderItemRemove = (index) => {
+    setQuickOrderFormData(prev => ({
+      ...prev,
+      items: prev.items.filter((_, i) => i !== index)
+    }));
+  };
+
+  const handleQuickOrderItemChange = (index, field, value) => {
+    const items = [...quickOrderFormData.items];
+    items[index][field] = value;
+
+    if (field === 'product_id') {
+      const selectedProductId = String(value || '');
+      const product = products.find(p => String(p.id) === selectedProductId);
+      if (product) {
+        items[index].product_name = product.name;
+        items[index].product_query = product.name;
+        items[index].uom = product.uom || 'pcs';
+      } else {
+        items[index].product_name = '';
+      }
+    }
+
+    setQuickOrderFormData(prev => ({ ...prev, items }));
+  };
+
+  const handleQuickOrderProductInputChange = (index, value) => {
+    const items = [...quickOrderFormData.items];
+    items[index].product_query = value;
+    const match = resolveProductByInput(value);
+    if (!match) {
+      items[index].product_id = '';
+      items[index].product_name = value;
+      setQuickOrderFormData(prev => ({ ...prev, items }));
+      return;
+    }
+    setQuickOrderFormData(prev => ({ ...prev, items }));
+    handleQuickOrderItemChange(index, 'product_id', String(match.id));
+  };
+
+  const closeQuickOrderForm = () => {
+    setShowQuickOrderForm(false);
+    setQuickOrderFormData(getDefaultQuickOrderFormData());
+  };
+
+  const handleQuickOrderSubmit = async (e) => {
+    e.preventDefault();
+    setError('');
+
+    try {
+      const selectedDistributor = distributors.find(d => String(d.id) === String(quickOrderFormData.distributor_id) && d.status === 'active');
+      if (!selectedDistributor) {
+        setError('Please select a valid distributor');
+        return;
+      }
+
+      const invalidTypedProducts = quickOrderFormData.items.filter(item =>
+        String(item.product_query || '').trim() && !item.product_id
+      );
+      if (invalidTypedProducts.length > 0) {
+        setError('Please select valid products from suggestions for all typed product names');
+        return;
+      }
+
+      const validItems = quickOrderFormData.items.filter(item => item.product_id && toNumber(item.quantity) > 0);
+      if (validItems.length === 0) {
+        setError('Please add at least one item');
+        return;
+      }
+
+      const mappedItems = validItems.map(item => ({
+        product_id: Number(item.product_id),
+        product_name: item.product_name,
+        quantity: toNumber(item.quantity),
+        uom: item.uom || 'pcs',
+        unit_price: 0,
+        rate: 0,
+        gst_rate: 0,
+        discount_type: 'percent',
+        discount_value: 0,
+        taxable_value: 0,
+        tax_amount: 0,
+        line_total: 0
+      }));
+
+      await purchaseOrdersApi.create({
+        distributor_id: Number(quickOrderFormData.distributor_id),
+        expected_delivery: quickOrderFormData.order_date,
+        notes: quickOrderFormData.notes || 'Quick entry draft',
+        subtotal: 0,
+        taxable_value: 0,
+        tax_amount: 0,
+        total_amount: 0,
+        grand_total: 0,
+        total: 0,
+        items: mappedItems,
+        created_by: user?.id
       });
 
-      setShowOrderForm(false);
-      setOrderFormData({ distributor_id: '', distributor_name: '', expected_delivery: '', notes: '', items: [] });
-      fetchOrders();
+      closeQuickOrderForm();
+      await fetchOrders();
     } catch (err) {
-      setError(err.message || 'Failed to create purchase order');
+      setError(err.message || 'Failed to create quick purchase order');
     }
   };
 
@@ -934,7 +1138,10 @@ function PurchaseManagement({ user }) {
               <button className="admin-btn secondary" onClick={handleReturnFormOpen}>
                 <RotateCcw size={18} /> Return / Exchange
               </button>
-              <button className="admin-btn primary" onClick={() => setShowOrderForm(true)}>
+              <button className="admin-btn secondary" onClick={() => setShowQuickOrderForm(true)}>
+                <Plus size={18} /> Quick Entry
+              </button>
+              <button className="admin-btn primary" onClick={openCreateOrderForm}>
                 <Plus size={18} /> New Order
               </button>
             </div>
@@ -974,6 +1181,9 @@ function PurchaseManagement({ user }) {
                          </button>
                          {order.status === 'pending' && (
                            <>
+                             <button className="action-btn edit" title="Edit" onClick={() => handleEditOrder(order.id)}>
+                               <Edit size={16} />
+                             </button>
                              <button className="action-btn" title="Confirm" onClick={() => handleUpdateStatus(order.id, 'confirmed')}>
                                <Check size={16} />
                              </button>
@@ -1112,13 +1322,136 @@ function PurchaseManagement({ user }) {
         </>
       )}
 
-      {/* New Order Modal */}
-      {showOrderForm && (
-        <div className="modal-overlay" onClick={() => setShowOrderForm(false)}>
+      {/* Quick Entry Modal */}
+      {showQuickOrderForm && (
+        <div className="modal-overlay" onClick={closeQuickOrderForm}>
           <div className="modal-content large" onClick={e => e.stopPropagation()}>
             <div className="modal-header">
-              <h2>Create Purchase Order</h2>
-              <button className="close-btn" onClick={() => setShowOrderForm(false)}>
+              <h2>Quick Purchase Entry</h2>
+              <button className="close-btn" onClick={closeQuickOrderForm}>
+                <X size={24} />
+              </button>
+            </div>
+            <form onSubmit={handleQuickOrderSubmit}>
+              <div className="form-section">
+                <div className="form-row">
+                  <div className="form-group">
+                    <label>Distributor *</label>
+                    <input
+                      type="text"
+                      list="po-distributor-list-quick"
+                      value={quickOrderFormData.distributor_name || ''}
+                      onChange={e => handleQuickDistributorInputChange(e.target.value)}
+                      placeholder="Type distributor name"
+                      required
+                    />
+                    <datalist id="po-distributor-list-quick">
+                      {distributors.filter(d => d.status === 'active').map(d => (
+                        <option key={d.id} value={d.name} />
+                      ))}
+                    </datalist>
+                  </div>
+                  <div className="form-group">
+                    <label>Date</label>
+                    <input
+                      type="date"
+                      value={quickOrderFormData.order_date}
+                      onChange={e => setQuickOrderFormData(prev => ({ ...prev, order_date: e.target.value }))}
+                    />
+                  </div>
+                </div>
+                <div className="form-group">
+                  <label>Notes</label>
+                  <textarea
+                    value={quickOrderFormData.notes}
+                    onChange={e => setQuickOrderFormData(prev => ({ ...prev, notes: e.target.value }))}
+                    rows="2"
+                    placeholder="Optional short note"
+                  />
+                </div>
+              </div>
+
+              <div className="form-section">
+                <div className="section-header">
+                  <h3>Items (Product + Qty)</h3>
+                  <button type="button" className="add-item-btn" onClick={handleQuickOrderItemAdd}>
+                    <Plus size={16} /> Add Row
+                  </button>
+                </div>
+                <div className="quick-entry-table">
+                  <table>
+                    <thead>
+                      <tr>
+                        <th>Product</th>
+                        <th>Qty</th>
+                        <th>UOM</th>
+                        <th />
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {quickOrderFormData.items.length === 0 ? (
+                        <tr>
+                          <td colSpan="4" className="empty-state">No rows added</td>
+                        </tr>
+                      ) : quickOrderFormData.items.map((item, index) => (
+                        <tr key={index}>
+                          <td>
+                            <input
+                              type="text"
+                              list={`po-quick-product-list-${index}`}
+                              value={item.product_query || item.product_name || ''}
+                              onChange={e => handleQuickOrderProductInputChange(index, e.target.value)}
+                              placeholder="Type product name or SKU"
+                            />
+                            <datalist id={`po-quick-product-list-${index}`}>
+                              {products.map(p => (
+                                <option key={p.id} value={p.name}>{p.sku}</option>
+                              ))}
+                            </datalist>
+                          </td>
+                          <td>
+                            <input
+                              type="number"
+                              min="1"
+                              value={item.quantity}
+                              onChange={e => handleQuickOrderItemChange(index, 'quantity', toNumber(e.target.value))}
+                            />
+                          </td>
+                          <td>
+                            <input type="text" value={item.uom || 'pcs'} readOnly />
+                          </td>
+                          <td>
+                            <button type="button" className="remove-item-btn" onClick={() => handleQuickOrderItemRemove(index)}>
+                              <X size={16} />
+                            </button>
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+
+              <div className="modal-actions">
+                <button type="button" className="cancel-btn" onClick={closeQuickOrderForm}>
+                  Cancel
+                </button>
+                <button type="submit" className="submit-btn">
+                  Save Quick Draft
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {/* New Order Modal */}
+      {showOrderForm && (
+        <div className="modal-overlay" onClick={closeOrderForm}>
+          <div className="modal-content large" onClick={e => e.stopPropagation()}>
+            <div className="modal-header">
+              <h2>{editingOrderId ? 'Edit Purchase Order' : 'Create Purchase Order'}</h2>
+              <button className="close-btn" onClick={closeOrderForm}>
                 <X size={24} />
               </button>
             </div>
@@ -1297,11 +1630,11 @@ function PurchaseManagement({ user }) {
               </div>
 
               <div className="modal-actions">
-                <button type="button" className="cancel-btn" onClick={() => setShowOrderForm(false)}>
+                <button type="button" className="cancel-btn" onClick={closeOrderForm}>
                   Cancel
                 </button>
                 <button type="submit" className="submit-btn">
-                  Create Order
+                  {editingOrderId ? 'Update Order' : 'Create Order'}
                 </button>
               </div>
             </form>

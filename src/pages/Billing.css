@@ -933,6 +933,51 @@
     grid-template-columns: repeat(2, 1fr);
   }
 
+  .bill-items-table table,
+  .bill-items-table thead,
+  .bill-items-table tbody,
+  .bill-items-table tr,
+  .bill-items-table th,
+  .bill-items-table td {
+    display: block;
+    width: 100%;
+  }
+
+  .bill-items-table thead {
+    display: none;
+  }
+
+  .bill-items-table tr {
+    border: 1px solid var(--color-border);
+    border-radius: 10px;
+    padding: 8px;
+    margin-bottom: 10px;
+    background: #fff;
+  }
+
+  .bill-items-table td {
+    border: 0;
+    padding: 6px 0;
+  }
+
+  .bill-items-table td::before {
+    content: attr(data-label);
+    display: block;
+    font-size: 0.78rem;
+    font-weight: 700;
+    color: var(--color-muted);
+    margin-bottom: 4px;
+  }
+
+  .bill-items-table td[data-label='Action']::before {
+    display: none;
+  }
+
+  .bill-items-table td[data-label='Action'] {
+    display: flex;
+    justify-content: flex-end;
+  }
+
   .items-table th,
   .items-table td {
     padding: 10px 8px;

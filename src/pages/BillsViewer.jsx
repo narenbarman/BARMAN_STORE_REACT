@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { Download, Trash2, Search } from 'lucide-react';
 import { billingApi } from '../services/api';
+import { buildWhatsAppUrl } from '../utils/whatsapp';
 import company from '../config/company';
 import './BillsViewer.css';
 
@@ -360,7 +361,10 @@ Payment Status: ${bill.payment_status}
                   </button>
                   <a
                     className="action-btn whatsapp-btn"
-                    href={`https://wa.me/?text=${encodeURIComponent(buildShareText(selectedBill))}`}
+                    href={buildWhatsAppUrl({
+                      phone: selectedBill?.customer_phone,
+                      text: buildShareText(selectedBill),
+                    })}
                     target="_blank"
                     rel="noreferrer"
                     title="Share via WhatsApp"

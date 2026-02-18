@@ -64,6 +64,10 @@ const normalizePhone = (phone) => {
   const digits = String(phone).replace(/\D/g, '');
   return digits || null;
 };
+const normalizeEmail = (email) => {
+  const v = String(email || '').trim().toLowerCase();
+  return v || null;
+};
 
 const AUTH_TOKEN_SECRET = process.env.AUTH_TOKEN_SECRET || 'barman-store-local-secret';
 const base64UrlEncode = (value) => Buffer.from(value).toString('base64url');
@@ -452,6 +456,7 @@ const initDB = () => {
       payment_method TEXT DEFAULT 'cash',
       payment_status TEXT DEFAULT 'pending',
       bill_type TEXT DEFAULT 'sales',
+      notes TEXT,
       created_by INTEGER,
       created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
       updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
@@ -557,6 +562,7 @@ const initDB = () => {
   alterTableSafe(`ALTER TABLE stock_ledger ADD COLUMN notes TEXT`);
   alterTableSafe(`ALTER TABLE bills ADD COLUMN paid_amount REAL DEFAULT 0`);
   alterTableSafe(`ALTER TABLE bills ADD COLUMN credit_amount REAL DEFAULT 0`);
+  alterTableSafe(`ALTER TABLE bills ADD COLUMN notes TEXT`);
   alterTableSafe(`ALTER TABLE purchase_orders ADD COLUMN subtotal REAL DEFAULT 0`);
   alterTableSafe(`ALTER TABLE purchase_orders ADD COLUMN tax_amount REAL DEFAULT 0`);
   alterTableSafe(`ALTER TABLE purchase_orders ADD COLUMN total_amount REAL DEFAULT 0`);
@@ -2057,10 +2063,109 @@ app.put('/api/purchase-orders/:id', (req, res) => {
     const cur = dbGet(`SELECT * FROM purchase_orders WHERE id = ?`, [req.params.id]);
     if (!cur) return res.status(404).json({ error: 'Purchase order not found' });
     const b = req.body || {};
-    dbRun(
-      `UPDATE purchase_orders SET distributor_id=?, notes=?, expected_delivery=?, status=?, updated_at=CURRENT_TIMESTAMP WHERE id=?`,
-      [b.distributor_id ?? cur.distributor_id, b.notes ?? cur.notes, b.expected_delivery ?? cur.expected_delivery, b.status ?? cur.status, req.params.id]
-    );
+    const items = Array.isArray(b.items) ? b.items : null;
+    if (items && cur.status === 'received') {
+      return res.status(400).json({ error: 'Cannot modify items for a received purchase order' });
+    }
+
+    const normalizeItems = (rawItems) => rawItems.map((it) => {
+      const qty = Number(it.quantity || 0);
+      const rate = Number(it.rate ?? it.unit_price ?? 0);
+      const gross = qty * rate;
+      const discountType = String(it.discount_type || 'percent').toLowerCase() === 'fixed' ? 'fixed' : 'percent';
+      const discountValue = Number(it.discount_value || 0);
+      const discountAmountRaw = discountType === 'percent' ? (gross * discountValue) / 100 : discountValue;
+      const discountAmount = Math.max(0, Math.min(discountAmountRaw, gross));
+      const taxableValue = Number(it.taxable_value ?? (gross - discountAmount));
+      const gstRate = Number(it.gst_rate || 0);
+      const taxAmount = Number(it.tax_amount ?? ((taxableValue * gstRate) / 100));
+      const lineTotal = Number(it.line_total ?? (taxableValue + taxAmount));
+      return {
+        ...it,
+        quantity: qty,
+        rate,
+        unit_price: rate,
+        discount_type: discountType,
+        discount_value: discountValue,
+        taxable_value: taxableValue,
+        gst_rate: gstRate,
+        tax_amount: taxAmount,
+        line_total: lineTotal
+      };
+    });
+
+    if (items) {
+      if (!items.length) return res.status(400).json({ error: 'At least one item is required' });
+      const normalizedItems = normalizeItems(items);
+      const subtotal = Number(b.subtotal ?? b.taxable_value ?? normalizedItems.reduce((sum, it) => sum + Number(it.taxable_value || 0), 0));
+      const taxAmount = Number(b.tax_amount ?? normalizedItems.reduce((sum, it) => sum + Number(it.tax_amount || 0), 0));
+      const totalAmount = Number(
+        b.total_amount ??
+        b.grand_total ??
+        b.total ??
+        normalizedItems.reduce((sum, it) => sum + Number(it.line_total || 0), 0)
+      );
+      const tx = db.transaction(() => {
+        dbRun(
+          `UPDATE purchase_orders
+           SET distributor_id=?, notes=?, expected_delivery=?, status=?, subtotal=?, tax_amount=?, total_amount=?, total=?, updated_at=CURRENT_TIMESTAMP
+           WHERE id=?`,
+          [
+            b.distributor_id ?? cur.distributor_id,
+            b.notes ?? cur.notes,
+            b.expected_delivery ?? cur.expected_delivery,
+            b.status ?? cur.status,
+            subtotal,
+            taxAmount,
+            totalAmount,
+            totalAmount,
+            req.params.id
+          ]
+        );
+        dbRun(`DELETE FROM purchase_order_items WHERE order_id = ?`, [req.params.id]);
+        normalizedItems.forEach((it) => {
+          dbRun(
+            `INSERT INTO purchase_order_items (order_id, product_id, product_name, quantity, received_quantity, uom, unit_price, rate, gst_rate, discount_type, discount_value, taxable_value, tax_amount, line_total, total)
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+            [
+              req.params.id,
+              it.product_id || null,
+              it.product_name || dbGet(`SELECT name FROM products WHERE id = ?`, [it.product_id])?.name || 'Unknown',
+              Number(it.quantity || 0),
+              Number(it.received_quantity || 0),
+              it.uom || 'pcs',
+              Number(it.unit_price || 0),
+              Number(it.rate || it.unit_price || 0),
+              Number(it.gst_rate || 0),
+              it.discount_type || 'percent',
+              Number(it.discount_value || 0),
+              Number(it.taxable_value || 0),
+              Number(it.tax_amount || 0),
+              Number(it.line_total || 0),
+              Number(it.line_total || 0),
+            ]
+          );
+        });
+      });
+      tx();
+    } else {
+      dbRun(
+        `UPDATE purchase_orders
+         SET distributor_id=?, notes=?, expected_delivery=?, status=?, subtotal=?, tax_amount=?, total_amount=?, total=?, updated_at=CURRENT_TIMESTAMP
+         WHERE id=?`,
+        [
+          b.distributor_id ?? cur.distributor_id,
+          b.notes ?? cur.notes,
+          b.expected_delivery ?? cur.expected_delivery,
+          b.status ?? cur.status,
+          Number(b.subtotal ?? cur.subtotal ?? 0),
+          Number(b.tax_amount ?? cur.tax_amount ?? 0),
+          Number(b.total_amount ?? cur.total_amount ?? cur.total ?? 0),
+          Number(b.total_amount ?? cur.total_amount ?? cur.total ?? 0),
+          req.params.id
+        ]
+      );
+    }
     return res.json({ success: true });
   } catch (error) {
     return res.status(500).json({ error: error.message });
@@ -2312,7 +2417,7 @@ app.get('/api/stock-ledger/summary', (_, res) => {
   }
 });
 
-app.post('/api/stock/verify', (req, res) => {
+app.post('/api/stock/verify', requireAdmin, (req, res) => {
   try {
     const items = Array.isArray(req.body?.items) ? req.body.items : [];
     const result = items.map((it) => {
@@ -2332,7 +2437,7 @@ app.post('/api/stock/verify', (req, res) => {
   }
 });
 
-app.get('/api/billing/customers/search', (req, res) => {
+app.get('/api/billing/customers/search', requireAdmin, (req, res) => {
   try {
     const q = String(req.query.q || '').trim();
     const like = `%${q}%`;
@@ -2345,7 +2450,7 @@ app.get('/api/billing/customers/search', (req, res) => {
   }
 });
 
-app.get('/api/billing/products/search', (req, res) => {
+app.get('/api/billing/products/search', requireAdmin, (req, res) => {
   try {
     const q = String(req.query.q || '').trim();
     const category = String(req.query.category || '').trim();
@@ -2367,52 +2472,93 @@ app.get('/api/billing/products/search', (req, res) => {
   }
 });
 
-app.post('/api/bills/create', (req, res) => {
+app.post('/api/bills/create', requireAdmin, (req, res) => {
   try {
     const b = req.body || {};
     const items = Array.isArray(b.items) ? b.items : [];
-    if (!b.customer_name || !items.length) return res.status(400).json({ error: 'customer_name and items are required' });
-    const subtotal = items.reduce((sum, it) => sum + Number(it.amount || 0), 0);
-    const paidAmount = Math.max(0, Number(b.paid_amount || 0));
-    const totalAmount = Number(b.total_amount || subtotal);
-    const creditAmount = Math.max(0, Number(b.credit_amount || Math.max(0, totalAmount - paidAmount)));
+    if (!items.length) return res.status(400).json({ error: 'items are required' });
+
+    const customerId = Number(b.customer_id || 0);
+    if (!customerId) return res.status(400).json({ error: 'customer_id is required' });
+    const customer = dbGet(
+      `SELECT id, name, email, phone, address FROM users WHERE id = ? AND role = 'customer'`,
+      [customerId]
+    );
+    if (!customer) return res.status(400).json({ error: 'customer not found' });
+
+    const customerName = String(customer.name || '').trim();
+    const customerEmail = normalizeEmail(customer.email);
+    const customerPhone = normalizePhone(customer.phone);
+    const customerAddress = customer.address ? String(customer.address).trim() : null;
+
+    const sanitizedItems = items.map((it) => {
+      const productId = Number(it.product_id || 0) || null;
+      const qty = Math.max(0, Number(it.qty || 0));
+      const mrp = Math.max(0, Number(it.mrp || 0));
+      const lineSubtotal = mrp * qty;
+      const discount = Math.min(lineSubtotal, Math.max(0, Number(it.discount || 0)));
+      const amount = Math.max(0, lineSubtotal - discount);
+      const productName =
+        String(it.product_name || '').trim() ||
+        (productId ? dbGet(`SELECT name FROM products WHERE id = ?`, [productId])?.name : null) ||
+        'Unknown';
+      return {
+        product_id: productId,
+        product_name: productName,
+        mrp,
+        qty,
+        unit: String(it.unit || 'pcs'),
+        discount,
+        amount,
+      };
+    }).filter((it) => it.qty > 0 && it.amount >= 0);
+
+    if (!sanitizedItems.length) return res.status(400).json({ error: 'At least one valid item is required' });
+    const subtotal = sanitizedItems.reduce((sum, it) => sum + Number(it.amount || 0), 0);
+    const billDiscount = Math.min(subtotal, Math.max(0, Number(b.discount_amount || 0)));
+    const totalAmount = Math.max(0, subtotal - billDiscount);
+    const paidAmount = Math.max(0, Math.min(totalAmount, Number(b.paid_amount || 0)));
+    const creditAmount = Math.max(0, totalAmount - paidAmount);
+    const paymentStatus = creditAmount > 0 ? 'pending' : 'paid';
+    const createdBy = Number(req.authUser?.id || 0) || null;
     const billNumber = generateBillNumber();
     const tx = db.transaction(() => {
       const header = dbRun(
-        `INSERT INTO bills (bill_number, customer_id, customer_name, customer_email, customer_phone, customer_address, subtotal, discount_amount, total_amount, paid_amount, credit_amount, payment_method, payment_status, bill_type, created_by)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        `INSERT INTO bills (bill_number, customer_id, customer_name, customer_email, customer_phone, customer_address, subtotal, discount_amount, total_amount, paid_amount, credit_amount, payment_method, payment_status, bill_type, created_by, notes)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
         [
           billNumber,
-          b.customer_id || null,
-          b.customer_name,
-          b.customer_email || null,
-          normalizePhone(b.customer_phone) || null,
-          b.customer_address || null,
+          Number(customer.id),
+          customerName,
+          customerEmail,
+          customerPhone,
+          customerAddress,
           subtotal,
-          Number(b.discount_amount || 0),
+          billDiscount,
           totalAmount,
           paidAmount,
           creditAmount,
-          b.payment_method || 'cash',
-          b.payment_status || 'paid',
+          normalizePaymentMethod(b.payment_method),
+          paymentStatus,
           b.bill_type || 'sales',
-          b.created_by || null,
+          createdBy,
+          b.notes ? String(b.notes) : null,
         ]
       );
       const billId = header.lastInsertRowid;
-      items.forEach((it) => {
+      sanitizedItems.forEach((it) => {
         dbRun(
           `INSERT INTO bill_items (bill_id, product_id, product_name, mrp, qty, unit, discount, amount)
            VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
           [
             billId,
-            it.product_id || null,
-            it.product_name || dbGet(`SELECT name FROM products WHERE id = ?`, [it.product_id])?.name || 'Unknown',
-            Number(it.mrp || 0),
-            Number(it.qty || 0),
-            it.unit || 'pcs',
-            Number(it.discount || 0),
-            Number(it.amount || 0),
+            it.product_id,
+            it.product_name,
+            it.mrp,
+            it.qty,
+            it.unit,
+            it.discount,
+            it.amount,
           ]
         );
       });
@@ -2425,7 +2571,7 @@ app.post('/api/bills/create', (req, res) => {
   }
 });
 
-app.get('/api/bills', (_, res) => {
+app.get('/api/bills', requireAdmin, (_, res) => {
   try {
     return res.json(dbAll(`SELECT * FROM bills ORDER BY created_at DESC`));
   } catch (error) {
@@ -2433,7 +2579,7 @@ app.get('/api/bills', (_, res) => {
   }
 });
 
-app.get('/api/bills/:id', (req, res) => {
+app.get('/api/bills/:id', requireAdmin, (req, res) => {
   try {
     const id = req.params.id;
     const bill = dbGet(`SELECT * FROM bills WHERE id = ? OR bill_number = ?`, [id, id]);
@@ -2445,7 +2591,7 @@ app.get('/api/bills/:id', (req, res) => {
   }
 });
 
-app.put('/api/bills/:id/payment', (req, res) => {
+app.put('/api/bills/:id/payment', requireAdmin, (req, res) => {
   try {
     const cur = dbGet(`SELECT * FROM bills WHERE id = ?`, [req.params.id]);
     if (!cur) return res.status(404).json({ error: 'Bill not found' });
@@ -2460,7 +2606,7 @@ app.put('/api/bills/:id/payment', (req, res) => {
   }
 });
 
-app.get('/api/bills/stats/summary', (_, res) => {
+app.get('/api/bills/stats/summary', requireAdmin, (_, res) => {
   try {
     const totalBills = dbGet(`SELECT COUNT(*) as count FROM bills`)?.count || 0;
     const totalSales = dbGet(`SELECT COALESCE(SUM(total_amount),0) as total FROM bills WHERE bill_type = 'sales'`)?.total || 0;

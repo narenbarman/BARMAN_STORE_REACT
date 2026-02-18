@@ -2,6 +2,7 @@ import { useState, useEffect, useMemo } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import { Plus, Filter, Package, Tag, Calendar, Search, SlidersHorizontal, ChevronDown, ChevronUp } from 'lucide-react';
 import { productsApi, categoriesApi } from '../services/api';
+import { getProductImageSrc, getProductFallbackImage } from '../utils/productImage';
 import './Products.css';
 
 // Currency formatter with Indian Rupee symbol
@@ -22,22 +23,6 @@ const formatCurrencyColored = (amount) => {
 };
 
 const normalizeText = (value) => String(value || '').trim().toLowerCase();
-
-const getSafeImageSrc = (value) => {
-  const fallback = '/logo.png';
-  const raw = String(value || '').trim();
-  if (!raw) return fallback;
-
-  try {
-    const url = new URL(raw, window.location.origin);
-    if (url.protocol === 'http:' || url.protocol === 'https:') {
-      return url.href;
-    }
-    return fallback;
-  } catch (_) {
-    return fallback;
-  }
-};
 
 const getInitialVisibleCount = () => (window.innerWidth <= 768 ? 10 : 16);
 
@@ -221,7 +206,7 @@ function Products({ setCartCount }) {
           id: product.id,
           name: String(product.name || '').trim(),
           category: String(product.category || '').trim(),
-          image: getSafeImageSrc(product.image),
+          image: getProductImageSrc(product),
           price: Number(product.price || 0),
           stock: productStock,
           uom: String(product.uom || 'pcs').trim(),
@@ -387,11 +372,12 @@ function Products({ setCartCount }) {
             >
               <div className="product-image">
                 <img
-                  src={getSafeImageSrc(product.image)}
+                  src={getProductImageSrc(product)}
                   alt={safeName}
                   loading="lazy"
                   onError={(e) => {
-                    e.target.src = '/logo.png';
+                    e.currentTarget.onerror = null;
+                    e.currentTarget.src = getProductFallbackImage(product);
                   }}
                 />
                 <div className="product-overlay">

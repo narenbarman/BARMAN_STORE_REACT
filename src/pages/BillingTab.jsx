@@ -1,7 +1,10 @@
-﻿import React, { useState, useCallback, useEffect, useRef } from 'react';
+import React, { useState, useCallback, useEffect, useRef } from 'react';
 import { Plus, Trash2 } from 'lucide-react';
 import { customersApi, productsApi, billingApi, creditApi, usersApi } from '../services/api';
+import { buildWhatsAppUrl } from '../utils/whatsapp';
+import * as info from './info';
 import './BillingTab.css';
+import { TITLE } from './info';
 
 const createEmptyItem = () => ({
   id: Date.now() + Math.random(),
@@ -23,6 +26,7 @@ const BillingSystem = () => {
   const [paidAmount, setPaidAmount] = useState(0);
   const [lastShareText, setLastShareText] = useState('');
   const [lastShareNumber, setLastShareNumber] = useState('');
+  const [lastSharePhone, setLastSharePhone] = useState('');
 
   const [customersList, setCustomersList] = useState([]);
   const [productsList, setProductsList] = useState([]);
@@ -427,22 +431,31 @@ const BillingSystem = () => {
           reference: result?.bill_number || null
         });
       }
+      let currentTotalCredit = Number(payload.credit_amount || 0);
+      if (payload.customer_id) {
+        try {
+          const balanceData = await creditApi.getBalance(payload.customer_id);
+          currentTotalCredit = Number(balanceData?.balance || 0);
+        } catch (_) {
+          // Keep bill flow resilient; fall back to this bill's credit amount.
+        }
+      }
       const shareText = buildShareText({
+        companyTitle: info.TITLE || 'BARMAN STORE',
         bill_number: result?.bill_number,
         created_at: new Date().toISOString(),
-        customer_name: payload.customer_name,
-        customer_phone: payload.customer_phone,
-        customer_email: payload.customer_email,
-        customer_address: payload.customer_address,
         items: payload.items,
         total_amount: payload.total_amount,
         paid_amount: payload.paid_amount,
         credit_amount: payload.credit_amount,
-        payment_status: payload.payment_status
+        current_total_credit: currentTotalCredit,
+        payment_status: payload.payment_status,
+        thankYouLine: 'Thank you for shopping with us.'
       });
       setLastShareText(shareText);
       setLastShareNumber(result?.bill_number || '');
-      alert('✓ Bill created successfully!');
+      setLastSharePhone(payload.customer_phone || '');
+      alert('? Bill created successfully!');
       setCustomer({ name: '', email: '', phone: '', address: '' });
       setItems([createEmptyItem()]);
       setPaidAmount(0);
@@ -454,19 +467,27 @@ const BillingSystem = () => {
     }
   };
 
-  const buildShareText = (bill) => {
-    const items = Array.isArray(bill.items) ? bill.items : [];
-    const lines = [
-      `BILL #${bill.bill_number || ''}`,
-      `Date: ${new Date(bill.created_at || Date.now()).toLocaleString()}`,
-      `Customer: ${bill.customer_name || ''}`,
-      bill.customer_phone ? `Phone: ${bill.customer_phone}` : null,
-      bill.customer_email ? `Email: ${bill.customer_email}` : null,
-      bill.customer_address ? `Address: ${bill.customer_address}` : null,
-      '',
-      'Items:'
-    ];
-    if (items.length === 0) {
+  const buildShareText = ({
+    companyTitle,
+    thankYouLine,
+    bill_number,
+    created_at,
+    items = [],
+    total_amount = 0,
+    paid_amount = 0,
+    credit_amount = 0,
+    current_total_credit = 0,
+    payment_status = ''
+  }) => {
+    const lines = [];
+    lines.push(companyTitle || 'BARMAN STORE');
+    lines.push('');
+    lines.push(`Bill: ${bill_number || ''}`);
+    lines.push(`Date: ${new Date(created_at || Date.now()).toLocaleString()}`);
+    lines.push('');
+    lines.push('Items:');
+
+    if (!items.length) {
       lines.push('- None');
     } else {
       items.forEach((it) => {
@@ -474,15 +495,19 @@ const BillingSystem = () => {
         const qty = Number(it.qty || it.quantity || 0);
         const unit = it.unit || '';
         const amount = Number(it.amount || 0);
-        lines.push(`- ${name} ${qty}${unit ? ' ' + unit : ''} : Rs ${amount}`);
+        lines.push(`- ${name} ${qty}${unit ? ` ${unit}` : ''} : Rs ${amount}`);
       });
     }
+
     lines.push('');
-    lines.push(`Total: Rs ${Number(bill.total_amount || 0)}`);
-    lines.push(`Paid: Rs ${Number(bill.paid_amount || 0)}`);
-    lines.push(`Credit: Rs ${Number(bill.credit_amount || 0)}`);
-    lines.push(`Status: ${bill.payment_status || ''}`);
-    return lines.filter(Boolean).join('\n');
+    lines.push(`Total: Rs ${Number(total_amount || 0)}`);
+    lines.push(`Paid: Rs ${Number(paid_amount || 0)}`);
+    lines.push(`Credit: Rs ${Number(credit_amount || 0)}`);
+    lines.push(`Current Total Credit: Rs ${Number(current_total_credit || 0)}`);
+    lines.push(`Status: ${payment_status || ''}`);
+    lines.push('');
+    lines.push(thankYouLine || 'Thank you for shopping with us.');
+    return lines.join('\n');
   };
 
   const handleCopyShare = async () => {
@@ -720,7 +745,7 @@ const BillingSystem = () => {
           onClick={handleCreateBill} 
           disabled={isSubmitting}
         >
-          ✓ Create Bill
+          ? Create Bill
         </button>
       </div>
 
@@ -734,7 +759,10 @@ const BillingSystem = () => {
             <button className="share-btn" onClick={handleCopyShare}>Copy</button>
             <a
               className="share-btn whatsapp"
-              href={`https://wa.me/?text=${encodeURIComponent(lastShareText)}`}
+              href={buildWhatsAppUrl({
+                phone: lastSharePhone || customer?.phone,
+                text: lastShareText,
+              })}
               target="_blank"
               rel="noreferrer"
             >
@@ -748,3 +776,4 @@ const BillingSystem = () => {
 };
 
 export default BillingSystem;
+

@@ -327,6 +327,15 @@
   background: #bfdbfe;
 }
 
+.purchase-management .action-btn.edit {
+  background: #ede9fe;
+  color: #6d28d9;
+}
+
+.purchase-management .action-btn.edit:hover {
+  background: #ddd6fe;
+}
+
 /* Order Detail Modal */
 .purchase-management .order-detail-body {
   padding: 1rem;
@@ -543,6 +552,48 @@
   display: flex;
   flex-direction: column;
   gap: 12px;
+}
+
+.purchase-management .quick-entry-table {
+  border: 1px solid #e5e7eb;
+  border-radius: 10px;
+  overflow: auto;
+}
+
+.purchase-management .quick-entry-table table {
+  width: 100%;
+  border-collapse: collapse;
+}
+
+.purchase-management .quick-entry-table th {
+  background: #f9fafb;
+  padding: 10px 12px;
+  text-align: left;
+  font-size: 12px;
+  color: #6b7280;
+  border-bottom: 1px solid #e5e7eb;
+}
+
+.purchase-management .quick-entry-table td {
+  padding: 10px 12px;
+  border-bottom: 1px solid #f3f4f6;
+}
+
+.purchase-management .quick-entry-table tr:last-child td {
+  border-bottom: none;
+}
+
+.purchase-management .quick-entry-table input {
+  width: 100%;
+  padding: 8px 10px;
+  border: 1px solid #d1d5db;
+  border-radius: 6px;
+  font-size: 14px;
+}
+
+.purchase-management .quick-entry-table .empty-state {
+  color: #9ca3af;
+  text-align: center;
 }
 
 .purchase-management .item-row {

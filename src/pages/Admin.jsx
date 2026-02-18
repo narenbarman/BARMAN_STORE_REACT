@@ -1,7 +1,8 @@
 import { useState, useEffect } from 'react';
-import { Link, useNavigate } from 'react-router-dom';
+import { Link, useNavigate, useSearchParams } from 'react-router-dom';
 import { Package, ShoppingCart, Users, TrendingUp, LogOut, Plus, Edit, Trash2, X, FolderOpen, CreditCard, FileText, Truck, ShoppingBag, History, BarChart2, Gift, KeyRound, Eye, Menu } from 'lucide-react';
 import { statsApi, productsApi, ordersApi, usersApi, adminApi } from '../services/api';
+import { getProductImageSrc, getProductFallbackImage } from '../utils/productImage';
 import ProductForm from './ProductForm';
 import CategoryManagement from './CategoryManagement';
 import DistributorManagement from './DistributorManagement';
@@ -43,7 +44,19 @@ const formatBytes = (bytes) => {
 
 function Admin({ user }) {
   const navigate = useNavigate();
-  const [activeTab, setActiveTab] = useState('dashboard');
+  const [searchParams, setSearchParams] = useSearchParams();
+  const [activeTab, setActiveTab] = useState(() => {
+    if (typeof window === 'undefined') return 'dashboard';
+    const tab = new URLSearchParams(window.location.search).get('tab');
+    const allowedTabs = new Set([
+      'dashboard', 'orders', 'offers', 'credit-aging',
+      'products', 'categories',
+      'billing', 'view-bills',
+      'purchases', 'distributors', 'stock-ledger',
+      'users', 'credit-khata', 'password-resets', 'backup-restore'
+    ]);
+    return allowedTabs.has(tab) ? tab : 'dashboard';
+  });
   const [stats, setStats] = useState({ totalOrders: 0, totalRevenue: 0, pendingOrders: 0 });
   const [products, setProducts] = useState([]);
   const [orders, setOrders] = useState([]);
@@ -200,6 +213,13 @@ function Admin({ user }) {
   }, [activeTab]);
 
   useEffect(() => {
+    const tabFromUrl = searchParams.get('tab');
+    if (tabFromUrl && tabGroupMap[tabFromUrl] && tabFromUrl !== activeTab) {
+      setActiveTab(tabFromUrl);
+    }
+  }, [searchParams]);
+
+  useEffect(() => {
     if (activeTab === 'backup-restore') {
       fetchBackups();
     }
@@ -216,6 +236,9 @@ function Admin({ user }) {
 
   const handleTabChange = (tab) => {
     setActiveTab(tab);
+    const next = new URLSearchParams(searchParams);
+    next.set('tab', tab);
+    setSearchParams(next, { replace: true });
     if (window.innerWidth <= 768) {
       setIsMobileSidebarOpen(false);
     }
@@ -793,10 +816,13 @@ function Admin({ user }) {
                         <td>{product.id}</td>
                         <td>
                           <img 
-                            src={product.image} 
+                            src={getProductImageSrc(product)} 
                             alt={product.name}
                             className="product-thumbnail"
-                            onError={(e) => e.target.src = '/logo.png'}
+                            onError={(e) => {
+                              e.currentTarget.onerror = null;
+                              e.currentTarget.src = getProductFallbackImage(product);
+                            }}
                           />
                         </td>
                         <td>{product.name}</td>
@@ -878,13 +904,24 @@ function Admin({ user }) {
                 </div>
                 {products.map(product => {
                   const isEditingQuick = quickEditId === product.id;
+                  const imageSourceProduct = isEditingQuick
+                    ? {
+                        image: quickEditForm.image,
+                        name: quickEditForm.name || product.name,
+                        category: quickEditForm.category || product.category,
+                        brand: product.brand
+                      }
+                    : product;
                   return (
                     <div key={product.id} className="product-admin-card">
                       <img
-                        src={(isEditingQuick ? quickEditForm.image : product.image) || '/logo.png'}
+                        src={getProductImageSrc(imageSourceProduct)}
                         alt={product.name}
                         className="product-thumbnail-large"
-                        onError={(e) => e.target.src = '/logo.png'}
+                        onError={(e) => {
+                          e.currentTarget.onerror = null;
+                          e.currentTarget.src = getProductFallbackImage(imageSourceProduct);
+                        }}
                       />
                       {isEditingQuick ? (
                         <div className="quick-form">
@@ -1061,7 +1098,7 @@ function Admin({ user }) {
                         {u.role !== 'admin' ? (
                           <>
                             <Link 
-                              to={`/admin/users/${u.id}/credit`}
+                              to={`/admin/users/${u.id}/credit?returnTab=users`}
                               className="action-btn credit"
                               title="Credit History"
                             >

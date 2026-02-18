@@ -1,12 +1,13 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
-import { 
-  Plus, Trash2, Calculator, Save, 
-  User, Phone, Package, DollarSign,
+import {
+  Plus, Trash2, Calculator, Save,
+  User, Package, DollarSign,
   AlertCircle, CheckCircle, X, FileText, RefreshCw,
   ChevronDown
 } from 'lucide-react';
-import { billingApi, productsApi } from '../services/api';
+import { billingApi } from '../services/api';
+import { buildWhatsAppUrl } from '../utils/whatsapp';
 import './Billing.css';
 
 const formatCurrency = (amount) => {
@@ -18,15 +19,6 @@ const formatCurrency = (amount) => {
   }).format(amount);
 };
 
-// Phone validation
-const validatePhone = (phone) => {
-  if (!phone) return { valid: false, message: 'Phone number is required' };
-  const digits = phone.toString().replace(/\D/g, '');
-  if (digits.length < 10) return { valid: false, message: 'Phone number must be at least 10 digits' };
-  if (digits.length > 15) return { valid: false, message: 'Phone number is too long' };
-  return { valid: true, phone: digits };
-};
-
 function Billing() {
   const navigate = useNavigate();
   const { billNumber: routeBillNumber } = useParams();
@@ -36,6 +28,7 @@ function Billing() {
   const [success, setSuccess] = useState(null);
   const [shareText, setShareText] = useState('');
   const [shareBillNumber, setShareBillNumber] = useState('');
+  const [sharePhone, setSharePhone] = useState('');
   
   // Stats
   const [stats, setStats] = useState({
@@ -49,13 +42,6 @@ function Billing() {
   const [customerResults, setCustomerResults] = useState([]);
   const [showCustomerDropdown, setShowCustomerDropdown] = useState(false);
   const [selectedCustomer, setSelectedCustomer] = useState(null);
-  const [customerMode, setCustomerMode] = useState('selecting'); // 'selecting' | 'new'
-  const [newCustomer, setNewCustomer] = useState({
-    name: '',
-    phone: '',
-    email: '',
-    address: ''
-  });
   const customerDropdownRef = useRef(null);
   
   // Product combobox state
@@ -116,6 +102,7 @@ function Billing() {
       if (ageMs < 10 * 60 * 1000 && data.text) {
         setShareText(data.text);
         setShareBillNumber(data.billNumber || routeBillNumber || '');
+        setSharePhone(String(data.phone || ''));
       }
     } catch {
       // ignore malformed storage
@@ -138,7 +125,7 @@ function Billing() {
   // ============ CUSTOMER COMBOBOX ============
   
   useEffect(() => {
-    if (customerQuery.length >= 2 && customerMode === 'selecting') {
+    if (customerQuery.length >= 2) {
       searchCustomers();
     } else if (customerQuery.length === 0 && selectedCustomer) {
       // Clear selection if input is cleared
@@ -163,36 +150,20 @@ function Billing() {
     setSelectedCustomer(customer);
     setCustomerQuery(customer.name + ' - ' + customer.phone);
     setShowCustomerDropdown(false);
-    setCustomerMode('selecting');
-    // Clear new customer form
-    setNewCustomer({ name: '', phone: '', email: '', address: '' });
   };
   
   const clearCustomerSelection = () => {
     setSelectedCustomer(null);
     setCustomerQuery('');
-    setCustomerMode('new');
   };
   
   const handleCustomerInputChange = (e) => {
     const value = e.target.value;
     setCustomerQuery(value);
     
-    // If user types something that doesn't match a selection, switch to new mode
+    // If user edits selected value, clear selection and require selecting again
     if (selectedCustomer && !value.includes(selectedCustomer.phone)) {
       setSelectedCustomer(null);
-      setCustomerMode('new');
-    }
-    
-    // Check if we should switch to new mode based on input
-    if (value.length >= 2) {
-      const matchingCustomer = customerResults.find(c => 
-        c.name.toLowerCase().includes(value.toLowerCase()) ||
-        c.phone.includes(value)
-      );
-      if (!matchingCustomer) {
-        setCustomerMode('new');
-      }
     }
   };
   
@@ -350,32 +321,15 @@ function Billing() {
     setSaving(true);
     
     try {
-      let customerData;
-      
-      if (selectedCustomer) {
-        // Using existing customer
-        customerData = {
-          name: selectedCustomer.name,
-          phone: selectedCustomer.phone,
-          email: selectedCustomer.email || null,
-          address: selectedCustomer.address || null
-        };
-      } else {
-        // Creating new customer
-        const phoneValidation = validatePhone(newCustomer.phone);
-        if (!phoneValidation.valid) {
-          throw new Error(phoneValidation.message);
-        }
-        if (!newCustomer.name) {
-          throw new Error('Customer name is required');
-        }
-        customerData = {
-          name: newCustomer.name,
-          phone: phoneValidation.phone,
-          email: newCustomer.email || null,
-          address: newCustomer.address || null
-        };
+      if (!selectedCustomer?.id) {
+        throw new Error('Select an existing customer to create bill');
       }
+      const customerData = {
+        id: selectedCustomer.id,
+        name: selectedCustomer.name,
+        phone: selectedCustomer.phone || '',
+        address: selectedCustomer.address || null
+      };
       
       if (billItems.length === 0) {
         throw new Error('Please add at least one item to the bill');
@@ -399,10 +353,7 @@ function Billing() {
       });
 
       const result = await billingApi.createBill({
-        customer_name: customerData.name,
-        customer_email: customerData.email || null,
-        customer_phone: customerData.phone || null,
-        customer_address: customerData.address || null,
+        customer_id: customerData.id,
         subtotal: totals.subtotal,
         discount_amount: totals.discountAmount,
         total_amount: totals.totalAmount,
@@ -411,7 +362,7 @@ function Billing() {
         payment_method: 'cash',
         payment_status: totals.balanceAmount > 0 ? 'pending' : 'paid',
         bill_type: 'sales',
-        created_by: currentUser?.id,
+        notes: notes || null,
         items
       });
       
@@ -421,7 +372,6 @@ function Billing() {
         created_at: new Date().toISOString(),
         customer_name: customerData.name,
         customer_phone: customerData.phone,
-        customer_email: customerData.email,
         customer_address: customerData.address,
         items,
         total_amount: totals.totalAmount,
@@ -434,8 +384,10 @@ function Billing() {
       localStorage.setItem('lastBillShare', JSON.stringify({
         text: share,
         billNumber: result.bill_number,
+        phone: customerData.phone || '',
         ts: Date.now()
       }));
+      setSharePhone(customerData.phone || '');
       setTimeout(() => {
         navigate(`/billing/${result.bill_number}`);
       }, 2000);
@@ -444,7 +396,6 @@ function Billing() {
       setBillItems([]);
       setSelectedCustomer(null);
       setCustomerQuery('');
-      setNewCustomer({ name: '', phone: '', email: '', address: '' });
       setPaidAmount(0);
       setDiscountPercent(0);
       setNotes('');
@@ -464,7 +415,6 @@ function Billing() {
       `Date: ${new Date(bill.created_at || Date.now()).toLocaleString()}`,
       `Customer: ${bill.customer_name || ''}`,
       bill.customer_phone ? `Phone: ${bill.customer_phone}` : null,
-      bill.customer_email ? `Email: ${bill.customer_email}` : null,
       bill.customer_address ? `Address: ${bill.customer_address}` : null,
       '',
       'Items:'
@@ -497,6 +447,13 @@ function Billing() {
       alert('Failed to copy bill text.');
     }
   };
+
+  const getWhatsAppHref = () => {
+    return buildWhatsAppUrl({
+      phone: sharePhone,
+      text: shareText,
+    });
+  };
   
   if (!currentUser || currentUser.role !== 'admin') {
     return (
@@ -513,7 +470,7 @@ function Billing() {
   return (
     <div className="billing-page">
       <div className="billing-header fade-in-up">
-        <h1>💰 Bill Generation</h1>
+        <h1>Bill Generation</h1>
         <p>Create bills and manage customer transactions</p>
         
         <div className="stats-row">
@@ -565,9 +522,9 @@ function Billing() {
           <textarea className="share-text" readOnly value={shareText} />
           <div className="share-actions">
             <button type="button" className="share-btn" onClick={handleCopyShare}>Copy</button>
-            <a
+              <a
               className="share-btn whatsapp"
-              href={`https://wa.me/?text=${encodeURIComponent(shareText)}`}
+              href={getWhatsAppHref()}
               target="_blank"
               rel="noreferrer"
             >
@@ -585,14 +542,14 @@ function Billing() {
             
             <div className="combobox-container" ref={customerDropdownRef}>
               <label className="combobox-label">
-                {selectedCustomer ? 'Selected Customer' : 'Customer Name *'}
+                {selectedCustomer ? 'Selected Customer' : 'Customer *'}
               </label>
               
               <div className={`combobox-input-wrapper ${selectedCustomer ? 'has-selection' : ''}`}>
                 <input
                   type="text"
                   className="combobox-input"
-                  placeholder="Search or enter customer name..."
+                  placeholder="Search existing customer by name or phone..."
                   value={customerQuery}
                   onChange={handleCustomerInputChange}
                   onFocus={handleCustomerInputFocus}
@@ -629,55 +586,9 @@ function Billing() {
                       )}
                     </div>
                   ))}
-                  <div 
-                    className="combobox-option new-option"
-                    onClick={() => {
-                      setCustomerMode('new');
-                      setShowCustomerDropdown(false);
-                      setNewCustomer({ ...newCustomer, name: customerQuery });
-                    }}
-                  >
-                    <Plus size={16} />
-                    <span>Create new customer: <strong>{customerQuery}</strong></span>
-                  </div>
                 </div>
               )}
             </div>
-            
-            {/* New Customer Fields - Show when creating new */}
-            {(!selectedCustomer) && (
-              <div className="new-entry-fields">
-                <div className="form-row">
-                  <div className="form-group">
-                    <label>Phone Number *</label>
-                    <input
-                      type="tel"
-                      value={newCustomer.phone}
-                      onChange={(e) => setNewCustomer({...newCustomer, phone: e.target.value})}
-                      placeholder="Enter phone number"
-                    />
-                  </div>
-                  <div className="form-group">
-                    <label>Email (Optional)</label>
-                    <input
-                      type="email"
-                      value={newCustomer.email}
-                      onChange={(e) => setNewCustomer({...newCustomer, email: e.target.value})}
-                      placeholder="Enter email"
-                    />
-                  </div>
-                </div>
-                <div className="form-group">
-                  <label>Address (Optional)</label>
-                  <input
-                    type="text"
-                    value={newCustomer.address}
-                    onChange={(e) => setNewCustomer({...newCustomer, address: e.target.value})}
-                    placeholder="Enter address"
-                  />
-                </div>
-              </div>
-            )}
           </div>
           
           {/* Items Section - Unified Combobox */}
@@ -814,7 +725,7 @@ function Billing() {
                   <tbody>
                     {billItems.map((item, index) => (
                       <tr key={index}>
-                        <td>
+                        <td data-label="Item">
                           <input
                             type="text"
                             value={item.name}
@@ -822,7 +733,7 @@ function Billing() {
                             className="item-name-input"
                           />
                         </td>
-                        <td>
+                        <td data-label="MRP">
                           <input
                             type="number"
                             step="0.01"
@@ -832,7 +743,7 @@ function Billing() {
                             className="amount-input"
                           />
                         </td>
-                        <td>
+                        <td data-label="Qty">
                           <input
                             type="number"
                             step="0.01"
@@ -842,7 +753,7 @@ function Billing() {
                             className="qty-input"
                           />
                         </td>
-                        <td>
+                        <td data-label="Unit">
                           <select
                             value={item.unit}
                             onChange={(e) => updateBillItem(index, 'unit', e.target.value)}
@@ -856,7 +767,7 @@ function Billing() {
                             <option value="dozen">Doz</option>
                           </select>
                         </td>
-                        <td>
+                        <td data-label="Discount %">
                           <input
                             type="number"
                             step="0.01"
@@ -867,14 +778,14 @@ function Billing() {
                             className="discount-input"
                           />
                         </td>
-                        <td className="amount-cell">
+                        <td className="amount-cell" data-label="Amount">
                           {formatCurrency(
                             (parseFloat(item.mrp) || 0) * 
                             (parseFloat(item.quantity) || 0) * 
                             (1 - (parseFloat(item.discount_percent) || 0) / 100)
                           )}
                         </td>
-                        <td>
+                        <td data-label="Action">
                           <button
                             type="button"
                             className="remove-btn"
@@ -969,7 +880,7 @@ function Billing() {
           <button
             type="submit"
             className="generate-bill-btn"
-            disabled={saving || billItems.length === 0}
+            disabled={saving || billItems.length === 0 || !selectedCustomer?.id}
           >
             {saving ? (
               <>
