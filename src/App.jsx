@@ -19,7 +19,8 @@ import UserMenu from './components/UserMenu';
 import ErrorBoundary from './components/ErrorBoundary';
 import './index.css';
 import './App.css';
-
+import * as info from './pages/info.js';
+import logoImage from '../logo.png';
 
 
 // React Router v7 future flags to opt-in early and suppress warnings
@@ -49,7 +50,7 @@ function App() {
         <header className="header">
           <div className="header-content">
             <Link to="/" className="logo">
-              <img src='.\logo.png' alt="Logo" className="logo-image" />
+              <img src={logoImage} alt="Logo" className="logo-image" />
               <span className="logo-bar">BAR</span>
               <span className="logo-man">MAN</span>
               <span className="logo-store">STORE</span>
@@ -112,8 +113,8 @@ function App() {
         <footer className="footer">
           <div className="footer-content">
             <div className="footer-section">
-              <h3>BARMAN STORE</h3>
-              <p>Quality Groceries & Everyday Essentials</p>
+              <h3>{info.TITLE}</h3>
+              <p>{info.SUB_TITLE}</p>
             </div>
             <div className="footer-section">
               <h4>Quick Links</h4>
@@ -121,13 +122,13 @@ function App() {
               <Link to="/cart">Cart</Link>
             </div>
             <div className="footer-section">
-              <h4>Contact</h4>
-              <p>Email: info@barmanstore.com</p>
-              <p>Phone: (555) 123-4567</p>
+              <h4>CONTACT US</h4>
+              <p>Email:{info.EMAIL}</p>
+              <p>Phone: {info.CONTACT}</p>
             </div>
           </div>
           <div className="footer-bottom">
-            <p>&copy; 2026 BARMAN STORE. All rights reserved.</p>
+            <p>&copy; 2026 {info.TITLE}. All rights reserved.</p>
           </div>
         </footer>
       </div>

@@ -34,7 +34,7 @@ const BillsViewer = () => {
     if (!window.confirm('Are you sure you want to delete this bill?')) return;
 
     try {
-      const response = await fetch(`http://localhost:5000/api/bills/${billId}`, {
+      const response = await fetch(`/api/bills/${billId}`, {
         method: 'DELETE'
       });
       if (!response.ok) throw new Error('Failed to delete bill');

@@ -68,7 +68,7 @@ body {
   letter-spacing: -0.05em;
   display: flex;
   gap: 0.25rem;
-  align-items: baseline;
+  align-items: center;
   transition: transform var(--transition-fast);
   white-space: nowrap;
   flex-shrink: 0;
@@ -89,6 +89,8 @@ body {
 .logo-image {
   width: clamp(35px, 8vw, 50px);
   height: clamp(35px, 8vw, 50px);
+  display: block;
+  object-fit: contain;
 }
 
 .logo-store {
@@ -275,13 +277,21 @@ body {
   }
 
   /* Logo */
+  .logo {
+    gap: 0.2rem;
+    font-size: 1.1rem;
+    line-height: 1;
+  }
+
   .logo-image {
-    width: 40px;
-    height: 40px;
+    width: 34px;
+    height: 34px;
   }
 
   .logo-store {
-    display: none;
+    display: inline;
+    font-size: 0.5em;
+    opacity: 0.95;
   }
 
   /* Cart Link */
@@ -309,15 +319,29 @@ body {
 
   /* Logo */
   .logo {
-    font-size: 1.2rem;
+    font-size: 1rem;
+    gap: 0.15rem;
   }
 
   .logo-bar {
-    display: none;
+    display: inline;
+    font-size: 0.95em;
   }
 
   .logo-man {
     display: inline;
+    font-size: 0.95em;
+  }
+
+  .logo-store {
+    display: inline;
+    font-size: 0.45em;
+    opacity: 0.95;
+  }
+
+  .logo-image {
+    width: 30px;
+    height: 30px;
   }
 
   /* Navigation */

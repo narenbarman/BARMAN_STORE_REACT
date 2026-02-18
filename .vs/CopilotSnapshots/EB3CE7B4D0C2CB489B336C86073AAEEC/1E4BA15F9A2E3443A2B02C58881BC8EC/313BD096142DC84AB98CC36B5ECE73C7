@@ -1,0 +1,128 @@
+﻿import React, { useEffect, useState } from 'react';
+import { useParams, useNavigate } from 'react-router-dom';
+import { ordersApi } from '../services/api';
+
+const formatCurrency = (amount) => new Intl.NumberFormat('en-IN', { style: 'currency', currency: 'INR', minimumFractionDigits: 2 }).format(amount);
+
+export default function OrderDetails() {
+  const { id } = useParams();
+  const [order, setOrder] = useState(null);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState(null);
+  const [history, setHistory] = useState([]);
+  const navigate = useNavigate();
+
+  useEffect(() => {
+    const load = async () => {
+      setLoading(true);
+      setError(null);
+      try {
+        const data = await ordersApi.getById(id);
+        setOrder(data);
+        const hist = await fetch(`/api/orders/${id}/history`).then(r => r.json()).catch(() => []);
+        setHistory(hist || []);
+      } catch (err) {
+        setError(err.message || 'Failed to load order');
+      } finally {
+        setLoading(false);
+      }
+    };
+    load();
+  }, [id]);
+
+  if (loading) return <div style={{ padding: 20 }}>Loading order...</div>;
+  if (error) return <div style={{ padding: 20 }} className="error-message">{error}</div>;
+  if (!order) return <div style={{ padding: 20 }}>Order not found</div>;
+
+  return (
+    <div style={{ padding: 20 }}>
+      <h1>Order {order.order_number || `#${order.id}`}</h1>
+      <p><strong>Customer:</strong> {order.customer_name} ({order.customer_email})</p>
+      { /* If admin viewing, show admin controls */ }
+      {(() => {
+        try {
+          const saved = JSON.parse(localStorage.getItem('user') || '{}');
+          return saved?.role === 'admin' ? (
+            <div style={{ marginTop: 8 }}>
+              <button onClick={async () => {
+                if (!window.confirm('Approve this order and apply stock?')) return;
+                try {
+                  await ordersApi.updateStatus(order.id, 'confirmed', 'Approved via details page', saved.id);
+                  alert('Order approved');
+                  window.location.reload();
+                } catch (err) {
+                  alert(err.message || 'Failed to approve');
+                }
+              }} className="admin-btn">Approve</button>
+              <button onClick={async () => {
+                if (!window.confirm('Cancel this order?')) return;
+                try {
+                  await ordersApi.updateStatus(order.id, 'cancelled', 'Cancelled via details page', saved.id);
+                  alert('Order cancelled');
+                  window.location.reload();
+                } catch (err) {
+                  alert(err.message || 'Failed to cancel');
+                }
+              }} style={{ marginLeft: 8 }} className="admin-btn">Cancel</button>
+            </div>
+          ) : null;
+        } catch (_) { return null; }
+      })()}
+      <p><strong>Status:</strong> {order.status} &nbsp; <strong>Payment:</strong> {order.payment_status}</p>
+      <h3>Items</h3>
+      <table style={{ width: '100%', borderCollapse: 'collapse' }}>
+        <thead>
+          <tr>
+            <th style={{ textAlign: 'left', padding: 8 }}>Product</th>
+            <th style={{ textAlign: 'left', padding: 8 }}>Qty</th>
+            <th style={{ textAlign: 'left', padding: 8 }}>Price</th>
+            <th style={{ textAlign: 'left', padding: 8 }}>Total</th>
+          </tr>
+        </thead>
+        <tbody>
+          {order.items && order.items.map(item => (
+            <tr key={item.id} style={{ borderTop: '1px solid #eee' }}>
+              <td style={{ padding: 8 }}>{item.product_name}</td>
+              <td style={{ padding: 8 }}>{item.quantity}</td>
+              <td style={{ padding: 8 }}>{formatCurrency(item.price)}</td>
+              <td style={{ padding: 8 }}>{formatCurrency(item.total)}</td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+      <div style={{ marginTop: 12 }}>
+        <strong>Total:</strong> {formatCurrency(order.total_amount)}
+      </div>
+      <div style={{ marginTop: 20 }}>
+        <h3>Order History</h3>
+        {history.length === 0 ? (
+          <p>No history available</p>
+        ) : (
+          <table style={{ width: '100%', borderCollapse: 'collapse' }}>
+            <thead>
+              <tr>
+                <th style={{ textAlign: 'left', padding: 8 }}>When</th>
+                <th style={{ textAlign: 'left', padding: 8 }}>Status</th>
+                <th style={{ textAlign: 'left', padding: 8 }}>By</th>
+                <th style={{ textAlign: 'left', padding: 8 }}>Note</th>
+              </tr>
+            </thead>
+            <tbody>
+              {history.map(h => (
+                <tr key={h.id} style={{ borderTop: '1px solid #eee' }}>
+                  <td style={{ padding: 8 }}>{new Date(h.created_at).toLocaleString()}</td>
+                  <td style={{ padding: 8 }}>{h.status}</td>
+                  <td style={{ padding: 8 }}>{h.created_by_name || h.created_by || 'System'}</td>
+                  <td style={{ padding: 8 }}>{h.description || '-'}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        )}
+      </div>
+      <div style={{ marginTop: 12 }}>
+        <button onClick={() => navigate(-1)} className="admin-btn">Back</button>
+      </div>
+    </div>
+  );
+}

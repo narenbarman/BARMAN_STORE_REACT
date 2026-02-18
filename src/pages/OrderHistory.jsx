@@ -38,7 +38,7 @@ const getStatusConfig = (status) => {
   return configs[status] || { icon: Package, color: 'default', label: status };
 };
 
-const statusFilters = ['all', 'pending', 'confirmed', 'processing', 'shipped', 'delivered', 'cancelled'];
+const statusFilters = ['all', 'pending', 'confirmed', 'processing', 'shipped', 'delivered', 'cancelled', 'refunded'];
 
 const sortOptions = [
   { value: 'date_desc', label: 'Newest First' },
@@ -133,7 +133,7 @@ function EmptyOrdersState({ hasActiveFilters, onStartShopping }) {
   );
 }
 
-function OrderCard({ order, index, onViewOrder, onRetryPayment }) {
+function OrderCard({ order, index, onViewOrder, onRetryPayment, onTrackOrder }) {
   const statusConfig = getStatusConfig(order.status);
   const StatusIcon = statusConfig.icon;
 
@@ -194,7 +194,7 @@ function OrderCard({ order, index, onViewOrder, onRetryPayment }) {
             </button>
           )}
           {order.fulfillment_status === 'shipped' && order.shipping_tracking_number && (
-            <button className="track-btn">
+            <button className="track-btn" onClick={onTrackOrder}>
               <Truck size={16} />
               Track
             </button>
@@ -213,10 +213,10 @@ function OrderCard({ order, index, onViewOrder, onRetryPayment }) {
   );
 }
 
-function ExportSection() {
+function ExportSection({ onExport }) {
   return (
     <div className="export-section fade-in-up">
-      <button className="export-btn">
+      <button className="export-btn" onClick={onExport}>
         <Download size={18} />
         Export Order History
       </button>
@@ -234,6 +234,16 @@ function OrderHistory() {
   const [sortBy, setSortBy] = useState('date_desc');
   const navigate = useNavigate();
 
+  const getCurrentUser = () => {
+    try {
+      const user = JSON.parse(localStorage.getItem('user') || '{}');
+      return user && typeof user === 'object' ? user : {};
+    } catch (_) {
+      localStorage.removeItem('user');
+      return {};
+    }
+  };
+
   useEffect(() => {
     loadOrders();
   }, []);
@@ -246,7 +256,7 @@ function OrderHistory() {
     setLoading(true);
     setError(null);
     try {
-      const user = JSON.parse(localStorage.getItem('user') || '{}');
+      const user = getCurrentUser();
       if (!user.id) {
         navigate('/login');
         return;
@@ -254,7 +264,7 @@ function OrderHistory() {
       const userOrders = await ordersApi.getByUser(user.id);
       setOrders(userOrders || []);
     } catch (err) {
-      setError(err.message || 'Failed to load orders');
+      setError('Failed to load orders. Please try again.');
     } finally {
       setLoading(false);
     }
@@ -306,7 +316,8 @@ function OrderHistory() {
       processing: orders.filter(o => o.status === 'processing').length,
       shipped: orders.filter(o => o.status === 'shipped').length,
       delivered: orders.filter(o => o.status === 'delivered').length,
-      cancelled: orders.filter(o => o.status === 'cancelled').length
+      cancelled: orders.filter(o => o.status === 'cancelled').length,
+      refunded: orders.filter(o => o.status === 'refunded').length
     };
     return counts;
   };
@@ -319,6 +330,61 @@ function OrderHistory() {
 
   const handleRetryPayment = (orderId) => {
     navigate(`/checkout?retry=${orderId}`);
+  };
+
+  const handleTrackOrder = (order) => {
+    const trackId = order.order_number || order.id;
+    navigate(`/order-tracking/${trackId}`);
+  };
+
+  const handleExportOrders = () => {
+    const rows = filteredOrders.map((order) => ({
+      order_number: order.order_number || `#${order.id}`,
+      date: order.created_at ? new Date(order.created_at).toISOString() : '',
+      customer_name: order.customer_name || '',
+      customer_email: order.customer_email || '',
+      status: order.status || '',
+      payment_status: order.payment_status || '',
+      fulfillment_status: order.fulfillment_status || '',
+      total_amount: Number(order.total_amount || 0).toFixed(2),
+      item_count: Array.isArray(order.items) ? order.items.length : 0
+    }));
+
+    const headers = [
+      'order_number',
+      'date',
+      'customer_name',
+      'customer_email',
+      'status',
+      'payment_status',
+      'fulfillment_status',
+      'total_amount',
+      'item_count'
+    ];
+
+    const escapeCsv = (value) => {
+      const raw = String(value ?? '');
+      if (/[",\n]/.test(raw)) {
+        return `"${raw.replace(/"/g, '""')}"`;
+      }
+      return raw;
+    };
+
+    const csvLines = [
+      headers.join(','),
+      ...rows.map((row) => headers.map((h) => escapeCsv(row[h])).join(','))
+    ];
+
+    const blob = new Blob([csvLines.join('\n')], { type: 'text/csv;charset=utf-8;' });
+    const url = URL.createObjectURL(blob);
+    const anchor = document.createElement('a');
+    const stamp = new Date().toISOString().slice(0, 10);
+    anchor.href = url;
+    anchor.download = `order-history-${stamp}.csv`;
+    document.body.appendChild(anchor);
+    anchor.click();
+    document.body.removeChild(anchor);
+    URL.revokeObjectURL(url);
   };
 
   if (loading) {
@@ -376,11 +442,12 @@ function OrderHistory() {
               index={index}
               onViewOrder={() => handleViewOrder(order.id)}
               onRetryPayment={() => handleRetryPayment(order.id)}
+              onTrackOrder={() => handleTrackOrder(order)}
             />
           ))}
         </div>
       )}
-      {orders.length > 0 && <ExportSection />}
+      {orders.length > 0 && <ExportSection onExport={handleExportOrders} />}
     </div>
   );
 }

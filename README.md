@@ -1,187 +1,254 @@
-# BARMAN STORE - E-commerce Application
+# BARMAN STORE REACT
 
-A full-stack e-commerce application built with React and SQLite database, featuring a distinctive brutalist-refined design aesthetic.
-
-## Features
-
-- 🛍️ **Product Catalog** - Browse premium coffee products and barista equipment
-- 🛒 **Shopping Cart** - Add, remove, and manage cart items
-- 💳 **Checkout Process** - Complete order placement with customer information
-- 📦 **Order Management** - SQLite database for storing products and orders
-- 🎨 **Distinctive Design** - Brutalist-refined aesthetic with custom typography and animations
-- 📱 **Responsive** - Mobile-friendly design
+Full-stack store, billing, purchase, credit, and inventory management app built with React + Vite (frontend) and Node.js + Express + SQLite (backend).
 
 ## Tech Stack
-
-### Frontend
-- **React 18** - UI framework
-- **React Router** - Client-side routing
-- **Lucide React** - Icon library
-- **Vite** - Build tool and dev server
-- **Custom CSS** - Distinctive styling with Google Fonts (Playfair Display, Space Mono)
-
-### Backend
-- **Node.js & Express** - API server
-- **Better-SQLite3** - Embedded SQLite database
-- **CORS** - Cross-origin resource sharing
+- Frontend: React 18, React Router, Vite, Lucide React
+- Backend: Node.js, Express, CORS, bcrypt
+- Database: SQLite via `better-sqlite3`
 
 ## Project Structure
+- `src/` frontend source
+- `server/index.js` API server and DB initialization
+- `server/barman-store.db` SQLite file (auto-created)
+- `vite.config.js` Vite dev server config
 
-```
-barman-store/
-├── server/
-│   ├── index.js              # Express API server
-│   └── barman-store.db       # SQLite database (auto-created)
-├── src/
-│   ├── pages/
-│   │   ├── Home.jsx          # Landing page
-│   │   ├── Home.css
-│   │   ├── Products.jsx      # Product listing
-│   │   ├── Products.css
-│   │   ├── Cart.jsx          # Shopping cart
-│   │   ├── Cart.css
-│   │   ├── Checkout.jsx      # Order checkout
-│   │   └── Checkout.css
-│   ├── App.jsx               # Main app component
-│   ├── App.css               # Global styles
-│   └── main.jsx              # Entry point
-├── public/
-├── index.html
-├── vite.config.js
-└── package.json
-```
+## Prerequisites
+- Node.js 18+
+- npm
 
-## Database Schema
+## Local Setup
+1. Install dependencies
+- `npm install`
 
-### Products Table
-- `id` - Auto-incrementing primary key
-- `name` - Product name
-- `description` - Product description
-- `price` - Product price
-- `category` - Product category
-- `image` - Product image URL
-- `stock` - Available quantity
-- `created_at` - Timestamp
+2. Start backend (terminal 1)
+- `npm run server`
 
-### Orders Table
-- `id` - Auto-incrementing primary key
-- `customer_name` - Customer full name
-- `customer_email` - Customer email
-- `customer_phone` - Customer phone number
-- `total_amount` - Order total
-- `status` - Order status (default: 'pending')
-- `created_at` - Timestamp
+3. Start frontend (terminal 2)
+- `npm run dev`
 
-### Order Items Table
-- `id` - Auto-incrementing primary key
-- `order_id` - Foreign key to orders
-- `product_id` - Foreign key to products
-- `quantity` - Item quantity
-- `price` - Item price at time of order
+4. Open app
+- `http://localhost:3000/`
 
-## Installation
+## LAN Setup
+1. Start backend and frontend on the host machine.
+2. Find host IP (Windows): `ipconfig`
+3. Open from another device on same network:
+- `http://<HOST_IP>/`
+4. Allow firewall inbound ports:
+- `3000` (frontend dev via Vite)
+- `80` (frontend production via IIS/Nginx)
+- `5000` (backend)
 
-1. **Clone or download the project**
+## Environment Variables
+Supported by backend (`server/index.js`):
 
-2. **Install dependencies**
-```bash
-cd barman-store
-npm install
-```
+- `PORT`
+  - Default: `5000`
+  - Backend listen port
+- `DB_PATH`
+  - Default: `server/barman-store.db`
+  - SQLite DB file path
+- `FRONTEND_ORIGIN`
+  - Optional CORS allowlist, supports comma-separated origins
+  - Example: `http://localhost:3000,http://127.0.0.1,http://192.168.1.20:3000`
+- `BCRYPT_SALT_ROUNDS`
+  - Default: `10`
+  - Password hashing cost
+- `BACKUP_DIR`
+  - Default: `server/backups`
+  - Backup files directory
 
-3. **Start the backend server**
-```bash
-npm run server
-```
-This will start the Express API on http://localhost:5000 and automatically create and seed the SQLite database.
+## Scripts
+- `npm run dev` start Vite dev server
+- `npm run server` start Express API server
+- `npm run build` build frontend
+- `npm run preview` preview frontend build
+- `npm run pm2:start` start backend via PM2 using `ecosystem.config.cjs`
+- `npm run pm2:restart` restart PM2 backend app
+- `npm run pm2:logs` view PM2 logs for backend app
 
-4. **Start the frontend development server** (in a new terminal)
-```bash
-npm run dev
-```
-This will start the Vite dev server on http://localhost:3000
+## Default Admin Login
+- Email: `admin@admin.com`
+- Password: `admin123`
 
-5. **Open your browser**
-Navigate to http://localhost:3000
+## API Reference
+Base URL: `http://localhost:5000`
 
-## API Endpoints
+### System
+- `GET /` API status
+- `POST /api/notify-order/:orderId`
 
-### Products
-- `GET /api/products` - Get all products
-- `GET /api/products/:id` - Get product by ID
-- `GET /api/products/category/:category` - Get products by category
-- `POST /api/products` - Create new product
+### Auth
+- `POST /api/auth/login`
+- `POST /api/auth/register`
+- `POST /api/auth/change-password`
+- `POST /api/auth/request-password-reset`
+
+### Admin Password Reset
+- `GET /api/admin/password-reset-requests`
+- `PUT /api/admin/password-reset-requests/:id`
+
+### Users and Customers
+- `GET /api/users`
+- `GET /api/users/:id`
+- `POST /api/users`
+- `PUT /api/users/:id`
+- `DELETE /api/users/:id`
+- `GET /api/customers`
+- `GET /api/customers/search`
+- `GET /api/customers/:id/profile`
+
+### Products and Categories
+- `GET /api/products`
+- `GET /api/products/:id`
+- `GET /api/products/category/:category`
+- `POST /api/products`
+- `PUT /api/products/:id`
+- `DELETE /api/products/:id`
+- `GET /api/categories`
+- `POST /api/categories`
+- `PUT /api/categories/:id`
+- `DELETE /api/categories/:id`
 
 ### Orders
-- `GET /api/orders` - Get all orders
-- `POST /api/orders` - Create new order
+- `GET /api/orders`
+- `GET /api/orders/:id`
+- `GET /api/orders/:id/history`
+- `GET /api/orders/number/:orderNumber`
+- `GET /api/users/:userId/orders`
+- `POST /api/orders`
+- `POST /api/orders/create-validated`
+- `POST /api/orders/validate-customer`
+- `PUT /api/orders/:id/status`
 
-### Categories
-- `GET /api/categories` - Get all product categories
+### Stats
+- `GET /api/stats/orders`
 
-## Sample Products
+### Credit
+- `GET /api/users/:userId/credit-history`
+- `GET /api/users/:userId/credit-balance`
+- `POST /api/users/:userId/credit`
+- `POST /api/credit/check-limit`
+- `GET /api/credit/aging`
 
-The database is automatically seeded with 8 sample products:
-- Premium Coffee Beans
-- Espresso Machine
-- Barista Apron
-- Milk Frother
-- Coffee Grinder
-- Organic Tea Collection
-- Latte Art Tools
-- Coffee Mug Set
+### Distributors
+- `GET /api/distributors`
+- `GET /api/distributors/:id`
+- `POST /api/distributors`
+- `PUT /api/distributors/:id`
+- `DELETE /api/distributors/:id`
 
-## Design Features
+### Purchase Orders
+- `GET /api/purchase-orders`
+- `GET /api/purchase-orders/:id`
+- `POST /api/purchase-orders`
+- `PUT /api/purchase-orders/:id`
+- `PUT /api/purchase-orders/:id/status`
+- `POST /api/purchase-orders/:id/receive`
+- `DELETE /api/purchase-orders/:id`
 
-### Typography
-- **Display Font**: Playfair Display (elegant serif for headings)
-- **Body Font**: Space Mono (distinctive monospace)
+### Purchase Returns
+- `GET /api/purchase-returns`
+- `GET /api/purchase-returns/:id`
+- `POST /api/purchase-returns`
+- `PUT /api/purchase-returns/:id`
+- `DELETE /api/purchase-returns/:id`
 
-### Color Scheme
-- Primary: Dark charcoal (#1a1a1a)
-- Secondary: Golden (#d4af37)
-- Accent: Saddle brown (#8b4513)
-- Background: Warm beige (#faf8f5)
+### Stock
+- `GET /api/stock-ledger`
+- `GET /api/stock-ledger/product/:productId`
+- `GET /api/stock-ledger/batch/:batchNumber`
+- `GET /api/stock-ledger/summary`
+- `POST /api/stock/verify`
 
-### Animations
-- Fade-in effects on page load
-- Slide-in animations for content
-- Hover transitions on cards and buttons
-- Smooth gradient effects
+### Billing
+- `GET /api/billing/customers/search`
+- `GET /api/billing/products/search`
+- `POST /api/bills/create`
+- `GET /api/bills`
+- `GET /api/bills/:id`
+- `PUT /api/bills/:id/payment`
+- `GET /api/bills/stats/summary`
 
-## Development
+### Offers
+- `GET /api/offers`
+- `POST /api/offers`
+- `PUT /api/offers/:id`
+- `DELETE /api/offers/:id`
 
-### Build for Production
-```bash
-npm run build
-```
+### Placeholder / Stub Endpoints
+(Currently return empty/default responses in backend)
+- `GET /api/product-versions/:internalId`
+- `GET /api/product-versions/sku/:sku`
+- `GET /api/uom-conversions/:productId`
+- `POST /api/uom-conversions`
+- `DELETE /api/uom-conversions/:id`
+- `GET /api/batch-stock`
+- `POST /api/batch-stock`
 
-### Preview Production Build
-```bash
-npm run preview
-```
+## Production Deployment
 
-## Notes
+### Option 1: Same machine, static frontend + Node backend
+1. Build frontend
+- `npm run build`
 
-- This is a demo application. The checkout process doesn't integrate with real payment processors.
-- Cart data is stored in localStorage for persistence across page refreshes.
-- The SQLite database file (`barman-store.db`) is created automatically in the `server/` directory.
+2. Serve `dist/` with Nginx/IIS/Apache, or Vite preview (not recommended for production)
+- `npm run preview`
 
-## Future Enhancements
+3. Run backend on host
+- `node server/index.js`
 
-- User authentication and profiles
-- Product search functionality
-- Product reviews and ratings
-- Order history for customers
-- Admin dashboard for managing products
-- Payment gateway integration
-- Email notifications
-- Inventory management
+### Option 2: PM2 process manager
+1. Install PM2
+- `npm i -g pm2`
 
-## License
+2. Start backend
+- `pm2 start server/index.js --name barman-api`
 
-MIT License - Free to use for learning and personal projects
+3. Persist across reboot
+- `pm2 save`
+- `pm2 startup`
 
----
+4. Useful commands
+- `pm2 status`
+- `pm2 logs barman-api`
+- `pm2 restart barman-api`
+- Or use project scripts:
+- `npm run pm2:start`
+- `npm run pm2:restart`
+- `npm run pm2:logs`
 
-**BARMAN STORE** - Premium Coffee & Barista Equipment
+### Option 2A: Ready config files in this repo
+- IIS rewrite template: `public/web.config` (copied to `dist/web.config` on build)
+- PM2 config: `ecosystem.config.cjs`
+- Nginx site config template: `nginx/barman-store.conf`
+
+### Option 3: Windows Service (backend)
+Use NSSM to run Node backend as service.
+
+1. Install NSSM
+2. Create service:
+- Application: `node.exe`
+- Arguments: `server/index.js`
+- Startup dir: project root
+3. Set environment variables (`PORT`, `DB_PATH`, `FRONTEND_ORIGIN`) in service config.
+4. Start service and configure auto-start.
+
+### Option 4: Windows Installer (`Setup.exe`) flow
+Typical packaging flow:
+1. Build frontend (`dist`)
+2. Package backend runtime (plain Node app or bundled exe)
+3. Use Inno Setup / NSIS / WiX to create installer
+4. Installer should:
+- copy app files
+- configure/start backend service
+- create shortcuts
+- add uninstall entry
+
+## Operational Notes
+- Keep `server/` writable so SQLite can create/update DB.
+- Back up `server/barman-store.db` regularly.
+- If running over LAN, set `FRONTEND_ORIGIN` to allowed hosts for stricter CORS.
+- Frontend routes include public pages and admin views; admin access is role-based.
+

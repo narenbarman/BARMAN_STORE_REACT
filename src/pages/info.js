@@ -1,4 +1,6 @@
 export const TITLE = "BARMAN STORE";
 export const SUB_TITLE = "Quality Groceries & Everyday Essentials";
-export const DESCRIPTION ="Elevate your coffee experience with our curated collection of artisan beans, professional equipment, and exclusive barista essentials.";
-export const LOGO_URL = "C:\Users\naren\Desktoplogo.png";
+export const DESCRIPTION =" A premier neighborhood retail store specializing in fresh produce, daily groceries, and a wide variety of school and office stationery.";
+export const LOGO_URL = "logo.png";
+export const EMAIL = "barmanstore2010@gmail.com";
+export const CONTACT = "(+91)-87248-69634";

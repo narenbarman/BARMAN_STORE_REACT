@@ -1,0 +1,98 @@
+﻿import { useEffect, useState } from 'react';
+import { adminApi } from '../services/api';
+
+function PasswordResetRequests() {
+  const [requests, setRequests] = useState([]);
+  const [error, setError] = useState('');
+  const [loading, setLoading] = useState(true);
+  const [formInputs, setFormInputs] = useState({});
+  const [processingId, setProcessingId] = useState(null);
+
+  const fetchRequests = async () => {
+    try {
+      setLoading(true);
+      setRequests(await adminApi.getPasswordResetRequests());
+    } catch (e) {
+      setError('Failed to load password reset requests');
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    fetchRequests();
+  }, []);
+
+  const handleAction = async (id, status) => {
+    try {
+      setProcessingId(id);
+      setError('');
+      const inputs = formInputs[id] || {};
+      const payload = { status };
+      if (inputs.admin_note) payload.admin_note = inputs.admin_note;
+      if (status === 'approved' && inputs.new_password) payload.new_password = inputs.new_password;
+
+      await adminApi.updatePasswordResetRequest(id, payload);
+      // clear inputs for this id
+      setFormInputs((prev) => {
+        const copy = { ...prev };
+        delete copy[id];
+        return copy;
+      });
+      await fetchRequests();
+    } catch (e) {
+      setError('Failed to update request');
+    } finally {
+      setProcessingId(null);
+    }
+  };
+
+  const updateInput = (id, field, value) => {
+    setFormInputs((prev) => ({ ...prev, [id]: { ...(prev[id] || {}), [field]: value } }));
+  };
+
+  if (loading) return <div className="billing-content"><p>Loading reset requests...</p></div>;
+
+  return (
+    <div className="billing-content">
+      <h1>Password Reset Requests</h1>
+      {error && <div className="error-message">{error}</div>}
+      <div className="table-container">
+        <table className="billing-table">
+          <thead>
+            <tr>
+              <th>User</th>
+              <th>Email</th>
+              <th>Phone</th>
+              <th>Reason</th>
+              <th>Status</th>
+              <th>Actions</th>
+            </tr>
+          </thead>
+          <tbody>
+            {requests.map((r) => (
+              <tr key={r.id}>
+                <td>{r.user_name || '-'}</td>
+                <td>{r.email || '-'}</td>
+                <td>{r.phone || '-'}</td>
+                <td>{r.reason || '-'}</td>
+                <td>{r.status}</td>
+                <td>
+                  {r.status === 'pending' && (
+                    <>
+                      <button className="admin-btn" onClick={() => handleAction(r.id, 'approved')}>Approve</button>
+                      <button className="admin-btn" onClick={() => handleAction(r.id, 'rejected')}>Reject</button>
+                    </>
+                  )}
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  );
+}
+
+export default PasswordResetRequests;
+

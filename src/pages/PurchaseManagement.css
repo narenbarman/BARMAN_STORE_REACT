@@ -318,6 +318,77 @@
   background: #fecaca;
 }
 
+.purchase-management .action-btn.view {
+  background: #dbeafe;
+  color: #1d4ed8;
+}
+
+.purchase-management .action-btn.view:hover {
+  background: #bfdbfe;
+}
+
+/* Order Detail Modal */
+.purchase-management .order-detail-body {
+  padding: 1rem;
+  max-height: 70vh;
+  overflow-y: auto;
+}
+
+.purchase-management .detail-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 0.5rem 0;
+  border-bottom: 1px solid var(--color-border, #e5e7eb);
+}
+
+.purchase-management .detail-row span {
+  color: #6b7280;
+}
+
+.purchase-management .detail-row strong {
+  color: var(--color-text, #1f2937);
+}
+
+.purchase-management .order-detail-body h3 {
+  margin: 1.25rem 0 0.75rem;
+  font-size: 1rem;
+  color: var(--color-text, #1f2937);
+}
+
+.purchase-management .order-detail-body .data-table {
+  margin-bottom: 1rem;
+}
+
+.purchase-management .order-totals {
+  margin-top: 1rem;
+  padding-top: 1rem;
+  border-top: 2px solid var(--color-border, #e5e7eb);
+}
+
+.purchase-management .total-row {
+  display: flex;
+  justify-content: space-between;
+  padding: 0.35rem 0;
+}
+
+.purchase-management .total-row span {
+  color: #6b7280;
+}
+
+.purchase-management .total-row.grand {
+  font-size: 1.1rem;
+  font-weight: 700;
+  margin-top: 0.5rem;
+  padding-top: 0.5rem;
+  border-top: 1px solid var(--color-border, #e5e7eb);
+}
+
+.purchase-management .total-row.grand span,
+.purchase-management .total-row.grand strong {
+  color: var(--color-secondary, #d4af37);
+}
+
 /* Modal Styles */
 .purchase-management .modal-overlay {
   position: fixed;

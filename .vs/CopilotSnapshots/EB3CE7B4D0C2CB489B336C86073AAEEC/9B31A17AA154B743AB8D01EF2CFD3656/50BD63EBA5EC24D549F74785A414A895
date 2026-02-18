@@ -1,0 +1,68 @@
+﻿import React, { useEffect, useState } from 'react';
+import { useParams, useNavigate } from 'react-router-dom';
+import { ordersApi } from '../services/api';
+
+const formatCurrency = (amount) => new Intl.NumberFormat('en-IN', { style: 'currency', currency: 'INR', minimumFractionDigits: 2 }).format(amount);
+
+export default function OrderDetails() {
+  const { id } = useParams();
+  const [order, setOrder] = useState(null);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState(null);
+  const navigate = useNavigate();
+
+  useEffect(() => {
+    const load = async () => {
+      setLoading(true);
+      setError(null);
+      try {
+        const data = await ordersApi.getById(id);
+        setOrder(data);
+      } catch (err) {
+        setError(err.message || 'Failed to load order');
+      } finally {
+        setLoading(false);
+      }
+    };
+    load();
+  }, [id]);
+
+  if (loading) return <div style={{ padding: 20 }}>Loading order...</div>;
+  if (error) return <div style={{ padding: 20 }} className="error-message">{error}</div>;
+  if (!order) return <div style={{ padding: 20 }}>Order not found</div>;
+
+  return (
+    <div style={{ padding: 20 }}>
+      <h1>Order {order.order_number || `#${order.id}`}</h1>
+      <p><strong>Customer:</strong> {order.customer_name} ({order.customer_email})</p>
+      <p><strong>Status:</strong> {order.status} &nbsp; <strong>Payment:</strong> {order.payment_status}</p>
+      <h3>Items</h3>
+      <table style={{ width: '100%', borderCollapse: 'collapse' }}>
+        <thead>
+          <tr>
+            <th style={{ textAlign: 'left', padding: 8 }}>Product</th>
+            <th style={{ textAlign: 'left', padding: 8 }}>Qty</th>
+            <th style={{ textAlign: 'left', padding: 8 }}>Price</th>
+            <th style={{ textAlign: 'left', padding: 8 }}>Total</th>
+          </tr>
+        </thead>
+        <tbody>
+          {order.items && order.items.map(item => (
+            <tr key={item.id} style={{ borderTop: '1px solid #eee' }}>
+              <td style={{ padding: 8 }}>{item.product_name}</td>
+              <td style={{ padding: 8 }}>{item.quantity}</td>
+              <td style={{ padding: 8 }}>{formatCurrency(item.price)}</td>
+              <td style={{ padding: 8 }}>{formatCurrency(item.total)}</td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+      <div style={{ marginTop: 12 }}>
+        <strong>Total:</strong> {formatCurrency(order.total_amount)}
+      </div>
+      <div style={{ marginTop: 12 }}>
+        <button onClick={() => navigate(-1)} className="admin-btn">Back</button>
+      </div>
+    </div>
+  );
+}

@@ -76,19 +76,54 @@ function Checkout() {
 
   const initializeCheckout = async () => {
     try {
-      // Get cart
-      const savedCart = localStorage.getItem('barman_cart');
-      if (!savedCart) {
-        navigate('/cart');
-        return;
+      const retryOrderId = searchParams.get('retry');
+      let cartItems = [];
+
+      if (retryOrderId) {
+        try {
+          const retryOrder = await ordersApi.getById(retryOrderId);
+          const retryItems = Array.isArray(retryOrder?.items) ? retryOrder.items : [];
+          cartItems = retryItems
+            .map((item) => {
+              const quantity = Number(item.quantity || 0);
+              const price = Number(item.price || 0);
+              return {
+                id: item.product_id || item.id,
+                name: item.product_name || item.name || 'Item',
+                image: item.product_image || item.image || '/logo.png',
+                category: item.category || '',
+                uom: item.uom || 'pcs',
+                stock: Number(item.stock || quantity || 1),
+                quantity: quantity > 0 ? quantity : 1,
+                price: price > 0 ? price : 0
+              };
+            })
+            .filter((item) => item.id && item.price >= 0 && item.quantity > 0);
+
+          if (cartItems.length > 0) {
+            localStorage.setItem('barman_cart', JSON.stringify(cartItems));
+          }
+        } catch (retryError) {
+          console.error('Retry order load failed:', retryError);
+        }
       }
-      
-      const cartItems = JSON.parse(savedCart);
+
       if (cartItems.length === 0) {
+        // Get cart
+        const savedCart = localStorage.getItem('barman_cart');
+        if (!savedCart) {
+          navigate('/cart');
+          return;
+        }
+
+        cartItems = JSON.parse(savedCart);
+      }
+
+      if (!Array.isArray(cartItems) || cartItems.length === 0) {
         navigate('/products');
         return;
       }
-      
+
       setCart(cartItems);
       
       // Check for logged in user

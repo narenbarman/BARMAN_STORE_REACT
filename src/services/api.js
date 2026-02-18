@@ -1,7 +1,9 @@
-// Get the current API URL based on the environment
+// Resolve API base URL.
+// - Production behind reverse proxy: use relative '/api' calls (base '')
+// - Optional override with VITE_API_BASE_URL when needed
 const getApiUrl = () => {
-  const hostname = window.location.hostname;
-  return `http://${hostname}:5000`;
+  const fromEnv = String(import.meta.env.VITE_API_BASE_URL || '').trim();
+  return fromEnv ? fromEnv.replace(/\/+$/, '') : '';
 };
 
 // Get auth token from localStorage
@@ -37,8 +39,12 @@ export const apiFetch = async (endpoint, options = {}) => {
   const response = await fetch(url, config);
   
   if (!response.ok) {
-    const error = await response.json().catch(() => ({ error: 'Request failed' }));
-    throw new Error(error.error || error.message || 'Request failed');
+    const errorPayload = await response.json().catch(() => ({ error: 'Request failed' }));
+    const message = errorPayload.error || errorPayload.message || 'Request failed';
+    const err = new Error(message);
+    err.status = response.status;
+    err.payload = errorPayload;
+    throw err;
   }
   
   return response.json();
@@ -84,6 +90,7 @@ export const productsApi = {
     return apiFetch(`/api/products${query ? `?${query}` : ''}`);
   },
   getById: (id) => apiFetch(`/api/products/${id}`),
+  getLastPurchase: (id) => apiFetch(`/api/products/${id}/last-purchase`),
   getByCategory: (category) => apiFetch(`/api/products/category/${category}`),
   create: (product) => 
     apiFetch('/api/products', {
@@ -272,9 +279,25 @@ export const usersApi = {
 // CREDIT HISTORY API
 // ============================================
 
+const CREDIT_LEDGER_DISABLED_KEY = 'credit_ledger_api_disabled';
+
 export const creditApi = {
   getHistory: (userId) => apiFetch(`/api/users/${userId}/credit-history`),
   getBalance: (userId) => apiFetch(`/api/users/${userId}/credit-balance`),
+  getLedger: (userId) => {
+    if (localStorage.getItem(CREDIT_LEDGER_DISABLED_KEY) === '1') {
+      throw new Error('Credit ledger endpoint not available');
+    }
+    const query = userId ? `?user_id=${encodeURIComponent(userId)}` : '';
+    return apiFetch(`/api/credit/ledger${query}`).catch((error) => {
+      const message = String(error?.message || '').toLowerCase();
+      if (message.includes('not found') || message.includes('cannot get')) {
+        localStorage.setItem(CREDIT_LEDGER_DISABLED_KEY, '1');
+        throw new Error('Credit ledger endpoint not available');
+      }
+      throw error;
+    });
+  },
   addTransaction: (userId, data) =>
     apiFetch(`/api/users/${userId}/credit`, {
       method: 'POST',
@@ -344,6 +367,16 @@ export const adminApi = {
     apiFetch(`/api/admin/password-reset-requests/${id}`, {
       method: 'PUT',
       body: payload,
+    }),
+  createBackup: () =>
+    apiFetch('/api/admin/backup/create', {
+      method: 'POST',
+    }),
+  listBackups: () => apiFetch('/api/admin/backup/list'),
+  restoreBackup: (fileName) =>
+    apiFetch('/api/admin/backup/restore', {
+      method: 'POST',
+      body: { file_name: fileName },
     }),
 };
 

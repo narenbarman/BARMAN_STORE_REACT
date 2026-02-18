@@ -1,11 +1,11 @@
 import { useState, useEffect } from 'react';
-import { X, Search, Image, Package, QrCode } from 'lucide-react';
+import { X, Search, Image, Package, QrCode, Plus, Trash2 } from 'lucide-react';
 import { productsApi, categoriesApi } from '../services/api';
 import ImageSearchModal from './ImageSearchModal';
 import './ProductForm.css';
 
 function ProductForm({ product, onClose, onSave }) {
-  const [formData, setFormData] = useState({
+  const createInitialFormData = () => ({
     name: '',
     description: '',
     brand: '',
@@ -26,10 +26,12 @@ function ProductForm({ product, onClose, onSave }) {
     defaultDiscount: '',
     discountType: 'fixed'
   });
+  const [formData, setFormData] = useState(createInitialFormData());
   const [categories, setCategories] = useState([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
   const [errors, setErrors] = useState({});
+  const [batchProducts, setBatchProducts] = useState([]);
   const [showImageSearch, setShowImageSearch] = useState(false);
   const [isDescriptionAuto, setIsDescriptionAuto] = useState(true);
 
@@ -72,6 +74,8 @@ function ProductForm({ product, onClose, onSave }) {
       });
       setIsDescriptionAuto(false);
     } else {
+      setFormData(createInitialFormData());
+      setBatchProducts([]);
       setIsDescriptionAuto(true);
     }
   }, [product]);
@@ -124,31 +128,82 @@ function ProductForm({ product, onClose, onSave }) {
     setIsDescriptionAuto(true);
   };
 
-  const validateForm = () => {
+  const validateFormData = (data) => {
     const newErrors = {};
     
-    if (!formData.name.trim()) {
+    if (!data.name.trim()) {
       newErrors.name = 'Product name is required';
     }
     
-    if (!formData.description.trim()) {
+    if (!data.description.trim()) {
       newErrors.description = 'Description is required';
     }
     
-    if (!formData.price || parseFloat(formData.price) <= 0) {
+    if (!data.price || parseFloat(data.price) <= 0) {
       newErrors.price = 'Price must be a positive number';
     }
     
-    if (!formData.category) {
+    if (!data.category) {
       newErrors.category = 'Category is required';
     }
     
-    if (!formData.stock || parseInt(formData.stock) < 0) {
+    if (!data.stock || parseInt(data.stock) < 0) {
       newErrors.stock = 'Stock must be a non-negative number';
     }
-    
+    return newErrors;
+  };
+
+  const validateForm = () => {
+    const newErrors = validateFormData(formData);
     setErrors(newErrors);
     return Object.keys(newErrors).length === 0;
+  };
+
+  const buildProductData = (data) => ({
+    name: data.name.trim(),
+    description: data.description.trim(),
+    brand: data.brand.trim(),
+    content: data.content.trim(),
+    color: data.color.trim(),
+    price: parseFloat(data.price),
+    mrp: parseFloat(data.mrp) || parseFloat(data.price),
+    uom: data.uom,
+    base_unit: data.base_unit,
+    uom_type: data.uom_type,
+    barcode: data.barcode.trim(),
+    sku: data.sku,
+    image: data.image.trim(),
+    stock: parseInt(data.stock),
+    conversion_factor: parseFloat(data.conversion_factor) || 1,
+    expiry_date: data.expiry_date || null,
+    category: data.category,
+    defaultDiscount: parseFloat(data.defaultDiscount) || 0,
+    discountType: data.discountType
+  });
+
+  const hasFormDraft = (data = formData) => {
+    return ['name', 'description', 'brand', 'content', 'color', 'price', 'mrp', 'barcode', 'sku', 'image', 'stock', 'expiry_date', 'category', 'defaultDiscount']
+      .some((field) => String(data[field] || '').trim() !== '');
+  };
+
+  const handleAddToBatch = () => {
+    setError('');
+    if (!validateForm()) return;
+    const payload = buildProductData(formData);
+    setBatchProducts((prev) => [...prev, payload]);
+    setFormData((prev) => ({
+      ...createInitialFormData(),
+      category: prev.category || '',
+      uom: prev.uom || 'pcs',
+      base_unit: prev.base_unit || 'pcs',
+      uom_type: prev.uom_type || 'selling'
+    }));
+    setErrors({});
+    setIsDescriptionAuto(true);
+  };
+
+  const handleRemoveBatchItem = (index) => {
+    setBatchProducts((prev) => prev.filter((_, idx) => idx !== index));
   };
 
   const handleChange = (e) => {
@@ -186,42 +241,40 @@ function ProductForm({ product, onClose, onSave }) {
     e.preventDefault();
     setError('');
 
-    if (!validateForm()) {
-      return;
-    }
-
     setLoading(true);
 
     try {
-      const productData = {
-        name: formData.name.trim(),
-        description: formData.description.trim(),
-        brand: formData.brand.trim(),
-        content: formData.content.trim(),
-        color: formData.color.trim(),
-        price: parseFloat(formData.price),
-        mrp: parseFloat(formData.mrp) || parseFloat(formData.price),
-        uom: formData.uom,
-        base_unit: formData.base_unit,
-        uom_type: formData.uom_type,
-        barcode: formData.barcode.trim(),
-        sku: formData.sku,
-        image: formData.image.trim(),
-        stock: parseInt(formData.stock),
-        conversion_factor: parseFloat(formData.conversion_factor) || 1,
-        expiry_date: formData.expiry_date || null,
-        category: formData.category,
-        defaultDiscount: parseFloat(formData.defaultDiscount) || 0,
-        discountType: formData.discountType
-      };
-
       if (product) {
+        if (!validateForm()) return;
+        const productData = buildProductData(formData);
         await productsApi.update(product.id, productData);
+        await onSave({ mode: 'edit', createdCount: 0 });
       } else {
-        await productsApi.create(productData);
-      }
+        const payloads = [...batchProducts];
+        if (hasFormDraft(formData)) {
+          if (!validateForm()) return;
+          payloads.push(buildProductData(formData));
+        }
+        if (!payloads.length) {
+          setError('Add at least one product to submit');
+          return;
+        }
 
-      onSave();
+        let createdCount = 0;
+        for (let i = 0; i < payloads.length; i += 1) {
+          try {
+            await productsApi.create(payloads[i]);
+            createdCount += 1;
+          } catch (err) {
+            if (createdCount > 0) {
+              await onSave();
+            }
+            setError(`Failed at product ${i + 1} (${payloads[i].name}): ${err.message || 'Create failed'}. Created ${createdCount} product(s).`);
+            return;
+          }
+        }
+        await onSave({ mode: 'create', createdCount: payloads.length });
+      }
       onClose();
     } catch (err) {
       setError(err.message || 'Failed to save product');
@@ -245,6 +298,35 @@ function ProductForm({ product, onClose, onSave }) {
         {error && <div className="error-message">{error}</div>}
 
         <form onSubmit={handleSubmit} className="product-form">
+          {!isEditing && (
+            <div className="form-section batch-section">
+              <h3 className="section-title">Batch Add Products</h3>
+              <p className="batch-help">
+                Fill product details and click <strong>Add To Batch</strong>. You can submit all queued products at once.
+              </p>
+              <div className="batch-actions">
+                <button type="button" className="submit-btn batch-add-btn" onClick={handleAddToBatch} disabled={loading}>
+                  <Plus size={16} /> Add To Batch
+                </button>
+              </div>
+              {batchProducts.length > 0 && (
+                <div className="batch-list">
+                  {batchProducts.map((item, index) => (
+                    <div key={`${item.name}-${index}`} className="batch-item">
+                      <div className="batch-item-info">
+                        <strong>{item.name}</strong>
+                        <span>{item.category} | Rs {Number(item.price || 0).toFixed(2)} | Stock: {item.stock}</span>
+                      </div>
+                      <button type="button" className="batch-item-remove" onClick={() => handleRemoveBatchItem(index)} title="Remove">
+                        <Trash2 size={14} />
+                      </button>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+          )}
+
           {/* Basic Information Section */}
           <div className="form-section">
             <h3 className="section-title">Basic Information</h3>
@@ -601,7 +683,7 @@ function ProductForm({ product, onClose, onSave }) {
               Cancel
             </button>
             <button type="submit" className="submit-btn" disabled={loading}>
-              {loading ? 'Saving...' : (isEditing ? 'Update Product' : 'Add Product')}
+              {loading ? 'Saving...' : (isEditing ? 'Update Product' : `Add Product${batchProducts.length ? ` (${batchProducts.length} queued)` : ''}`)}
             </button>
           </div>
         </form>

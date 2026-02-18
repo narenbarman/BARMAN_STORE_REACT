@@ -1,9 +1,10 @@
 {
   "ExpandedNodes": [
     "",
+    "\\server",
     "\\src",
     "\\src\\pages"
   ],
-  "SelectedNode": "\\src\\pages\\Admin.css",
+  "SelectedNode": "\\setup.sh",
   "PreviewInSolutionExplorer": false
 }

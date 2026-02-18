@@ -106,6 +106,7 @@ function PurchaseManagement({ user }) {
       amount: calculateOrderBalanceAmount(order),
       payment_mode: 'credit',
       reference: order.po_number,
+      bill_number: order.bill_number || order.invoice_number || null,
       description: `Purchase Order ${order.po_number || ''}`.trim(),
       transaction_date: order.created_at || order.order_date || order.expected_delivery || getTodayDate(),
       mode: 'automatic'
@@ -250,10 +251,14 @@ function PurchaseManagement({ user }) {
   const [ledgerRecords, setLedgerRecords] = useState([]);
   const [ledgerLoading, setLedgerLoading] = useState(false);
   const [ledgerFormData, setLedgerFormData] = useState(getDefaultLedgerFormData());
+  const [showOrderDetail, setShowOrderDetail] = useState(false);
+  const [orderDetail, setOrderDetail] = useState(null);
+  const [orderDetailLoading, setOrderDetailLoading] = useState(false);
 
   // Order form data
   const [orderFormData, setOrderFormData] = useState({
     distributor_id: '',
+    distributor_name: '',
     expected_delivery: '',
     notes: '',
     items: []
@@ -327,18 +332,49 @@ function PurchaseManagement({ user }) {
     setFilters(prev => ({ ...prev, [name]: value }));
   };
 
+  const resolveDistributorByInput = (value) => {
+    const query = String(value || '').trim().toLowerCase();
+    if (!query) return null;
+    return distributors.find(d =>
+      d.status === 'active' && (
+        String(d.id) === query ||
+        String(d.name || '').trim().toLowerCase() === query
+      )
+    ) || null;
+  };
+
+  const resolveProductByInput = (value) => {
+    const query = String(value || '').trim().toLowerCase();
+    if (!query) return null;
+    return products.find(p =>
+      String(p.id) === query ||
+      String(p.name || '').trim().toLowerCase() === query ||
+      String(p.sku || '').trim().toLowerCase() === query
+    ) || null;
+  };
+
+  const handleDistributorInputChange = (value) => {
+    const match = resolveDistributorByInput(value);
+    setOrderFormData(prev => ({
+      ...prev,
+      distributor_name: value,
+      distributor_id: match ? String(match.id) : ''
+    }));
+  };
+
   // Order form handlers
   const handleOrderItemAdd = () => {
     setOrderFormData(prev => ({
       ...prev,
       items: [...prev.items, {
         product_id: '',
+        product_query: '',
         product_name: '',
         quantity: 1,
         uom: 'pcs',
         unit_price: 0,
         rate: 0,
-        gst_rate: 18,
+        gst_rate: 5,
         discount_type: 'percent',
         discount_value: 0
       }]
@@ -366,7 +402,7 @@ function PurchaseManagement({ user }) {
     }
   };
 
-  const createAutoDistributorCredit = async ({ distributorId, amount, poNumber, orderId }) => {
+  const createAutoDistributorCredit = async ({ distributorId, amount, poNumber, orderId, billNumber }) => {
     if (!distributorId || amount <= 0) return;
 
     await distributorLedgerApi.addTransaction(distributorId, {
@@ -375,7 +411,8 @@ function PurchaseManagement({ user }) {
       amount: Number(amount.toFixed(2)),
       payment_mode: 'credit',
       reference: poNumber || (orderId ? `PO-${orderId}` : ''),
-      description: `Purchase Order ${poNumber || ''}`.trim(),
+      bill_number: billNumber || null,
+      description: `Purchase Order ${poNumber || ''}${billNumber ? ` (Bill: ${billNumber})` : ''}`.trim(),
       transactionDate: getTodayDate(),
       source: 'purchase_order',
       source_id: orderId,
@@ -384,18 +421,57 @@ function PurchaseManagement({ user }) {
     });
   };
 
-  const handleOrderItemChange = (index, field, value) => {
+  const handleOrderItemChange = async (index, field, value) => {
     const items = [...orderFormData.items];
     items[index][field] = value;
 
     if (field === 'product_id') {
-      const product = products.find(p => p.id === parseInt(value));
+      const selectedProductId = String(value || '');
+      const product = products.find(p => String(p.id) === selectedProductId);
       if (product) {
+        const baseRate = toNumber(product.price);
         items[index].product_name = product.name;
-        items[index].unit_price = product.price;
-        items[index].rate = product.price;
+        items[index].product_query = product.name;
+        items[index].unit_price = baseRate;
+        items[index].rate = baseRate;
         items[index].uom = product.uom || 'pcs';
+        items[index].last_purchase_hint = '';
+      } else {
+        items[index].product_name = '';
+        items[index].last_purchase_hint = '';
       }
+      setOrderFormData(prev => ({ ...prev, items }));
+
+      if (!selectedProductId) return;
+
+      try {
+        const suggestion = await productsApi.getLastPurchase(selectedProductId);
+        if (!suggestion?.found) return;
+
+        setOrderFormData(prev => {
+          const nextItems = [...prev.items];
+          const current = nextItems[index];
+          if (!current || String(current.product_id) !== selectedProductId) return prev;
+
+          const suggestedRate = toNumber(suggestion.rate ?? suggestion.unit_price ?? current.rate ?? current.unit_price);
+          const suggestedGst = toNumber(suggestion.gst_rate ?? current.gst_rate ?? 5);
+          const suggestedDate = suggestion.created_at ? new Date(suggestion.created_at).toLocaleDateString() : '';
+          const suggestedPo = suggestion.po_number || 'last PO';
+
+          nextItems[index] = {
+            ...current,
+            unit_price: suggestedRate,
+            rate: suggestedRate,
+            gst_rate: suggestedGst,
+            uom: suggestion.uom || current.uom || 'pcs',
+            last_purchase_hint: `Suggested from ${suggestedPo}${suggestedDate ? ` (${suggestedDate})` : ''}`,
+          };
+          return { ...prev, items: nextItems };
+        });
+      } catch (_) {
+        // keep product defaults when suggestion API is unavailable
+      }
+      return;
     }
 
     if (field === 'rate') {
@@ -407,6 +483,21 @@ function PurchaseManagement({ user }) {
     }
 
     setOrderFormData(prev => ({ ...prev, items }));
+  };
+
+  const handleOrderProductInputChange = (index, value) => {
+    const items = [...orderFormData.items];
+    items[index].product_query = value;
+    const match = resolveProductByInput(value);
+    if (!match) {
+      items[index].product_id = '';
+      items[index].product_name = value;
+      items[index].last_purchase_hint = '';
+      setOrderFormData(prev => ({ ...prev, items }));
+      return;
+    }
+    setOrderFormData(prev => ({ ...prev, items }));
+    handleOrderItemChange(index, 'product_id', String(match.id));
   };
 
   const handleOrderItemRemove = (index) => {
@@ -421,6 +512,20 @@ function PurchaseManagement({ user }) {
     setError('');
 
     try {
+      const selectedDistributor = distributors.find(d => String(d.id) === String(orderFormData.distributor_id) && d.status === 'active');
+      if (!selectedDistributor) {
+        setError('Please select a valid distributor');
+        return;
+      }
+
+      const invalidTypedProducts = orderFormData.items.filter(item =>
+        String(item.product_query || '').trim() && !item.product_id
+      );
+      if (invalidTypedProducts.length > 0) {
+        setError('Please select valid products from suggestions for all typed product names');
+        return;
+      }
+
       const validItems = orderFormData.items.filter(item => item.product_id && item.quantity > 0);
       if (validItems.length === 0) {
         setError('Please add at least one item');
@@ -460,7 +565,7 @@ function PurchaseManagement({ user }) {
       });
 
       setShowOrderForm(false);
-      setOrderFormData({ distributor_id: '', expected_delivery: '', notes: '', items: [] });
+      setOrderFormData({ distributor_id: '', distributor_name: '', expected_delivery: '', notes: '', items: [] });
       fetchOrders();
     } catch (err) {
       setError(err.message || 'Failed to create purchase order');
@@ -519,9 +624,19 @@ function PurchaseManagement({ user }) {
   // Status update
   const handleUpdateStatus = async (orderId, status) => {
     try {
-      await purchaseOrdersApi.updateStatus(orderId, status);
+      setError('');
+      let order = purchaseOrders.find(po => String(po.id) === String(orderId));
+      let billNumber = '';
+
       if (status === 'confirmed') {
-        let order = purchaseOrders.find(po => String(po.id) === String(orderId));
+        const existingBill = String(order?.bill_number || order?.invoice_number || '').trim();
+        const inputValue = window.prompt('Enter Bill No (optional). Leave blank to continue.', existingBill);
+        if (inputValue === null) return;
+        billNumber = String(inputValue).trim();
+      }
+
+      await purchaseOrdersApi.updateStatus(orderId, status, billNumber ? { bill_number: billNumber } : {});
+      if (status === 'confirmed') {
         try {
           const detailedOrder = await purchaseOrdersApi.getById(orderId);
           if (detailedOrder) {
@@ -536,7 +651,8 @@ function PurchaseManagement({ user }) {
               distributorId: order.distributor_id,
               amount: calculateOrderBalanceAmount(order),
               poNumber: order.po_number,
-              orderId: order.id
+              orderId: order.id,
+              billNumber: billNumber || order.bill_number || order.invoice_number || ''
             });
           } catch (ledgerErr) {
             console.warn('Auto distributor credit entry failed on confirmation:', ledgerErr);
@@ -559,6 +675,20 @@ function PurchaseManagement({ user }) {
       fetchOrders();
     } catch (err) {
       setError('Failed to delete order');
+    }
+  };
+
+  // View order details
+  const handleViewOrder = async (orderId) => {
+    try {
+      setOrderDetailLoading(true);
+      const order = await purchaseOrdersApi.getById(orderId);
+      setOrderDetail(order);
+      setShowOrderDetail(true);
+    } catch (err) {
+      setError('Failed to load order details');
+    } finally {
+      setOrderDetailLoading(false);
     }
   };
 
@@ -664,6 +794,10 @@ function PurchaseManagement({ user }) {
     if (!distributorId) return '-';
     const distributor = distributors.find(d => String(d.id) === String(distributorId));
     return distributor?.name || '-';
+  };
+
+  const getLedgerBillNumber = (entry) => {
+    return entry?.bill_number || entry?.linked_bill_number || entry?.po_bill_number || entry?.invoice_number || entry?.po_invoice_number || '-';
   };
 
   const handleOpenLedgerForm = () => {
@@ -831,29 +965,32 @@ function PurchaseManagement({ user }) {
                       <td><strong>{order.po_number}</strong></td>
                       <td>{order.distributor_name}</td>
                       <td>{order.items?.length || 0}</td>
-                      <td>{formatCurrency(getOrderDisplayTotal_AM(order))}</td>
+                      <td>{formatCurrency(getOrderDisplayTotal(order))}</td>
                       <td>{getStatusBadge(order.status)}</td>
                       <td>{order.expected_delivery ? new Date(order.expected_delivery).toLocaleDateString() : '-'}</td>
-                      <td className="actions-cell">
-                        {order.status === 'pending' && (
-                          <>
-                            <button className="action-btn" title="Confirm" onClick={() => handleUpdateStatus(order.id, 'confirmed')}>
-                              <Check size={16} />
-                            </button>
-                            {/*<button className="action-btn" title="Ship" onClick={() => handleUpdateStatus(order.id, 'shipped')}>
-                              <Truck size={16} />
-                            </button>*/}
-                          </>
-                        )}
-                        {order.status === 'shipped' && (
-                          <button className="action-btn receive" title="Receive" onClick={() => handleReceiveClick(order)}>
-                            <Package size={16} />
-                          </button>
-                        )}
-                        {order.status === 'pending' && (
-                          <button className="action-btn delete" title="Delete" onClick={() => handleDeleteOrder(order.id)}>
-                            <Trash2 size={16} />
-                          </button>
+                       <td className="actions-cell">
+                         <button className="action-btn view" title="View Details" onClick={() => handleViewOrder(order.id)}>
+                           <Eye size={16} />
+                         </button>
+                         {order.status === 'pending' && (
+                           <>
+                             <button className="action-btn" title="Confirm" onClick={() => handleUpdateStatus(order.id, 'confirmed')}>
+                               <Check size={16} />
+                             </button>
+                             {/*<button className="action-btn" title="Ship" onClick={() => handleUpdateStatus(order.id, 'shipped')}>
+                               <Truck size={16} />
+                             </button>*/}
+                           </>
+                         )}
+                         {order.status === 'shipped' && (
+                           <button className="action-btn receive" title="Receive" onClick={() => handleReceiveClick(order)}>
+                             <Package size={16} />
+                           </button>
+                         )}
+                         {order.status === 'pending' && (
+                           <button className="action-btn delete" title="Delete" onClick={() => handleDeleteOrder(order.id)}>
+                             <Trash2 size={16} />
+                           </button>
                         )}
                       </td>
                     </tr>
@@ -884,17 +1021,18 @@ function PurchaseManagement({ user }) {
                   <th>Balance</th>
                   <th>Mode</th>
                   <th>Reference</th>
+                  <th>Bill No</th>
                   <th>Description</th>
                 </tr>
               </thead>
               <tbody>
                 {ledgerLoading ? (
                   <tr>
-                    <td colSpan="8" className="empty-state">Loading ledger records...</td>
+                    <td colSpan="9" className="empty-state">Loading ledger records...</td>
                   </tr>
                 ) : ledgerRecords.length === 0 ? (
                   <tr>
-                    <td colSpan="8" className="empty-state">No distributor payment/credit records found</td>
+                    <td colSpan="9" className="empty-state">No distributor payment/credit records found</td>
                   </tr>
                 ) : (
                   ledgerRecords.map((entry, index) => (
@@ -906,6 +1044,7 @@ function PurchaseManagement({ user }) {
                       <td>{formatCurrency(toNumber(entry.computed_balance ?? entry.balance))}</td>
                       <td>{entry.payment_mode || entry.method || '-'}</td>
                       <td>{entry.reference || entry.po_number || '-'}</td>
+                      <td>{getLedgerBillNumber(entry)}</td>
                       <td>{entry.description || '-'}</td>
                     </tr>
                   ))
@@ -988,16 +1127,19 @@ function PurchaseManagement({ user }) {
                 <div className="form-row">
                   <div className="form-group">
                     <label>Distributor *</label>
-                    <select
-                      value={orderFormData.distributor_id}
-                      onChange={e => setOrderFormData(prev => ({ ...prev, distributor_id: e.target.value }))}
+                    <input
+                      type="text"
+                      list="po-distributor-list"
+                      value={orderFormData.distributor_name || ''}
+                      onChange={e => handleDistributorInputChange(e.target.value)}
+                      placeholder="Type distributor name"
                       required
-                    >
-                      <option value="">Select distributor</option>
+                    />
+                    <datalist id="po-distributor-list">
                       {distributors.filter(d => d.status === 'active').map(d => (
-                        <option key={d.id} value={d.id}>{d.name}</option>
+                        <option key={d.id} value={d.name} />
                       ))}
-                    </select>
+                    </datalist>
                   </div>
                   <div className="form-group">
                     <label>Expected Delivery</label>
@@ -1032,15 +1174,26 @@ function PurchaseManagement({ user }) {
                       <div key={index} className="item-row order-item-row">
                         <div className="item-field product">
                           <label>Product</label>
-                          <select
-                            value={item.product_id}
-                            onChange={e => handleOrderItemChange(index, 'product_id', e.target.value)}
-                          >
-                            <option value="">Select product</option>
+                          <input
+                            type="text"
+                            list={`po-product-list-${index}`}
+                            value={item.product_query || item.product_name || ''}
+                            onChange={e => handleOrderProductInputChange(index, e.target.value)}
+                            placeholder="Type product name or SKU"
+                          />
+                          <datalist id={`po-product-list-${index}`}>
                             {products.map(p => (
-                              <option key={p.id} value={p.id}>{p.name} ({p.sku})</option>
+                              <option key={p.id} value={p.name}>{p.sku}</option>
                             ))}
-                          </select>
+                          </datalist>
+                          {!!(String(item.product_query || '').trim() && !item.product_id) && (
+                            <small style={{ display: 'block', marginTop: 4, color: '#c62828' }}>
+                              Select a valid product from suggestions
+                            </small>
+                          )}
+                          {item.last_purchase_hint && (
+                            <small style={{ display: 'block', marginTop: 4, color: '#666' }}>{item.last_purchase_hint}</small>
+                          )}
                         </div>
                         <div className="item-field qty">
                           <label>Qty</label>
@@ -1229,6 +1382,92 @@ function PurchaseManagement({ user }) {
                 </button>
               </div>
             </form>
+          </div>
+        </div>
+      )}
+
+      {/* Order Detail Modal */}
+      {showOrderDetail && orderDetail && (
+        <div className="modal-overlay" onClick={() => setShowOrderDetail(false)}>
+          <div className="modal-content large" onClick={e => e.stopPropagation()}>
+            <div className="modal-header">
+              <h2>Purchase Order: {orderDetail.po_number}</h2>
+              <button className="close-btn" onClick={() => setShowOrderDetail(false)}>
+                <X size={24} />
+              </button>
+            </div>
+            <div className="order-detail-body">
+              <div className="detail-row">
+                <span>Distributor:</span>
+                <strong>{orderDetail.distributor_name}</strong>
+              </div>
+              <div className="detail-row">
+                <span>Status:</span>
+                {getStatusBadge(orderDetail.status)}
+              </div>
+              <div className="detail-row">
+                <span>Bill Number:</span>
+                <strong>{orderDetail.bill_number || orderDetail.invoice_number || '-'}</strong>
+              </div>
+              <div className="detail-row">
+                <span>Expected Delivery:</span>
+                <strong>{orderDetail.expected_delivery ? new Date(orderDetail.expected_delivery).toLocaleDateString() : '-'}</strong>
+              </div>
+              {orderDetail.notes && (
+                <div className="detail-row">
+                  <span>Notes:</span>
+                  <strong>{orderDetail.notes}</strong>
+                </div>
+              )}
+
+              <h3>Items</h3>
+              <div className="data-table">
+                <table className="items-table">
+                  <thead>
+                    <tr>
+                      <th>Product</th>
+                      <th>Qty</th>
+                      <th>UOM</th>
+                      <th>Rate</th>
+                      <th>GST %</th>
+                      <th>Line Total</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {(orderDetail.items || []).map((item, idx) => (
+                      <tr key={idx}>
+                        <td>{item.product_name}</td>
+                        <td>{item.quantity}</td>
+                        <td>{item.uom || '-'}</td>
+                        <td>{formatCurrency(item.rate || item.unit_price)}</td>
+                        <td>{item.gst_rate || 0}%</td>
+                        <td>{formatCurrency(item.line_total || item.total || (item.quantity * (item.rate || item.unit_price)))}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+
+              <div className="order-totals">
+                <div className="total-row">
+                  <span>Taxable Value:</span>
+                  <strong>{formatCurrency(orderDetail.taxable_value || 0)}</strong>
+                </div>
+                <div className="total-row">
+                  <span>GST:</span>
+                  <strong>{formatCurrency(orderDetail.tax_amount || 0)}</strong>
+                </div>
+                <div className="total-row grand">
+                  <span>Grand Total:</span>
+                  <strong>{formatCurrency(orderDetail.total_amount || getOrderDisplayTotal(orderDetail))}</strong>
+                </div>
+              </div>
+            </div>
+            <div className="modal-actions">
+              <button type="button" className="cancel-btn" onClick={() => setShowOrderDetail(false)}>
+                Close
+              </button>
+            </div>
           </div>
         </div>
       )}

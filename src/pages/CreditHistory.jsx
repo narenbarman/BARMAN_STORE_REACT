@@ -1,7 +1,10 @@
 import { useState, useEffect, useRef } from 'react';
 import { useParams, useNavigate, Link } from 'react-router-dom';
-import { ArrowLeft, Plus, DollarSign, CreditCard, RefreshCw, Printer, Upload, FileText, Eye } from 'lucide-react';
+import { ArrowLeft, Plus, DollarSign, CreditCard, RefreshCw, Printer, Upload, FileText, Eye, Download } from 'lucide-react';
 import { creditApi, usersApi } from '../services/api';
+import jsPDF from 'jspdf';
+import 'jspdf-autotable';
+import * as info from './info';
 import './CreditHistory.css';
 
 // Currency formatter with Indian Rupee symbol
@@ -80,7 +83,12 @@ function CreditHistory({ user }) {
       setBalance(balanceData.balance);
       setCustomer(customerData);
     } catch (err) {
-      setError('Failed to load credit history');
+      if (err?.status === 401) {
+        localStorage.removeItem('user');
+        navigate('/login');
+        return;
+      }
+      setError(err.message || 'Failed to load credit history');
     } finally {
       setLoading(false);
     }
@@ -95,7 +103,7 @@ function CreditHistory({ user }) {
     formData.append('invoice', file);
 
     try {
-      const response = await fetch('http://localhost:5000/api/upload/invoice', {
+      const response = await fetch('/api/upload/invoice', {
         method: 'POST',
         body: formData
       });
@@ -152,6 +160,11 @@ function CreditHistory({ user }) {
       setShowAddModal(false);
       fetchCreditData();
     } catch (err) {
+      if (err?.status === 401) {
+        localStorage.removeItem('user');
+        navigate('/login');
+        return;
+      }
       setError(err.message || 'Failed to add transaction');
     }
   };
@@ -265,6 +278,180 @@ function CreditHistory({ user }) {
     window.open(href, '_blank', 'noopener noreferrer');
   };
 
+  // Generate PDF report with company branding
+  const generatePDFReport = () => {
+    if (!fromDate || !toDate) {
+      setError('Please select both From and To dates for the report.');
+      return;
+    }
+    setError('');
+    setSuccess('');
+
+    const from = new Date(fromDate);
+    const to = new Date(toDate);
+    to.setHours(23, 59, 59, 999);
+
+    const filtered = creditHistory.filter((t) => {
+      const d = new Date(t.created_at);
+      return d >= from && d <= to;
+    }).sort((a, b) => new Date(a.created_at) - new Date(b.created_at));
+
+    // Create PDF document
+    const doc = new jsPDF();
+    
+    // Colors
+    const primaryColor = [41, 128, 185]; // Blue
+    const secondaryColor = [52, 73, 94]; // Dark gray
+    const accentColor = [39, 174, 96]; // Green
+    
+    // Header background
+    doc.setFillColor(...primaryColor);
+    doc.rect(0, 0, 210, 45, 'F');
+    
+    // Company name
+    doc.setTextColor(255, 255, 255);
+    doc.setFontSize(24);
+    doc.setFont('helvetica', 'bold');
+    doc.text(info.TITLE || 'BARMAN STORE', 105, 18, { align: 'center' });
+    
+    // Company subtitle
+    doc.setFontSize(10);
+    doc.setFont('helvetica', 'normal');
+    doc.text(info.SUB_TITLE || 'Quality Groceries & Everyday Essentials', 105, 28, { align: 'center' });
+    
+    // Contact info
+    doc.setFontSize(9);
+    const contactText = `${info.EMAIL || ''} | ${info.CONTACT || ''}`;
+    doc.text(contactText, 105, 38, { align: 'center' });
+    
+    // Report title
+    doc.setTextColor(...secondaryColor);
+    doc.setFontSize(16);
+    doc.setFont('helvetica', 'bold');
+    doc.text('Credit Report', 105, 55, { align: 'center' });
+    
+    // Customer info box
+    doc.setDrawColor(200, 200, 200);
+    doc.setFillColor(248, 249, 250);
+    doc.roundedRect(14, 62, 182, 28, 3, 3, 'FD');
+    
+    doc.setFontSize(10);
+    doc.setFont('helvetica', 'bold');
+    doc.setTextColor(...secondaryColor);
+    doc.text('Customer Details', 20, 72);
+    
+    doc.setFont('helvetica', 'normal');
+    doc.setFontSize(9);
+    doc.text(`Name: ${customer?.name || 'N/A'}`, 20, 80);
+    doc.text(`Phone: ${customer?.phone || 'N/A'}`, 100, 80);
+    doc.text(`Email: ${customer?.email || 'N/A'}`, 20, 86);
+    
+    // Date range
+    doc.setFontSize(9);
+    doc.setTextColor(100, 100, 100);
+    doc.text(`Period: ${fromDate} to ${toDate}`, 100, 86);
+    
+    // Transactions table
+    if (filtered.length > 0) {
+      const tableData = filtered.map((t, index) => [
+        new Date(t.created_at).toLocaleDateString('en-IN'),
+        getTypeLabel(t.type),
+        t.reference || '-',
+        { content: formatCurrency(Number(t.amount)), styles: { halign: 'right' } },
+        { content: formatCurrency(Number(t.balance)), styles: { halign: 'right' } },
+        t.description || '-'
+      ]);
+      
+      doc.autoTable({
+        startY: 95,
+        head: [['Date', 'Type', 'Reference', 'Amount', 'Balance', 'Description']],
+        body: tableData,
+        theme: 'striped',
+        headStyles: {
+          fillColor: primaryColor,
+          textColor: [255, 255, 255],
+          fontStyle: 'bold',
+          fontSize: 9
+        },
+        bodyStyles: {
+          fontSize: 8,
+          cellPadding: 3
+        },
+        alternateRowStyles: {
+          fillColor: [248, 249, 250]
+        },
+        columnStyles: {
+          0: { cellWidth: 25 },
+          1: { cellWidth: 20 },
+          2: { cellWidth: 25 },
+          3: { cellWidth: 30, halign: 'right' },
+          4: { cellWidth: 30, halign: 'right' },
+          5: { cellWidth: 'auto' }
+        },
+        margin: { left: 14, right: 14 }
+      });
+      
+      // Summary section
+      const finalY = doc.lastAutoTable.finalY + 10;
+      
+      let totalGiven = 0;
+      let totalPayment = 0;
+      filtered.forEach((t) => {
+        const amount = Number(t.amount) || 0;
+        if (t.type === 'given') totalGiven += amount;
+        else if (t.type === 'payment') totalPayment += amount;
+      });
+      
+      // Summary box
+      doc.setFillColor(248, 249, 250);
+      doc.roundedRect(14, finalY, 182, 35, 3, 3, 'F');
+      
+      doc.setFontSize(11);
+      doc.setFont('helvetica', 'bold');
+      doc.setTextColor(...secondaryColor);
+      doc.text('Summary', 20, finalY + 10);
+      
+      doc.setFontSize(9);
+      doc.setFont('helvetica', 'normal');
+      
+      const summaryY = finalY + 18;
+      doc.text(`Total Credit Given: ${formatCurrency(totalGiven)}`, 20, summaryY);
+      doc.text(`Total Payments Received: ${formatCurrency(totalPayment)}`, 20, summaryY + 7);
+      doc.text(`Net Change: ${formatCurrency(totalGiven - totalPayment)}`, 20, summaryY + 14);
+      
+      // Current balance on right side
+      doc.setFont('helvetica', 'bold');
+      doc.setFontSize(10);
+      doc.text('Current Balance:', 130, summaryY + 7);
+      doc.setTextColor(balance >= 0 ? accentColor[0] : 231, balance >= 0 ? accentColor[1] : 76, balance >= 0 ? accentColor[2] : 60);
+      doc.setFontSize(12);
+      doc.text(formatCurrency(balance), 130, summaryY + 14);
+    } else {
+      doc.setFontSize(11);
+      doc.setTextColor(100, 100, 100);
+      doc.text('No transactions found in the selected date range.', 105, 110, { align: 'center' });
+    }
+    
+    // Footer
+    const pageCount = doc.internal.getNumberOfPages();
+    for (let i = 1; i <= pageCount; i++) {
+      doc.setPage(i);
+      doc.setFontSize(8);
+      doc.setTextColor(150, 150, 150);
+      doc.text(
+        `Generated on ${new Date().toLocaleString('en-IN')} | Page ${i} of ${pageCount}`,
+        105,
+        doc.internal.pageSize.height - 10,
+        { align: 'center' }
+      );
+    }
+    
+    // Save the PDF
+    const fileName = `Credit_Report_${customer?.name?.replace(/\s+/g, '_') || 'Customer'}_${fromDate}_to_${toDate}.pdf`;
+    doc.save(fileName);
+    setSuccess('PDF report downloaded successfully!');
+  };
+
   if (loading) {
     return (
       <div className="credit-history-page">
@@ -343,7 +530,7 @@ function CreditHistory({ user }) {
                   <td className="actions-cell">
                     {transaction.image_path && (
                       <a 
-                        href={`http://localhost:5000${transaction.image_path}`} 
+                        href={transaction.image_path}
                         target="_blank" 
                         rel="noopener noreferrer"
                         className="action-icon view"
@@ -387,6 +574,7 @@ function CreditHistory({ user }) {
           <div className="report-actions">
             <button className="report-btn" onClick={handleCopyReport}>Copy</button>
             <button className="report-btn whatsapp" onClick={handleSendWhatsApp}>WhatsApp</button>
+            <button className="report-btn pdf" onClick={generatePDFReport}><Download size={14} /> PDF</button>
             <button className="report-btn" onClick={() => setShowReport(false)}>Close</button>
           </div>
         </div>

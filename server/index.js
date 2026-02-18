@@ -2,20 +2,25 @@ const express = require('express');
 const cors = require('cors');
 const Database = require('better-sqlite3');
 const path = require('path');
+const fs = require('fs');
 const crypto = require('crypto');
 const bcrypt = require('bcrypt');
 
 const app = express();
 const PORT = process.env.PORT || 5000;
 const DB_PATH = process.env.DB_PATH || path.join(__dirname, 'barman-store.db');
-const db = new Database(DB_PATH);
+const BACKUP_DIR = process.env.BACKUP_DIR || path.join(__dirname, 'backups');
+let db = new Database(DB_PATH);
 
-// Restrict CORS when FRONTEND_ORIGIN is provided, otherwise allow all for dev
+// Restrict CORS when FRONTEND_ORIGIN is provided.
+// In production, default to no cross-origin access unless explicitly allowed.
 const corsOptions = {};
 if (process.env.FRONTEND_ORIGIN) {
   // support comma-separated origins
   const origins = process.env.FRONTEND_ORIGIN.split(',').map((o) => o.trim()).filter(Boolean);
   corsOptions.origin = origins.length === 1 ? origins[0] : origins;
+} else if (process.env.NODE_ENV === 'production') {
+  corsOptions.origin = false;
 }
 app.use(cors(Object.keys(corsOptions).length ? corsOptions : undefined));
 app.use(express.json());
@@ -60,7 +65,66 @@ const normalizePhone = (phone) => {
   return digits || null;
 };
 
-const generateToken = () => `${crypto.randomBytes(24).toString('hex')}.${Date.now()}`;
+const AUTH_TOKEN_SECRET = process.env.AUTH_TOKEN_SECRET || 'barman-store-local-secret';
+const base64UrlEncode = (value) => Buffer.from(value).toString('base64url');
+const base64UrlDecode = (value) => Buffer.from(value, 'base64url').toString('utf8');
+const signTokenPayload = (payloadEncoded) =>
+  crypto.createHmac('sha256', AUTH_TOKEN_SECRET).update(payloadEncoded).digest('base64url');
+
+const generateToken = (user = {}) => {
+  const payload = {
+    uid: Number(user.id || 0),
+    role: String(user.role || 'customer'),
+    iat: Date.now(),
+  };
+  const encoded = base64UrlEncode(JSON.stringify(payload));
+  const signature = signTokenPayload(encoded);
+  return `${encoded}.${signature}`;
+};
+
+const verifyToken = (token) => {
+  if (!token || typeof token !== 'string') return null;
+  const [encoded, signature] = token.split('.');
+  if (!encoded || !signature) return null;
+  const expected = signTokenPayload(encoded);
+  const sigBuffer = Buffer.from(signature);
+  const expectedBuffer = Buffer.from(expected);
+  if (sigBuffer.length !== expectedBuffer.length || !crypto.timingSafeEqual(sigBuffer, expectedBuffer)) {
+    return null;
+  }
+  try {
+    const payload = JSON.parse(base64UrlDecode(encoded));
+    if (!payload || !Number(payload.uid)) return null;
+    return payload;
+  } catch (_) {
+    return null;
+  }
+};
+
+const getAuthUserFromRequest = (req) => {
+  const header = String(req.headers.authorization || '');
+  if (!header.toLowerCase().startsWith('bearer ')) return null;
+  const token = header.slice(7).trim();
+  const payload = verifyToken(token);
+  if (!payload) return null;
+  const user = sanitizeUser(dbGet(`SELECT * FROM users WHERE id = ?`, [payload.uid]));
+  return user || null;
+};
+
+const requireAuth = (req, res, next) => {
+  const user = getAuthUserFromRequest(req);
+  if (!user) return res.status(401).json({ error: 'Unauthorized' });
+  req.authUser = user;
+  return next();
+};
+
+const requireAdmin = (req, res, next) => {
+  const user = getAuthUserFromRequest(req);
+  if (!user) return res.status(401).json({ error: 'Unauthorized' });
+  if (user.role !== 'admin') return res.status(403).json({ error: 'Admin access required' });
+  req.authUser = user;
+  return next();
+};
 const isSha256Hex = (value) => /^[a-f0-9]{64}$/i.test(String(value || ''));
 
 const generateOrderNumber = () => {
@@ -83,6 +147,13 @@ const normalizePaymentMethod = (method) => {
   return 'cash';
 };
 
+const normalizeDistributorLedgerType = (type) => {
+  const raw = String(type || '').trim().toLowerCase();
+  if (raw === 'payment' || raw === 'paid') return 'payment';
+  if (raw === 'credit' || raw === 'given' || raw === 'due') return 'credit';
+  return 'credit';
+};
+
 const generateSku = (name, brand, content, mrp) => {
   const part = (v) => String(v || '').replace(/[^a-zA-Z0-9]/g, '').toUpperCase();
   const n = part(name).slice(0, 4).padEnd(4, 'X');
@@ -95,6 +166,92 @@ const generateSku = (name, brand, content, mrp) => {
 const dbRun = (sql, params = []) => db.prepare(sql).run(params);
 const dbGet = (sql, params = []) => db.prepare(sql).get(params);
 const dbAll = (sql, params = []) => db.prepare(sql).all(params);
+
+const closeDatabase = () => {
+  try {
+    if (db) db.close();
+  } catch (_) {
+    // ignore close failures
+  }
+};
+
+const reopenDatabase = () => {
+  closeDatabase();
+  db = new Database(DB_PATH);
+};
+
+const ensureBackupDir = () => {
+  fs.mkdirSync(BACKUP_DIR, { recursive: true });
+};
+
+const makeBackupFileName = (tag = 'manual') => {
+  const now = new Date();
+  const stamp = [
+    now.getFullYear(),
+    String(now.getMonth() + 1).padStart(2, '0'),
+    String(now.getDate()).padStart(2, '0'),
+    '-',
+    String(now.getHours()).padStart(2, '0'),
+    String(now.getMinutes()).padStart(2, '0'),
+    String(now.getSeconds()).padStart(2, '0'),
+  ].join('');
+  return `barman-store-${tag}-${stamp}.db`;
+};
+
+const validateBackupFileName = (name) => /^[a-zA-Z0-9._-]+\.db$/i.test(String(name || ''));
+
+const createDatabaseBackup = (tag = 'manual') => {
+  ensureBackupDir();
+  const fileName = makeBackupFileName(tag);
+  const filePath = path.join(BACKUP_DIR, fileName);
+  const escapedPath = filePath.replace(/'/g, "''");
+
+  // Flush WAL changes before creating backup snapshot.
+  try {
+    db.pragma('wal_checkpoint(TRUNCATE)');
+  } catch (_) {
+    // not fatal if journal mode is not WAL
+  }
+
+  db.exec(`VACUUM INTO '${escapedPath}'`);
+  const stat = fs.statSync(filePath);
+  return {
+    file_name: fileName,
+    size_bytes: stat.size,
+    created_at: stat.mtime.toISOString(),
+    path: filePath,
+  };
+};
+
+const listDatabaseBackups = () => {
+  ensureBackupDir();
+  const files = fs.readdirSync(BACKUP_DIR)
+    .filter((name) => validateBackupFileName(name))
+    .map((name) => {
+      const filePath = path.join(BACKUP_DIR, name);
+      const stat = fs.statSync(filePath);
+      return {
+        file_name: name,
+        size_bytes: stat.size,
+        created_at: stat.mtime.toISOString(),
+      };
+    })
+    .sort((a, b) => new Date(b.created_at) - new Date(a.created_at));
+  return files;
+};
+
+const assertBackupIntegrity = (filePath) => {
+  const checkDb = new Database(filePath, { readonly: true, fileMustExist: true });
+  try {
+    const row = checkDb.prepare('PRAGMA integrity_check').get();
+    const result = String(row?.integrity_check || '').toLowerCase();
+    if (result !== 'ok') {
+      throw new Error(`Backup integrity check failed: ${result || 'unknown result'}`);
+    }
+  } finally {
+    checkDb.close();
+  }
+};
 
 const alterTableSafe = (sql) => {
   try {
@@ -209,6 +366,23 @@ const initDB = () => {
       status TEXT DEFAULT 'active',
       created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
       updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+    );
+
+    CREATE TABLE IF NOT EXISTS distributor_ledger (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      distributor_id INTEGER NOT NULL,
+      type TEXT NOT NULL,
+      amount REAL NOT NULL,
+      balance REAL DEFAULT 0,
+      payment_mode TEXT,
+      reference TEXT,
+      bill_number TEXT,
+      description TEXT,
+      transaction_date DATE,
+      source TEXT,
+      source_id TEXT,
+      created_by INTEGER,
+      created_at DATETIME DEFAULT CURRENT_TIMESTAMP
     );
 
     CREATE TABLE IF NOT EXISTS purchase_orders (
@@ -368,6 +542,8 @@ const initDB = () => {
   alterTableSafe(`ALTER TABLE users ADD COLUMN address TEXT`);
   alterTableSafe(`ALTER TABLE users ADD COLUMN password_hash TEXT`);
   alterTableSafe(`ALTER TABLE users ADD COLUMN credit_limit REAL DEFAULT 0`);
+  alterTableSafe(`ALTER TABLE credit_history ADD COLUMN transaction_date DATE`);
+  alterTableSafe(`ALTER TABLE credit_history ADD COLUMN created_by INTEGER`);
   alterTableSafe(`ALTER TABLE stock_ledger ADD COLUMN product_name TEXT`);
   alterTableSafe(`ALTER TABLE stock_ledger ADD COLUMN sku TEXT`);
   alterTableSafe(`ALTER TABLE stock_ledger ADD COLUMN transaction_type TEXT`);
@@ -385,6 +561,11 @@ const initDB = () => {
   alterTableSafe(`ALTER TABLE purchase_orders ADD COLUMN tax_amount REAL DEFAULT 0`);
   alterTableSafe(`ALTER TABLE purchase_orders ADD COLUMN total_amount REAL DEFAULT 0`);
   alterTableSafe(`ALTER TABLE purchase_orders ADD COLUMN bill_number TEXT`);
+  alterTableSafe(`ALTER TABLE distributor_ledger ADD COLUMN source TEXT`);
+  alterTableSafe(`ALTER TABLE distributor_ledger ADD COLUMN source_id TEXT`);
+  alterTableSafe(`ALTER TABLE distributor_ledger ADD COLUMN transaction_date DATE`);
+  alterTableSafe(`ALTER TABLE distributor_ledger ADD COLUMN created_by INTEGER`);
+  alterTableSafe(`ALTER TABLE distributor_ledger ADD COLUMN bill_number TEXT`);
   alterTableSafe(`ALTER TABLE purchase_order_items ADD COLUMN rate REAL DEFAULT 0`);
   alterTableSafe(`ALTER TABLE purchase_order_items ADD COLUMN gst_rate REAL DEFAULT 0`);
   alterTableSafe(`ALTER TABLE purchase_order_items ADD COLUMN discount_type TEXT DEFAULT 'percent'`);
@@ -540,7 +721,7 @@ app.post('/api/auth/login', (req, res) => {
     return res.json({
       success: true,
       user: sanitizeUser(user),
-      token: generateToken(),
+      token: generateToken(user),
       message: `Welcome back, ${user.name}`,
     });
   } catch (error) {
@@ -571,7 +752,7 @@ app.post('/api/auth/register', (req, res) => {
       ['customer', name || 'Customer', email ? String(email).trim() : null, normalizedPhone, address || null, hashPassword(password)]
     );
     const user = dbGet(`SELECT * FROM users WHERE id = ?`, [result.lastInsertRowid]);
-    return res.status(201).json({ success: true, user: sanitizeUser(user), token: generateToken() });
+    return res.status(201).json({ success: true, user: sanitizeUser(user), token: generateToken(user) });
   } catch (error) {
     return res.status(500).json({ error: error.message });
   }
@@ -658,6 +839,78 @@ app.put('/api/admin/password-reset-requests/:id', (req, res) => {
     );
     return res.json({ success: true });
   } catch (error) {
+    return res.status(500).json({ error: error.message });
+  }
+});
+
+app.post('/api/admin/backup/create', (_, res) => {
+  try {
+    const backup = createDatabaseBackup('manual');
+    return res.status(201).json({ success: true, backup });
+  } catch (error) {
+    return res.status(500).json({ error: error.message });
+  }
+});
+
+app.get('/api/admin/backup/list', (_, res) => {
+  try {
+    return res.json(listDatabaseBackups());
+  } catch (error) {
+    return res.status(500).json({ error: error.message });
+  }
+});
+
+app.get('/api/admin/backup/download/:fileName', (req, res) => {
+  try {
+    const { fileName } = req.params;
+    if (!validateBackupFileName(fileName)) {
+      return res.status(400).json({ error: 'Invalid backup file name' });
+    }
+    const filePath = path.join(BACKUP_DIR, fileName);
+    if (!fs.existsSync(filePath)) {
+      return res.status(404).json({ error: 'Backup file not found' });
+    }
+    return res.download(filePath, fileName);
+  } catch (error) {
+    return res.status(500).json({ error: error.message });
+  }
+});
+
+app.post('/api/admin/backup/restore', (req, res) => {
+  try {
+    const fileName = String(req.body?.file_name || '').trim();
+    if (!validateBackupFileName(fileName)) {
+      return res.status(400).json({ error: 'Valid file_name is required' });
+    }
+
+    const sourcePath = path.join(BACKUP_DIR, fileName);
+    if (!fs.existsSync(sourcePath)) {
+      return res.status(404).json({ error: 'Backup file not found' });
+    }
+
+    assertBackupIntegrity(sourcePath);
+    const preRestoreBackup = createDatabaseBackup('pre-restore');
+
+    closeDatabase();
+    fs.copyFileSync(sourcePath, DB_PATH);
+    reopenDatabase();
+
+    return res.json({
+      success: true,
+      message: 'Database restored successfully',
+      restored_file: fileName,
+      pre_restore_backup: preRestoreBackup.file_name,
+    });
+  } catch (error) {
+    try {
+      db.prepare('SELECT 1').get();
+    } catch (_) {
+      try {
+        reopenDatabase();
+      } catch (_) {
+        // ignore recovery failures
+      }
+    }
     return res.status(500).json({ error: error.message });
   }
 });
@@ -865,6 +1118,38 @@ app.get('/api/products', (req, res) => {
     }
     sql += ` ORDER BY created_at DESC`;
     return res.json(dbAll(sql, params));
+  } catch (error) {
+    return res.status(500).json({ error: error.message });
+  }
+});
+
+app.get('/api/products/:id/last-purchase', (req, res) => {
+  try {
+    const productId = Number(req.params.id);
+    if (!productId) return res.status(400).json({ error: 'Invalid product id' });
+
+    const row = dbGet(
+      `SELECT
+         poi.product_id,
+         COALESCE(NULLIF(poi.rate, 0), poi.unit_price, 0) as rate,
+         poi.unit_price,
+         poi.gst_rate,
+         poi.uom,
+         po.distributor_id,
+         d.name as distributor_name,
+         po.po_number,
+         po.created_at
+       FROM purchase_order_items poi
+       INNER JOIN purchase_orders po ON po.id = poi.order_id
+       LEFT JOIN distributors d ON d.id = po.distributor_id
+       WHERE poi.product_id = ?
+       ORDER BY datetime(po.created_at) DESC, poi.id DESC
+       LIMIT 1`,
+      [productId]
+    );
+
+    if (!row) return res.json({ found: false, product_id: productId });
+    return res.json({ found: true, ...row });
   } catch (error) {
     return res.status(500).json({ error: error.message });
   }
@@ -1263,8 +1548,13 @@ app.get('/api/stats/orders', (_, res) => {
   }
 });
 
-app.get('/api/users/:userId/credit-history', (req, res) => {
+app.get('/api/users/:userId/credit-history', requireAuth, (req, res) => {
   try {
+    const requestUserId = Number(req.params.userId);
+    const isAdmin = req.authUser?.role === 'admin';
+    if (!isAdmin && Number(req.authUser?.id) !== requestUserId) {
+      return res.status(403).json({ error: 'Forbidden' });
+    }
     const rows = dbAll(`SELECT * FROM credit_history WHERE user_id = ? ORDER BY created_at DESC`, [req.params.userId]);
     return res.json(rows);
   } catch (error) {
@@ -1272,8 +1562,13 @@ app.get('/api/users/:userId/credit-history', (req, res) => {
   }
 });
 
-app.get('/api/users/:userId/credit-balance', (req, res) => {
+app.get('/api/users/:userId/credit-balance', requireAuth, (req, res) => {
   try {
+    const requestUserId = Number(req.params.userId);
+    const isAdmin = req.authUser?.role === 'admin';
+    if (!isAdmin && Number(req.authUser?.id) !== requestUserId) {
+      return res.status(403).json({ error: 'Forbidden' });
+    }
     const row = dbGet(`SELECT balance FROM credit_history WHERE user_id = ? ORDER BY created_at DESC LIMIT 1`, [req.params.userId]);
     return res.json({ balance: row?.balance || 0 });
   } catch (error) {
@@ -1281,9 +1576,9 @@ app.get('/api/users/:userId/credit-balance', (req, res) => {
   }
 });
 
-app.post('/api/users/:userId/credit', (req, res) => {
+app.post('/api/users/:userId/credit', requireAdmin, (req, res) => {
   try {
-    const { type, amount, description, reference } = req.body || {};
+    const { type, amount, description, reference, transactionDate } = req.body || {};
     if (!type || !['given', 'payment'].includes(type)) {
       return res.status(400).json({ error: 'Invalid transaction type' });
     }
@@ -1293,9 +1588,12 @@ app.post('/api/users/:userId/credit', (req, res) => {
     const last = dbGet(`SELECT balance FROM credit_history WHERE user_id = ? ORDER BY created_at DESC LIMIT 1`, [req.params.userId]);
     const current = Number(last?.balance || 0);
     const next = type === 'given' ? current + Number(amount) : current - Number(amount);
+    const normalizedDate = transactionDate && /^\d{4}-\d{2}-\d{2}$/.test(String(transactionDate))
+      ? String(transactionDate)
+      : null;
     const result = dbRun(
-      `INSERT INTO credit_history (user_id, type, amount, balance, description, reference) VALUES (?, ?, ?, ?, ?, ?)`,
-      [req.params.userId, type, Number(amount), next, description || null, reference || null]
+      `INSERT INTO credit_history (user_id, type, amount, balance, description, reference, transaction_date, created_by) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+      [req.params.userId, type, Number(amount), next, description || null, reference || null, normalizedDate, req.authUser?.id || null]
     );
     return res.status(201).json({
       success: true,
@@ -1307,7 +1605,31 @@ app.post('/api/users/:userId/credit', (req, res) => {
   }
 });
 
-app.post('/api/credit/check-limit', (req, res) => {
+app.get('/api/credit/ledger', requireAdmin, (req, res) => {
+  try {
+    const selectedUserId = Number(req.query.user_id || 0);
+    const rows = selectedUserId
+      ? dbAll(
+        `SELECT ch.*, u.name AS customer_name
+         FROM credit_history ch
+         LEFT JOIN users u ON u.id = ch.user_id
+         WHERE ch.user_id = ?
+         ORDER BY datetime(COALESCE(ch.transaction_date, ch.created_at)) ASC, ch.id ASC`,
+        [selectedUserId]
+      )
+      : dbAll(
+        `SELECT ch.*, u.name AS customer_name
+         FROM credit_history ch
+         LEFT JOIN users u ON u.id = ch.user_id
+         ORDER BY datetime(COALESCE(ch.transaction_date, ch.created_at)) ASC, ch.id ASC`
+      );
+    return res.json(rows);
+  } catch (error) {
+    return res.status(500).json({ error: error.message });
+  }
+});
+
+app.post('/api/credit/check-limit', requireAuth, (req, res) => {
   try {
     const customerId = req.body?.customer_id;
     const additionalAmount = Number(req.body?.additional_amount || 0);
@@ -1333,7 +1655,7 @@ app.post('/api/credit/check-limit', (req, res) => {
   }
 });
 
-app.get('/api/credit/aging', (_, res) => {
+app.get('/api/credit/aging', requireAdmin, (_, res) => {
   try {
     const report = dbAll(`
       SELECT
@@ -1450,6 +1772,155 @@ app.delete('/api/distributors/:id', (req, res) => {
     return res.status(500).json({ error: error.message });
   }
 });
+
+const getDistributorLedgerRows = (req, distributorIdOverride = null) => {
+  let sql = `
+    SELECT dl.*, d.name as distributor_name,
+           po.bill_number as po_bill_number,
+           po.invoice_number as po_invoice_number,
+           COALESCE(dl.bill_number, po.bill_number, po.invoice_number) as linked_bill_number
+    FROM distributor_ledger dl
+    LEFT JOIN distributors d ON d.id = dl.distributor_id
+    LEFT JOIN purchase_orders po
+      ON dl.source = 'purchase_order'
+     AND CAST(dl.source_id AS INTEGER) = po.id
+    WHERE 1=1
+  `;
+  const params = [];
+  const distributorId = distributorIdOverride ?? req.query.distributor_id;
+  if (distributorId) {
+    sql += ` AND dl.distributor_id = ?`;
+    params.push(distributorId);
+  }
+  if (req.query.type) {
+    sql += ` AND LOWER(dl.type) = LOWER(?)`;
+    params.push(req.query.type);
+  }
+  if (req.query.start_date) {
+    sql += ` AND date(COALESCE(dl.transaction_date, dl.created_at)) >= date(?)`;
+    params.push(req.query.start_date);
+  }
+  if (req.query.end_date) {
+    sql += ` AND date(COALESCE(dl.transaction_date, dl.created_at)) <= date(?)`;
+    params.push(req.query.end_date);
+  }
+  sql += ` ORDER BY datetime(COALESCE(dl.transaction_date, dl.created_at)) DESC, dl.id DESC`;
+  if (req.query.limit) {
+    const limit = Math.max(1, Number(req.query.limit) || 100);
+    sql += ` LIMIT ${limit}`;
+  }
+  return dbAll(sql, params);
+};
+
+const createDistributorLedgerEntry = (distributorIdRaw, body = {}) => {
+  const distributorId = Number(distributorIdRaw || body.distributor_id || body.user_id);
+  if (!distributorId) throw new Error('distributor_id is required');
+
+  const distributor = dbGet(`SELECT id FROM distributors WHERE id = ?`, [distributorId]);
+  if (!distributor) throw new Error('Distributor not found');
+
+  const rawAmount = Math.abs(Number(body.amount || 0));
+  if (!rawAmount) throw new Error('amount must be greater than 0');
+
+  const type = normalizeDistributorLedgerType(body.type || body.transaction_type);
+  const signedAmount = type === 'payment' ? -rawAmount : rawAmount;
+  const last = dbGet(
+    `SELECT balance FROM distributor_ledger WHERE distributor_id = ? ORDER BY datetime(COALESCE(transaction_date, created_at)) DESC, id DESC LIMIT 1`,
+    [distributorId]
+  );
+  const previousBalance = Number(last?.balance || 0);
+  const nextBalance = previousBalance + signedAmount;
+  const transactionDateRaw = body.transaction_date || body.transactionDate || null;
+  const transactionDate = transactionDateRaw ? String(transactionDateRaw).slice(0, 10) : null;
+  const paymentMode = body.payment_mode || body.mode || null;
+  const billNumberRaw = body.bill_number ?? body.billNo ?? body.invoice_number;
+  const billNumber = billNumberRaw === undefined || billNumberRaw === null ? null : String(billNumberRaw).trim() || null;
+
+  const result = dbRun(
+    `INSERT INTO distributor_ledger
+    (distributor_id, type, amount, balance, payment_mode, reference, bill_number, description, transaction_date, source, source_id, created_by)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    [
+      distributorId,
+      type,
+      rawAmount,
+      nextBalance,
+      paymentMode,
+      body.reference || null,
+      billNumber,
+      body.description || null,
+      transactionDate,
+      body.source || null,
+      body.source_id || null,
+      body.created_by || null,
+    ]
+  );
+
+  return dbGet(
+    `SELECT dl.*, d.name as distributor_name,
+            po.bill_number as po_bill_number,
+            po.invoice_number as po_invoice_number,
+            COALESCE(dl.bill_number, po.bill_number, po.invoice_number) as linked_bill_number
+     FROM distributor_ledger dl
+     LEFT JOIN distributors d ON d.id = dl.distributor_id
+     LEFT JOIN purchase_orders po
+       ON dl.source = 'purchase_order'
+      AND CAST(dl.source_id AS INTEGER) = po.id
+     WHERE dl.id = ?`,
+    [result.lastInsertRowid]
+  );
+};
+
+app.get('/api/distributor-ledger', (req, res) => {
+  try {
+    return res.json(getDistributorLedgerRows(req));
+  } catch (error) {
+    return res.status(500).json({ error: error.message });
+  }
+});
+
+app.get('/api/distributors/ledger', (req, res) => {
+  try {
+    return res.json(getDistributorLedgerRows(req));
+  } catch (error) {
+    return res.status(500).json({ error: error.message });
+  }
+});
+
+app.get('/api/distributors/:id/ledger', (req, res) => {
+  try {
+    return res.json(getDistributorLedgerRows(req, req.params.id));
+  } catch (error) {
+    return res.status(500).json({ error: error.message });
+  }
+});
+
+app.get('/api/distributors/:id/credit-history', (req, res) => {
+  try {
+    return res.json(getDistributorLedgerRows(req, req.params.id));
+  } catch (error) {
+    return res.status(500).json({ error: error.message });
+  }
+});
+
+const handleDistributorLedgerCreate = (req, res, distributorId = null) => {
+  try {
+    const row = createDistributorLedgerEntry(distributorId, req.body || {});
+    return res.status(201).json(row);
+  } catch (error) {
+    const message = String(error.message || '');
+    if (message.includes('required') || message.includes('not found') || message.includes('greater than 0')) {
+      return res.status(400).json({ error: message });
+    }
+    return res.status(500).json({ error: message });
+  }
+};
+
+app.post('/api/distributor-ledger', (req, res) => handleDistributorLedgerCreate(req, res));
+app.post('/api/distributors/ledger', (req, res) => handleDistributorLedgerCreate(req, res));
+app.post('/api/distributors/:id/ledger', (req, res) => handleDistributorLedgerCreate(req, res, req.params.id));
+app.post('/api/distributors/:id/transactions', (req, res) => handleDistributorLedgerCreate(req, res, req.params.id));
+app.post('/api/distributors/:id/credit', (req, res) => handleDistributorLedgerCreate(req, res, req.params.id));
 
 app.get('/api/purchase-orders', (req, res) => {
   try {
@@ -2103,3 +2574,4 @@ app.listen(PORT, '0.0.0.0', () => {
   console.log(`BARMAN STORE API running on http://localhost:${PORT}`);
   console.log('Admin login: admin@admin.com / admin123');
 });
+

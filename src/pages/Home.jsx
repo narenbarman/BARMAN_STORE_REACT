@@ -13,7 +13,7 @@ function Home() {
             <span className="hero-title-main">{info.TITLE}</span>
             <span className="hero-title-sub">{info.SUB_TITLE}</span>
           </h1>
-          <p className="hero-description">{}info.DESCRIPTION</p>
+          <p className="hero-description">{info.DESCRIPTION}</p>
           <Link to="/products" className="hero-cta">
             Explore Collection
           </Link>
@@ -60,7 +60,7 @@ function Home() {
       <section className="cta-section">
         <div className="cta-content fade-in-up">
           <h2>Ready to brew excellence?</h2>
-          <p>Discover our complete range of coffee products and equipment</p>
+          <p>Discover our complete range of products</p>
           <Link to="/products" className="cta-button">
             Start Shopping
           </Link>

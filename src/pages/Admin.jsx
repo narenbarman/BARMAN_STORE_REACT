@@ -1,7 +1,7 @@
 import { useState, useEffect } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
-import { Package, ShoppingCart, Users, TrendingUp, LogOut, Plus, Edit, Trash2, X, FolderOpen, CreditCard, FileText, Truck, ShoppingBag, History, BarChart2, Gift, KeyRound, Eye } from 'lucide-react';
-import { statsApi, productsApi, ordersApi, usersApi } from '../services/api';
+import { Package, ShoppingCart, Users, TrendingUp, LogOut, Plus, Edit, Trash2, X, FolderOpen, CreditCard, FileText, Truck, ShoppingBag, History, BarChart2, Gift, KeyRound, Eye, Menu } from 'lucide-react';
+import { statsApi, productsApi, ordersApi, usersApi, adminApi } from '../services/api';
 import ProductForm from './ProductForm';
 import CategoryManagement from './CategoryManagement';
 import DistributorManagement from './DistributorManagement';
@@ -13,6 +13,7 @@ import BillingTab from './BillingTab';
 import BillsViewer from './BillsViewer';
 import OfferManagement from './OfferManagement';
 import PasswordResetRequests from './PasswordResetRequests';
+import CreditKhata from './CreditKhata';
 import './Admin.css';
 
 // Currency formatter with Indian Rupee symbol
@@ -30,6 +31,14 @@ const formatCurrencyColored = (amount) => {
   const formatted = formatCurrency(Math.abs(amount));
   const isPositive = amount >= 0;
   return <span className={isPositive ? 'amount-positive' : 'amount-negative'}>{formatted}</span>;
+};
+
+const formatBytes = (bytes) => {
+  const size = Number(bytes || 0);
+  if (size < 1024) return `${size} B`;
+  if (size < 1024 * 1024) return `${(size / 1024).toFixed(1)} KB`;
+  if (size < 1024 * 1024 * 1024) return `${(size / (1024 * 1024)).toFixed(1)} MB`;
+  return `${(size / (1024 * 1024 * 1024)).toFixed(1)} GB`;
 };
 
 function Admin({ user }) {
@@ -51,6 +60,33 @@ function Admin({ user }) {
   const [modalOrder, setModalOrder] = useState(null);
   const [modalItems, setModalItems] = useState([]);
   const [modalLoading, setModalLoading] = useState(false);
+  const [backups, setBackups] = useState([]);
+  const [backupLoading, setBackupLoading] = useState(false);
+  const [backupBusy, setBackupBusy] = useState(false);
+  const [isMobileSidebarOpen, setIsMobileSidebarOpen] = useState(false);
+  const [productViewMode, setProductViewMode] = useState(() => {
+    if (typeof window === 'undefined') return 'table';
+    const saved = window.localStorage.getItem('admin-products-view');
+    if (saved === 'table' || saved === 'grid') return saved;
+    return window.innerWidth <= 768 ? 'grid' : 'table';
+  });
+  const [showQuickAdd, setShowQuickAdd] = useState(false);
+  const [quickSaving, setQuickSaving] = useState(false);
+  const [quickAddForm, setQuickAddForm] = useState({
+    name: '',
+    category: '',
+    price: '',
+    stock: '',
+    image: ''
+  });
+  const [quickEditId, setQuickEditId] = useState(null);
+  const [quickEditForm, setQuickEditForm] = useState({
+    name: '',
+    category: '',
+    price: '',
+    stock: '',
+    image: ''
+  });
   const tabGroupMap = {
     dashboard: 'general',
     orders: 'general',
@@ -64,7 +100,9 @@ function Admin({ user }) {
     distributors: 'purchase',
     'stock-ledger': 'purchase',
     users: 'users',
-    'password-resets': 'users'
+    'credit-khata': 'users',
+    'password-resets': 'users',
+    'backup-restore': 'users'
   };
   const [expandedGroups, setExpandedGroups] = useState({
     general: true,
@@ -161,8 +199,26 @@ function Admin({ user }) {
     setExpandedGroups(prev => ({ ...prev, [group]: true }));
   }, [activeTab]);
 
+  useEffect(() => {
+    if (activeTab === 'backup-restore') {
+      fetchBackups();
+    }
+  }, [activeTab]);
+
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+    window.localStorage.setItem('admin-products-view', productViewMode);
+  }, [productViewMode]);
+
   const toggleSidebarGroup = (groupKey) => {
     setExpandedGroups(prev => ({ ...prev, [groupKey]: !prev[groupKey] }));
+  };
+
+  const handleTabChange = (tab) => {
+    setActiveTab(tab);
+    if (window.innerWidth <= 768) {
+      setIsMobileSidebarOpen(false);
+    }
   };
 
   const fetchData = async () => {
@@ -175,12 +231,59 @@ function Admin({ user }) {
     }
   };
 
+  const fetchBackups = async () => {
+    try {
+      setBackupLoading(true);
+      const rows = await adminApi.listBackups();
+      setBackups(Array.isArray(rows) ? rows : []);
+    } catch (error) {
+      showNotification(error.message || 'Failed to load backups', 'error');
+    } finally {
+      setBackupLoading(false);
+    }
+  };
+
+  const handleCreateBackup = async () => {
+    try {
+      setBackupBusy(true);
+      const result = await adminApi.createBackup();
+      const backupName = result?.backup?.file_name || 'backup';
+      showNotification(`Backup created: ${backupName}`, 'success');
+      await fetchBackups();
+    } catch (error) {
+      showNotification(error.message || 'Failed to create backup', 'error');
+    } finally {
+      setBackupBusy(false);
+    }
+  };
+
+  const handleRestoreBackup = async (fileName) => {
+    if (!fileName) return;
+    const ok = window.confirm(`Restore backup "${fileName}"?\n\nA pre-restore snapshot will be created automatically.`);
+    if (!ok) return;
+
+    try {
+      setBackupBusy(true);
+      const result = await adminApi.restoreBackup(fileName);
+      showNotification(
+        `Restore complete: ${result?.restored_file || fileName}. Pre-restore backup: ${result?.pre_restore_backup || 'created'}`,
+        'success'
+      );
+      await fetchBackups();
+      await refreshAdminData();
+    } catch (error) {
+      showNotification(error.message || 'Failed to restore backup', 'error');
+    } finally {
+      setBackupBusy(false);
+    }
+  };
+
   const handleDeleteProduct = async (id) => {
     if (!window.confirm('Are you sure you want to delete this product?')) return;
     
     try {
       await productsApi.delete(id);
-      setProducts(products.filter(p => p.id !== id));
+      setProducts(prev => prev.filter(p => p.id !== id));
       showNotification('Product deleted successfully', 'success');
       
       // Refresh stats
@@ -196,7 +299,7 @@ function Admin({ user }) {
     
     try {
       await usersApi.delete(id);
-      setUsers(users.filter(u => u.id !== id));
+      setUsers(prev => prev.filter(u => u.id !== id));
       showNotification('Customer deleted successfully', 'success');
     } catch (error) {
       showNotification(error.message || 'Failed to delete customer', 'error');
@@ -213,7 +316,7 @@ function Admin({ user }) {
     setShowProductForm(true);
   };
 
-  const handleProductSave = async () => {
+  const handleProductSave = async (meta = {}) => {
     try {
       const updatedProducts = await productsApi.getAll();
       setProducts(updatedProducts);
@@ -221,8 +324,16 @@ function Admin({ user }) {
       // Refresh stats
       const statsData = await statsApi.orders();
       setStats(statsData);
-      
-      showNotification(editingProduct ? 'Product updated successfully' : 'Product added successfully', 'success');
+
+      if (meta?.mode === 'create' && Number(meta?.createdCount) > 1) {
+        showNotification(`${meta.createdCount} products added successfully`, 'success');
+      } else if (meta?.mode === 'edit') {
+        showNotification('Product updated successfully', 'success');
+      } else if (meta?.mode === 'create') {
+        showNotification('Product added successfully', 'success');
+      } else {
+        showNotification(editingProduct ? 'Product updated successfully' : 'Product added successfully', 'success');
+      }
     } catch (error) {
       showNotification('Failed to refresh products', 'error');
     }
@@ -235,6 +346,123 @@ function Admin({ user }) {
 
   const closeNotification = () => {
     setNotification(null);
+  };
+
+  const productCategories = Array.from(
+    new Set(products.map(p => String(p.category || '').trim()).filter(Boolean))
+  ).sort((a, b) => a.localeCompare(b));
+
+  const resetQuickAdd = () => {
+    setQuickAddForm({
+      name: '',
+      category: '',
+      price: '',
+      stock: '',
+      image: ''
+    });
+  };
+
+  const makeQuickPayload = (form, baseProduct = {}) => {
+    const cleanName = String(form.name || '').trim();
+    const cleanCategory = String(form.category || '').trim();
+    const cleanDescription = String(baseProduct.description || '').trim() || `${cleanName} product`;
+    const price = Number(form.price || 0);
+    const stock = Number(form.stock || 0);
+
+    return {
+      name: cleanName,
+      description: cleanDescription,
+      brand: baseProduct.brand || '',
+      content: baseProduct.content || '',
+      color: baseProduct.color || '',
+      price,
+      mrp: Number(baseProduct.mrp || 0) > 0 ? Number(baseProduct.mrp) : price,
+      uom: baseProduct.uom || 'pcs',
+      base_unit: baseProduct.base_unit || 'pcs',
+      uom_type: baseProduct.uom_type || 'selling',
+      conversion_factor: Number(baseProduct.conversion_factor || 1) || 1,
+      barcode: baseProduct.barcode || '',
+      sku: baseProduct.sku || '',
+      image: String(form.image || '').trim(),
+      stock,
+      expiry_date: baseProduct.expiry_date || null,
+      category: cleanCategory,
+      defaultDiscount: Number(baseProduct.defaultDiscount || 0) || 0,
+      discountType: baseProduct.discountType || 'fixed'
+    };
+  };
+
+  const validateQuickForm = (form) => {
+    if (!String(form.name || '').trim()) {
+      showNotification('Product name is required', 'error');
+      return false;
+    }
+    if (!String(form.category || '').trim()) {
+      showNotification('Category is required', 'error');
+      return false;
+    }
+    if (!(Number(form.price) > 0)) {
+      showNotification('Price must be greater than 0', 'error');
+      return false;
+    }
+    if (!(Number(form.stock) >= 0)) {
+      showNotification('Stock must be 0 or more', 'error');
+      return false;
+    }
+    return true;
+  };
+
+  const handleQuickAddSave = async () => {
+    if (!validateQuickForm(quickAddForm)) return;
+
+    try {
+      setQuickSaving(true);
+      await productsApi.create(makeQuickPayload(quickAddForm));
+      await handleProductSave({ mode: 'create', createdCount: 1 });
+      setShowQuickAdd(false);
+      resetQuickAdd();
+    } catch (error) {
+      showNotification(error.message || 'Failed to add product', 'error');
+    } finally {
+      setQuickSaving(false);
+    }
+  };
+
+  const startQuickEdit = (product) => {
+    setQuickEditId(product.id);
+    setQuickEditForm({
+      name: product.name || '',
+      category: product.category || '',
+      price: String(product.price ?? ''),
+      stock: String(product.stock ?? 0),
+      image: product.image || ''
+    });
+  };
+
+  const cancelQuickEdit = () => {
+    setQuickEditId(null);
+    setQuickEditForm({
+      name: '',
+      category: '',
+      price: '',
+      stock: '',
+      image: ''
+    });
+  };
+
+  const handleQuickEditSave = async (product) => {
+    if (!validateQuickForm(quickEditForm)) return;
+
+    try {
+      setQuickSaving(true);
+      await productsApi.update(product.id, makeQuickPayload(quickEditForm, product));
+      await handleProductSave({ mode: 'edit', createdCount: 0 });
+      cancelQuickEdit();
+    } catch (error) {
+      showNotification(error.message || 'Failed to update product', 'error');
+    } finally {
+      setQuickSaving(false);
+    }
   };
 
   const handleEditUser = (user) => {
@@ -289,7 +517,28 @@ function Admin({ user }) {
         </div>
       )}
 
-      <div className="admin-sidebar">
+      <div className="admin-mobile-topbar">
+        <button
+          type="button"
+          className="admin-mobile-menu-btn"
+          onClick={() => setIsMobileSidebarOpen((prev) => !prev)}
+          aria-label="Toggle admin menu"
+        >
+          {isMobileSidebarOpen ? <X size={20} /> : <Menu size={20} />}
+        </button>
+        <h2>Admin Panel</h2>
+      </div>
+
+      {isMobileSidebarOpen && (
+        <button
+          type="button"
+          className="admin-sidebar-overlay"
+          aria-label="Close admin menu"
+          onClick={() => setIsMobileSidebarOpen(false)}
+        />
+      )}
+
+      <div className={`admin-sidebar ${isMobileSidebarOpen ? 'open' : ''}`}>
         <h2>Admin Panel</h2>
         <nav>
           <div className="sidebar-group">
@@ -305,25 +554,25 @@ function Admin({ user }) {
               <div className="sidebar-group-items">
                 <button 
                   className={activeTab === 'dashboard' ? 'active' : ''}
-                  onClick={() => setActiveTab('dashboard')}
+                  onClick={() => handleTabChange('dashboard')}
                 >
                   <TrendingUp size={20} /> Dashboard
                 </button>
                 <button 
                   className={activeTab === 'orders' ? 'active' : ''}
-                  onClick={() => setActiveTab('orders')}
+                  onClick={() => handleTabChange('orders')}
                 >
                   <ShoppingCart size={20} /> Orders
                 </button>
                 <button
                   className={activeTab === 'offers' ? 'active' : ''}
-                  onClick={() => setActiveTab('offers')}
+                  onClick={() => handleTabChange('offers')}
                 >
                   <Gift size={20} /> Offers
                 </button>
                 <button 
                   className={activeTab === 'credit-aging' ? 'active' : ''}
-                  onClick={() => setActiveTab('credit-aging')}
+                  onClick={() => handleTabChange('credit-aging')}
                 >
                   <BarChart2 size={20} /> Credit Aging
                 </button>
@@ -344,13 +593,13 @@ function Admin({ user }) {
               <div className="sidebar-group-items">
                 <button 
                   className={activeTab === 'products' ? 'active' : ''}
-                  onClick={() => setActiveTab('products')}
+                  onClick={() => handleTabChange('products')}
                 >
                   <Package size={20} /> Products
                 </button>
                 <button 
                   className={`${activeTab === 'categories' ? 'active' : ''} sub-item`}
-                  onClick={() => setActiveTab('categories')}
+                  onClick={() => handleTabChange('categories')}
                 >
                   <FolderOpen size={18} /> Categories
                 </button>
@@ -371,13 +620,13 @@ function Admin({ user }) {
               <div className="sidebar-group-items">
                 <button 
                   className={activeTab === 'billing' ? 'active' : ''}
-                  onClick={() => setActiveTab('billing')}
+                  onClick={() => handleTabChange('billing')}
                 >
                   <FileText size={20} /> Billing
                 </button>
                 <button 
                   className={`${activeTab === 'view-bills' ? 'active' : ''} sub-item`}
-                  onClick={() => setActiveTab('view-bills')}
+                  onClick={() => handleTabChange('view-bills')}
                 >
                   <Eye size={18} /> Bills History
                 </button>
@@ -398,19 +647,19 @@ function Admin({ user }) {
               <div className="sidebar-group-items">
                 <button 
                   className={activeTab === 'purchases' ? 'active' : ''}
-                  onClick={() => setActiveTab('purchases')}
+                  onClick={() => handleTabChange('purchases')}
                 >
                   <ShoppingBag size={20} /> Purchases
                 </button>
                 <button 
                   className={`${activeTab === 'distributors' ? 'active' : ''} sub-item`}
-                  onClick={() => setActiveTab('distributors')}
+                  onClick={() => handleTabChange('distributors')}
                 >
                   <Truck size={18} /> Distributors
                 </button>
                 <button 
                   className={`${activeTab === 'stock-ledger' ? 'active' : ''} sub-item`}
-                  onClick={() => setActiveTab('stock-ledger')}
+                  onClick={() => handleTabChange('stock-ledger')}
                 >
                   <History size={18} /> Stock History
                 </button>
@@ -431,15 +680,27 @@ function Admin({ user }) {
               <div className="sidebar-group-items">
                 <button 
                   className={activeTab === 'users' ? 'active' : ''}
-                  onClick={() => setActiveTab('users')}
+                  onClick={() => handleTabChange('users')}
                 >
                   <Users size={20} /> Users
                 </button>
                 <button
+                  className={`${activeTab === 'credit-khata' ? 'active' : ''} sub-item`}
+                  onClick={() => handleTabChange('credit-khata')}
+                >
+                  <CreditCard size={18} /> Credit Khata
+                </button>
+                <button
                   className={`${activeTab === 'password-resets' ? 'active' : ''} sub-item`}
-                  onClick={() => setActiveTab('password-resets')}
+                  onClick={() => handleTabChange('password-resets')}
                 >
                   <KeyRound size={18} /> Password Resets
+                </button>
+                <button
+                  className={`${activeTab === 'backup-restore' ? 'active' : ''} sub-item`}
+                  onClick={() => handleTabChange('backup-restore')}
+                >
+                  <History size={18} /> Backup & Restore
                 </button>
               </div>
             )}
@@ -492,56 +753,216 @@ function Admin({ user }) {
           <div className="products-management">
             <div className="section-header">
               <h1>Products Management</h1>
-              <button className="admin-btn primary" onClick={handleAddProduct}>
-                <Plus size={20} /> Add Product
-              </button>
+              <div className="products-actions">
+                <div className="view-toggle">
+                  <button
+                    className={`admin-btn ${productViewMode === 'table' ? 'primary' : ''}`}
+                    onClick={() => setProductViewMode('table')}
+                  >
+                    Table
+                  </button>
+                  <button
+                    className={`admin-btn ${productViewMode === 'grid' ? 'primary' : ''}`}
+                    onClick={() => setProductViewMode('grid')}
+                  >
+                    Grid
+                  </button>
+                </div>
+                <button className="admin-btn primary" onClick={handleAddProduct}>
+                  <Plus size={20} /> Add Product
+                </button>
+              </div>
             </div>
-            <div className="products-table">
-              <table>
-                <thead>
-                  <tr>
-                    <th>ID</th>
-                    <th>Image</th>
-                    <th>Name</th>
-                    <th>Category</th>
-                    <th>Price</th>
-                    <th>Stock</th>
-                    <th>Actions</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {products.map(product => (
-                    <tr key={product.id}>
-                      <td>{product.id}</td>
-                      <td>
-                        <img 
-                          src={product.image} 
-                          alt={product.name}
-                          className="product-thumbnail"
-                          onError={(e) => e.target.src = '/logo.png'}
-                        />
-                      </td>
-                      <td>{product.name}</td>
-                      <td>{product.category}</td>
-                      <td>{formatCurrencyColored(product.price)}</td>
-                      <td>
-                        <span className={product.stock < 10 ? 'low-stock' : ''}>
-                          {product.stock}
-                        </span>
-                      </td>
-                      <td>
-                        <button className="action-btn edit" onClick={() => handleEditProduct(product)}>
-                          <Edit size={16} />
-                        </button>
-                        <button className="action-btn delete" onClick={() => handleDeleteProduct(product.id)}>
-                          <Trash2 size={16} />
-                        </button>
-                      </td>
+            {productViewMode === 'table' ? (
+              <div className="products-table">
+                <table>
+                  <thead>
+                    <tr>
+                      <th>ID</th>
+                      <th>Image</th>
+                      <th>Name</th>
+                      <th>Category</th>
+                      <th>Price</th>
+                      <th>Stock</th>
+                      <th>Actions</th>
                     </tr>
+                  </thead>
+                  <tbody>
+                    {products.map(product => (
+                      <tr key={product.id}>
+                        <td>{product.id}</td>
+                        <td>
+                          <img 
+                            src={product.image} 
+                            alt={product.name}
+                            className="product-thumbnail"
+                            onError={(e) => e.target.src = '/logo.png'}
+                          />
+                        </td>
+                        <td>{product.name}</td>
+                        <td>{product.category}</td>
+                        <td>{formatCurrencyColored(product.price)}</td>
+                        <td>
+                          <span className={product.stock < 10 ? 'low-stock' : ''}>
+                            {product.stock}
+                          </span>
+                        </td>
+                        <td>
+                          <button className="action-btn edit" onClick={() => handleEditProduct(product)}>
+                            <Edit size={16} />
+                          </button>
+                          <button className="action-btn delete" onClick={() => handleDeleteProduct(product.id)}>
+                            <Trash2 size={16} />
+                          </button>
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            ) : (
+              <div className="products-grid-admin">
+                <div className="product-admin-card add-product-card">
+                  {!showQuickAdd ? (
+                    <button className="quick-add-trigger" onClick={() => setShowQuickAdd(true)}>
+                      <Plus size={18} /> Quick Add Product
+                    </button>
+                  ) : (
+                    <div className="quick-form">
+                      <h3>Quick Add</h3>
+                      <input
+                        type="text"
+                        placeholder="Product name"
+                        value={quickAddForm.name}
+                        onChange={(e) => setQuickAddForm(prev => ({ ...prev, name: e.target.value }))}
+                      />
+                      <input
+                        type="text"
+                        list="admin-product-category-list"
+                        placeholder="Category"
+                        value={quickAddForm.category}
+                        onChange={(e) => setQuickAddForm(prev => ({ ...prev, category: e.target.value }))}
+                      />
+                      <input
+                        type="number"
+                        placeholder="Price"
+                        min="0"
+                        step="0.01"
+                        value={quickAddForm.price}
+                        onChange={(e) => setQuickAddForm(prev => ({ ...prev, price: e.target.value }))}
+                      />
+                      <input
+                        type="number"
+                        placeholder="Stock"
+                        min="0"
+                        step="1"
+                        value={quickAddForm.stock}
+                        onChange={(e) => setQuickAddForm(prev => ({ ...prev, stock: e.target.value }))}
+                      />
+                      <input
+                        type="text"
+                        placeholder="Image URL (optional)"
+                        value={quickAddForm.image}
+                        onChange={(e) => setQuickAddForm(prev => ({ ...prev, image: e.target.value }))}
+                      />
+                      <div className="quick-form-actions">
+                        <button className="admin-btn" onClick={() => { setShowQuickAdd(false); resetQuickAdd(); }} disabled={quickSaving}>
+                          Cancel
+                        </button>
+                        <button className="admin-btn primary" onClick={handleQuickAddSave} disabled={quickSaving}>
+                          {quickSaving ? 'Saving...' : 'Save'}
+                        </button>
+                      </div>
+                    </div>
+                  )}
+                </div>
+                {products.map(product => {
+                  const isEditingQuick = quickEditId === product.id;
+                  return (
+                    <div key={product.id} className="product-admin-card">
+                      <img
+                        src={(isEditingQuick ? quickEditForm.image : product.image) || '/logo.png'}
+                        alt={product.name}
+                        className="product-thumbnail-large"
+                        onError={(e) => e.target.src = '/logo.png'}
+                      />
+                      {isEditingQuick ? (
+                        <div className="quick-form">
+                          <input
+                            type="text"
+                            placeholder="Product name"
+                            value={quickEditForm.name}
+                            onChange={(e) => setQuickEditForm(prev => ({ ...prev, name: e.target.value }))}
+                          />
+                          <input
+                            type="text"
+                            list="admin-product-category-list"
+                            placeholder="Category"
+                            value={quickEditForm.category}
+                            onChange={(e) => setQuickEditForm(prev => ({ ...prev, category: e.target.value }))}
+                          />
+                          <input
+                            type="number"
+                            placeholder="Price"
+                            min="0"
+                            step="0.01"
+                            value={quickEditForm.price}
+                            onChange={(e) => setQuickEditForm(prev => ({ ...prev, price: e.target.value }))}
+                          />
+                          <input
+                            type="number"
+                            placeholder="Stock"
+                            min="0"
+                            step="1"
+                            value={quickEditForm.stock}
+                            onChange={(e) => setQuickEditForm(prev => ({ ...prev, stock: e.target.value }))}
+                          />
+                          <input
+                            type="text"
+                            placeholder="Image URL (optional)"
+                            value={quickEditForm.image}
+                            onChange={(e) => setQuickEditForm(prev => ({ ...prev, image: e.target.value }))}
+                          />
+                          <div className="quick-form-actions">
+                            <button className="admin-btn" onClick={cancelQuickEdit} disabled={quickSaving}>
+                              Cancel
+                            </button>
+                            <button className="admin-btn primary" onClick={() => handleQuickEditSave(product)} disabled={quickSaving}>
+                              {quickSaving ? 'Saving...' : 'Update'}
+                            </button>
+                          </div>
+                        </div>
+                      ) : (
+                        <>
+                          <h3>{product.name}</h3>
+                          <p className="product-meta">{product.category}</p>
+                          <p className="product-meta">{formatCurrencyColored(product.price)}</p>
+                          <p className={product.stock < 10 ? 'product-stock-label low-stock' : 'product-stock-label'}>
+                            Stock: {product.stock}
+                          </p>
+                          <div className="product-card-actions">
+                            <button className="action-btn edit" onClick={() => startQuickEdit(product)} title="Quick edit">
+                              <Edit size={16} />
+                            </button>
+                            <button className="action-btn edit" onClick={() => handleEditProduct(product)} title="Advanced edit">
+                              <FolderOpen size={16} />
+                            </button>
+                            <button className="action-btn delete" onClick={() => handleDeleteProduct(product.id)} title="Delete">
+                              <Trash2 size={16} />
+                            </button>
+                          </div>
+                        </>
+                      )}
+                    </div>
+                  );
+                })}
+                <datalist id="admin-product-category-list">
+                  {productCategories.map(category => (
+                    <option key={category} value={category} />
                   ))}
-                </tbody>
-              </table>
-            </div>
+                </datalist>
+              </div>
+            )}
           </div>
         )}
 
@@ -673,6 +1094,73 @@ function Admin({ user }) {
           </div>
         )}
 
+        {activeTab === 'backup-restore' && (
+          <div className="users-management">
+            <div className="section-header">
+              <h1>Backup & Restore</h1>
+              <div style={{ display: 'flex', gap: '0.5rem' }}>
+                <button className="admin-btn" onClick={fetchBackups} disabled={backupLoading || backupBusy}>
+                  Refresh
+                </button>
+                <button className="admin-btn primary" onClick={handleCreateBackup} disabled={backupBusy}>
+                  <Plus size={20} /> Create Backup
+                </button>
+              </div>
+            </div>
+            <div className="categories-info">
+              <p>Restoring data will replace the current database. A pre-restore backup is created automatically.</p>
+            </div>
+            <div className="users-table">
+              <table>
+                <thead>
+                  <tr>
+                    <th>File</th>
+                    <th>Created</th>
+                    <th>Size</th>
+                    <th>Actions</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {backupLoading ? (
+                    <tr>
+                      <td colSpan="4">Loading backups...</td>
+                    </tr>
+                  ) : backups.length === 0 ? (
+                    <tr>
+                      <td colSpan="4">No backups found</td>
+                    </tr>
+                  ) : backups.map((backup) => (
+                    <tr key={backup.file_name}>
+                      <td>{backup.file_name}</td>
+                      <td>{backup.created_at ? new Date(backup.created_at).toLocaleString() : '-'}</td>
+                      <td>{formatBytes(backup.size_bytes)}</td>
+                      <td>
+                        <div style={{ display: 'flex', gap: '0.5rem' }}>
+                          <a
+                            className="admin-btn"
+                            href={`/api/admin/backup/download/${encodeURIComponent(backup.file_name)}`}
+                            target="_blank"
+                            rel="noreferrer"
+                          >
+                            Download
+                          </a>
+                          <button
+                            className="admin-btn"
+                            onClick={() => handleRestoreBackup(backup.file_name)}
+                            disabled={backupBusy}
+                          >
+                            Restore
+                          </button>
+                        </div>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          </div>
+        )}
+
         {activeTab === 'billing' && <BillingTab />}
         {activeTab === 'view-bills' && <BillsViewer />}
 
@@ -691,6 +1179,7 @@ function Admin({ user }) {
         {activeTab === 'credit-aging' && (
           <CreditAgingReport user={user} />
         )}
+        {activeTab === 'credit-khata' && <CreditKhata user={user} />}
         {activeTab === 'offers' && <OfferManagement />}
         {activeTab === 'password-resets' && <PasswordResetRequests />}
       </div>
