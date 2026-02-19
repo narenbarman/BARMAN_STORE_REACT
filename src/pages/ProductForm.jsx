@@ -181,6 +181,52 @@ function ProductForm({ product, onClose, onSave }) {
     discountType: data.discountType
   });
 
+  const normalizeKey = (value) => String(value || '').trim().toLowerCase();
+
+  const buildIdentityKey = (item) => {
+    const nameKey = normalizeKey(item?.name);
+    const brandKey = normalizeKey(item?.brand);
+    const contentKey = normalizeKey(item?.content);
+    if (!nameKey) return '';
+    return `${nameKey}|${brandKey}|${contentKey}`;
+  };
+
+  const findDuplicateProduct = ({ existingProducts = [], payload, excludeId = null, queuedPayloads = [] }) => {
+    if (!payload) return null;
+    const skuKey = normalizeKey(payload.sku);
+    const barcodeKey = normalizeKey(payload.barcode);
+    const identityKey = buildIdentityKey(payload);
+
+    const hasExistingDuplicate = existingProducts.find((row) => {
+      const rowId = Number(row?.id || 0);
+      if (excludeId && rowId === Number(excludeId)) return false;
+      const rowSku = normalizeKey(row?.sku);
+      const rowBarcode = normalizeKey(row?.barcode);
+      const rowIdentity = buildIdentityKey(row);
+      if (skuKey && rowSku && skuKey === rowSku) return true;
+      if (barcodeKey && rowBarcode && barcodeKey === rowBarcode) return true;
+      if (identityKey && rowIdentity && identityKey === rowIdentity) return true;
+      return false;
+    });
+    if (hasExistingDuplicate) {
+      return `Duplicate with existing product "${hasExistingDuplicate.name}"`;
+    }
+
+    const hasQueuedDuplicate = queuedPayloads.find((row) => {
+      const rowSku = normalizeKey(row?.sku);
+      const rowBarcode = normalizeKey(row?.barcode);
+      const rowIdentity = buildIdentityKey(row);
+      if (skuKey && rowSku && skuKey === rowSku) return true;
+      if (barcodeKey && rowBarcode && barcodeKey === rowBarcode) return true;
+      if (identityKey && rowIdentity && identityKey === rowIdentity) return true;
+      return false;
+    });
+    if (hasQueuedDuplicate) {
+      return `Duplicate inside this batch for "${hasQueuedDuplicate.name}"`;
+    }
+    return null;
+  };
+
   const hasFormDraft = (data = formData) => {
     return ['name', 'description', 'brand', 'content', 'color', 'price', 'mrp', 'barcode', 'sku', 'image', 'stock', 'expiry_date', 'category', 'defaultDiscount']
       .some((field) => String(data[field] || '').trim() !== '');
@@ -244,9 +290,19 @@ function ProductForm({ product, onClose, onSave }) {
     setLoading(true);
 
     try {
+      const existingProducts = await productsApi.getAll({ include_inactive: true });
       if (product) {
         if (!validateForm()) return;
         const productData = buildProductData(formData);
+        const duplicateMessage = findDuplicateProduct({
+          existingProducts,
+          payload: productData,
+          excludeId: product.id
+        });
+        if (duplicateMessage) {
+          setError(duplicateMessage);
+          return;
+        }
         await productsApi.update(product.id, productData);
         await onSave({ mode: 'edit', createdCount: 0 });
       } else {
@@ -258,6 +314,20 @@ function ProductForm({ product, onClose, onSave }) {
         if (!payloads.length) {
           setError('Add at least one product to submit');
           return;
+        }
+
+        const validatedPayloads = [];
+        for (let i = 0; i < payloads.length; i += 1) {
+          const duplicateMessage = findDuplicateProduct({
+            existingProducts,
+            payload: payloads[i],
+            queuedPayloads: validatedPayloads
+          });
+          if (duplicateMessage) {
+            setError(`Duplicate at product ${i + 1} (${payloads[i].name}): ${duplicateMessage}`);
+            return;
+          }
+          validatedPayloads.push(payloads[i]);
         }
 
         let createdCount = 0;

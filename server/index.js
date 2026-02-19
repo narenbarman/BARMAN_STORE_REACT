@@ -268,6 +268,8 @@ const normalizeDiscountType = (value) => {
   return raw === 'percentage' ? 'percentage' : 'fixed';
 };
 
+const normalizeTextKey = (value) => String(value || '').trim().toLowerCase();
+
 const normalizeHttpImageUrl = (value) => {
   const raw = String(value || '').trim();
   if (!raw) return null;
@@ -312,6 +314,7 @@ const normalizeProductInput = (input = {}, current = null) => {
   const mrpRaw = body.mrp ?? existing.mrp ?? priceRaw;
   const uom = body.uom ?? existing.uom ?? 'pcs';
   const skuCandidate = body.sku ?? existing.sku ?? '';
+  const barcodeCandidate = body.barcode ?? existing.barcode ?? null;
   const image = body.image ?? existing.image ?? null;
   const stockRaw = body.stock ?? existing.stock ?? 0;
   const expiryDate = body.expiry_date ?? existing.expiry_date ?? null;
@@ -326,6 +329,7 @@ const normalizeProductInput = (input = {}, current = null) => {
   const discountType = normalizeDiscountType(discountTypeRaw);
   const isActive = normalizeBooleanish(isActiveRaw, 1);
   const sku = String(skuCandidate || '').trim() || generateSku(name, brand, content, mrp || price);
+  const barcode = String(barcodeCandidate || '').trim() || null;
 
   return {
     name: String(name || '').trim(),
@@ -337,6 +341,7 @@ const normalizeProductInput = (input = {}, current = null) => {
     mrp: Number.isFinite(mrp) ? mrp : price,
     uom: String(uom || 'pcs').trim() || 'pcs',
     sku,
+    barcode,
     image: normalizeHttpImageUrl(image),
     stock,
     category: String(category || '').trim() || 'Groceries',
@@ -378,6 +383,70 @@ const validateProductPayload = (payload, { partial = false } = {}) => {
   return errors;
 };
 
+const findDuplicateProduct = (payload, { excludeId = null } = {}) => {
+  const sku = normalizeTextKey(payload?.sku);
+  if (sku) {
+    const bySku = excludeId
+      ? dbGet(`SELECT id, name, sku FROM products WHERE lower(sku) = ? AND id <> ? LIMIT 1`, [sku, Number(excludeId)])
+      : dbGet(`SELECT id, name, sku FROM products WHERE lower(sku) = ? LIMIT 1`, [sku]);
+    if (bySku) {
+      return { field: 'sku', message: `Duplicate SKU already exists (Product #${bySku.id}: ${bySku.name})` };
+    }
+  }
+
+  const barcode = normalizeTextKey(payload?.barcode);
+  if (barcode) {
+    const byBarcode = excludeId
+      ? dbGet(`SELECT id, name, barcode FROM products WHERE lower(barcode) = ? AND id <> ? LIMIT 1`, [barcode, Number(excludeId)])
+      : dbGet(`SELECT id, name, barcode FROM products WHERE lower(barcode) = ? LIMIT 1`, [barcode]);
+    if (byBarcode) {
+      return { field: 'barcode', message: `Duplicate barcode already exists (Product #${byBarcode.id}: ${byBarcode.name})` };
+    }
+  }
+
+  const nameKey = normalizeTextKey(payload?.name);
+  const brandKey = normalizeTextKey(payload?.brand);
+  const contentKey = normalizeTextKey(payload?.content);
+  if (nameKey) {
+    const byIdentity = excludeId
+      ? dbGet(
+        `SELECT id, name, brand, content
+         FROM products
+         WHERE lower(trim(name)) = ?
+           AND lower(trim(COALESCE(brand, ''))) = ?
+           AND lower(trim(COALESCE(content, ''))) = ?
+           AND id <> ?
+         LIMIT 1`,
+        [nameKey, brandKey, contentKey, Number(excludeId)]
+      )
+      : dbGet(
+        `SELECT id, name, brand, content
+         FROM products
+         WHERE lower(trim(name)) = ?
+           AND lower(trim(COALESCE(brand, ''))) = ?
+           AND lower(trim(COALESCE(content, ''))) = ?
+         LIMIT 1`,
+        [nameKey, brandKey, contentKey]
+      );
+    if (byIdentity) {
+      return {
+        field: 'identity',
+        message: `Duplicate product identity exists (name + brand + content) as Product #${byIdentity.id}: ${byIdentity.name}`
+      };
+    }
+  }
+
+  return null;
+};
+
+const buildProductIdentityKey = (payload) => {
+  const nameKey = normalizeTextKey(payload?.name);
+  if (!nameKey) return '';
+  const brandKey = normalizeTextKey(payload?.brand);
+  const contentKey = normalizeTextKey(payload?.content);
+  return `${nameKey}::${brandKey}::${contentKey}`;
+};
+
 const findExistingProductForImport = (row) => {
   const id = toPositiveIntOrNull(row.id);
   if (id) {
@@ -386,12 +455,12 @@ const findExistingProductForImport = (row) => {
   }
   const sku = String(row.sku || '').trim();
   if (sku) {
-    const bySku = dbGet(`SELECT * FROM products WHERE sku = ?`, [sku]);
+    const bySku = dbGet(`SELECT * FROM products WHERE lower(sku) = ?`, [sku.toLowerCase()]);
     if (bySku) return bySku;
   }
   const barcode = String(row.barcode || '').trim();
   if (barcode) {
-    const byBarcode = dbGet(`SELECT * FROM products WHERE barcode = ?`, [barcode]);
+    const byBarcode = dbGet(`SELECT * FROM products WHERE lower(barcode) = ?`, [barcode.toLowerCase()]);
     if (byBarcode) return byBarcode;
   }
   return null;
@@ -452,6 +521,12 @@ const applyProductImportBatch = ({ batchId, checksum, authUser }) => {
     failed: 0,
     errors: [],
   };
+  const seenInBatch = {
+    productIds: new Map(),
+    sku: new Map(),
+    barcode: new Map(),
+    identity: new Map(),
+  };
 
   const tx = db.transaction(() => {
     batch.rows.forEach((row) => {
@@ -467,6 +542,37 @@ const applyProductImportBatch = ({ batchId, checksum, authUser }) => {
         const validationErrors = validateProductPayload(payload);
         if (validationErrors.length) {
           throw new Error(validationErrors.join('; '));
+        }
+        const duplicate = findDuplicateProduct(payload, {
+          excludeId: row.action === 'update' ? row.matched_product_id : null
+        });
+        if (duplicate) {
+          throw new Error(duplicate.message);
+        }
+
+        const matchedId = row.action === 'update' ? Number(row.matched_product_id) : null;
+        if (matchedId) {
+          const seenProductRow = seenInBatch.productIds.get(matchedId);
+          if (seenProductRow) throw new Error(`Duplicate update target in import batch (also seen at row ${seenProductRow})`);
+          seenInBatch.productIds.set(matchedId, row.row);
+        }
+        const skuKey = normalizeTextKey(payload.sku);
+        if (skuKey) {
+          const seenSkuRow = seenInBatch.sku.get(skuKey);
+          if (seenSkuRow) throw new Error(`Duplicate SKU in import batch (also seen at row ${seenSkuRow})`);
+          seenInBatch.sku.set(skuKey, row.row);
+        }
+        const barcodeKey = normalizeTextKey(payload.barcode);
+        if (barcodeKey) {
+          const seenBarcodeRow = seenInBatch.barcode.get(barcodeKey);
+          if (seenBarcodeRow) throw new Error(`Duplicate barcode in import batch (also seen at row ${seenBarcodeRow})`);
+          seenInBatch.barcode.set(barcodeKey, row.row);
+        }
+        const identityKey = buildProductIdentityKey(payload);
+        if (identityKey) {
+          const seenIdentityRow = seenInBatch.identity.get(identityKey);
+          if (seenIdentityRow) throw new Error(`Duplicate product identity in import batch (also seen at row ${seenIdentityRow})`);
+          seenInBatch.identity.set(identityKey, row.row);
         }
 
         if (row.action === 'create') {
@@ -484,7 +590,7 @@ const applyProductImportBatch = ({ batchId, checksum, authUser }) => {
               payload.mrp,
               payload.uom,
               payload.sku,
-              row.barcode,
+              payload.barcode,
               payload.image,
               payload.stock,
               payload.category,
@@ -511,7 +617,7 @@ const applyProductImportBatch = ({ batchId, checksum, authUser }) => {
               payload.mrp,
               payload.uom,
               payload.sku,
-              row.barcode,
+              payload.barcode,
               payload.image,
               payload.stock,
               payload.category,
@@ -1640,6 +1746,8 @@ app.post('/api/products', requireAdmin, (req, res) => {
     const body = normalizeProductInput(req.body || {});
     const errors = validateProductPayload(body);
     if (errors.length) return res.status(400).json({ error: 'Validation failed', details: errors });
+    const duplicate = findDuplicateProduct(body);
+    if (duplicate) return res.status(409).json({ error: duplicate.message, field: duplicate.field });
     const categoryName = resolveOrCreateCategoryName(body.category || 'Groceries');
     const result = dbRun(
       `INSERT INTO products
@@ -1655,7 +1763,7 @@ app.post('/api/products', requireAdmin, (req, res) => {
         body.mrp != null ? Number(body.mrp) : Number(body.price || 0),
         body.uom || 'pcs',
         body.sku,
-        req.body?.barcode ? String(req.body.barcode).trim() : null,
+        body.barcode,
         body.image || null,
         Number(body.stock || 0),
         categoryName,
@@ -1678,6 +1786,8 @@ app.put('/api/products/:id(\\d+)', requireAdmin, (req, res) => {
     const body = normalizeProductInput(req.body || {}, current);
     const errors = validateProductPayload(body);
     if (errors.length) return res.status(400).json({ error: 'Validation failed', details: errors });
+    const duplicate = findDuplicateProduct(body, { excludeId: req.params.id });
+    if (duplicate) return res.status(409).json({ error: duplicate.message, field: duplicate.field });
     const categoryName = resolveOrCreateCategoryName(body.category || current.category || 'Groceries');
     dbRun(
       `UPDATE products SET
@@ -1693,7 +1803,7 @@ app.put('/api/products/:id(\\d+)', requireAdmin, (req, res) => {
         Number(body.mrp),
         body.uom,
         body.sku,
-        req.body?.barcode !== undefined ? String(req.body.barcode || '').trim() || null : current.barcode || null,
+        body.barcode,
         body.image,
         Number(body.stock),
         categoryName,
@@ -1791,6 +1901,12 @@ app.post('/api/products/import/preview', requireAdmin, (req, res) => {
     let updates = 0;
     let skips = 0;
     let errors = 0;
+    const seenInBatch = {
+      productIds: new Map(),
+      sku: new Map(),
+      barcode: new Map(),
+      identity: new Map(),
+    };
 
     rows.forEach((row, index) => {
       const rowNo = index + 2;
@@ -1809,6 +1925,29 @@ app.post('/api/products/import/preview', requireAdmin, (req, res) => {
 
       if (mode === 'create_only' && existing) rowErrors.push('Row matches existing product but mode is create_only');
       if (mode === 'update_only' && !existing) rowErrors.push('Row does not match an existing product but mode is update_only');
+      const duplicate = findDuplicateProduct(normalized, { excludeId: existing?.id || null });
+      if (duplicate) rowErrors.push(duplicate.message);
+
+      const matchedId = existing?.id ? Number(existing.id) : null;
+      if (matchedId) {
+        const seenProductRow = seenInBatch.productIds.get(matchedId);
+        if (seenProductRow) rowErrors.push(`Duplicate update target in import file (also row ${seenProductRow})`);
+      }
+      const skuKey = normalizeTextKey(normalized.sku);
+      if (skuKey) {
+        const seenSkuRow = seenInBatch.sku.get(skuKey);
+        if (seenSkuRow) rowErrors.push(`Duplicate SKU in import file (also row ${seenSkuRow})`);
+      }
+      const barcodeKey = normalizeTextKey(normalized.barcode);
+      if (barcodeKey) {
+        const seenBarcodeRow = seenInBatch.barcode.get(barcodeKey);
+        if (seenBarcodeRow) rowErrors.push(`Duplicate barcode in import file (also row ${seenBarcodeRow})`);
+      }
+      const identityKey = buildProductIdentityKey(normalized);
+      if (identityKey) {
+        const seenIdentityRow = seenInBatch.identity.get(identityKey);
+        if (seenIdentityRow) rowErrors.push(`Duplicate product identity in import file (also row ${seenIdentityRow})`);
+      }
 
       if (rowErrors.length) {
         errors += 1;
@@ -1816,12 +1955,17 @@ app.post('/api/products/import/preview', requireAdmin, (req, res) => {
         return;
       }
 
+      if (matchedId) seenInBatch.productIds.set(matchedId, rowNo);
+      if (skuKey) seenInBatch.sku.set(skuKey, rowNo);
+      if (barcodeKey) seenInBatch.barcode.set(barcodeKey, rowNo);
+      if (identityKey) seenInBatch.identity.set(identityKey, rowNo);
+
       normalizedRows.push({
         row: rowNo,
         action,
         matched_product_id: existing?.id || null,
         payload: normalized,
-        barcode: row.barcode !== undefined ? String(row.barcode || '').trim() || null : (existing?.barcode || null),
+        barcode: normalized.barcode,
       });
 
       if (action === 'create') creates += 1;

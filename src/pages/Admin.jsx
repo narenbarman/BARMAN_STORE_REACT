@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef } from 'react';
+import { useState, useEffect, useRef, useMemo } from 'react';
 import { Link, useNavigate, useSearchParams } from 'react-router-dom';
 import { Package, ShoppingCart, Users, TrendingUp, LogOut, Plus, Edit, Trash2, X, FolderOpen, CreditCard, FileText, Truck, ShoppingBag, History, BarChart2, Gift, KeyRound, Eye, Menu, Upload, Download, CheckCircle2 } from 'lucide-react';
 import { statsApi, productsApi, ordersApi, usersApi, adminApi } from '../services/api';
@@ -40,6 +40,11 @@ const formatBytes = (bytes) => {
   if (size < 1024 * 1024) return `${(size / 1024).toFixed(1)} KB`;
   if (size < 1024 * 1024 * 1024) return `${(size / (1024 * 1024)).toFixed(1)} MB`;
   return `${(size / (1024 * 1024 * 1024)).toFixed(1)} GB`;
+};
+
+const asNumber = (value, fallback = 0) => {
+  const parsed = Number(value);
+  return Number.isFinite(parsed) ? parsed : fallback;
 };
 
 function Admin({ user }) {
@@ -98,6 +103,33 @@ function Admin({ user }) {
     category: '',
     price: '',
     stock: '',
+    image: ''
+  });
+  const [productTableSearch, setProductTableSearch] = useState('');
+  const [productTableSortField, setProductTableSortField] = useState('created_at');
+  const [productTableSortDir, setProductTableSortDir] = useState('desc');
+  const [productTableCategoryFilter, setProductTableCategoryFilter] = useState('');
+  const [productTableStatusFilter, setProductTableStatusFilter] = useState('all');
+  const [productTableLowStockOnly, setProductTableLowStockOnly] = useState(false);
+  const [tableEditId, setTableEditId] = useState(null);
+  const [tableEditSaving, setTableEditSaving] = useState(false);
+  const [tableEditForm, setTableEditForm] = useState({
+    name: '',
+    description: '',
+    brand: '',
+    content: '',
+    color: '',
+    category: '',
+    sku: '',
+    barcode: '',
+    price: '',
+    mrp: '',
+    uom: 'pcs',
+    stock: '',
+    expiry_date: '',
+    defaultDiscount: '',
+    discountType: 'fixed',
+    is_active: true,
     image: ''
   });
   const [importFile, setImportFile] = useState(null);
@@ -380,6 +412,217 @@ function Admin({ user }) {
   const productCategories = Array.from(
     new Set(products.map(p => String(p.category || '').trim()).filter(Boolean))
   ).sort((a, b) => a.localeCompare(b));
+
+  const visibleProducts = useMemo(() => {
+    const query = String(productTableSearch || '').trim().toLowerCase();
+    let list = Array.isArray(products) ? [...products] : [];
+
+    if (productTableCategoryFilter) {
+      list = list.filter((product) => String(product.category || '').trim() === productTableCategoryFilter);
+    }
+
+    if (productTableStatusFilter !== 'all') {
+      list = list.filter((product) => {
+        const isActive = Number(product.is_active ?? 1) === 1;
+        return productTableStatusFilter === 'active' ? isActive : !isActive;
+      });
+    }
+
+    if (productTableLowStockOnly) {
+      list = list.filter((product) => asNumber(product.stock, 0) <= 10);
+    }
+
+    if (query) {
+      list = list.filter((product) => {
+        const searchable = [
+          product.id,
+          product.name,
+          product.description,
+          product.brand,
+          product.content,
+          product.color,
+          product.category,
+          product.sku,
+          product.barcode,
+          product.price,
+          product.mrp,
+          product.uom,
+          product.stock,
+          product.expiry_date,
+          product.defaultDiscount,
+          product.discountType,
+          product.is_active,
+        ].map((value) => String(value ?? '').toLowerCase()).join(' ');
+        return searchable.includes(query);
+      });
+    }
+
+    const readSortValue = (product) => {
+      switch (productTableSortField) {
+        case 'id':
+          return asNumber(product.id, 0);
+        case 'name':
+          return String(product.name || '').toLowerCase();
+        case 'category':
+          return String(product.category || '').toLowerCase();
+        case 'brand':
+          return String(product.brand || '').toLowerCase();
+        case 'sku':
+          return String(product.sku || '').toLowerCase();
+        case 'barcode':
+          return String(product.barcode || '').toLowerCase();
+        case 'price':
+          return asNumber(product.price, 0);
+        case 'mrp':
+          return asNumber(product.mrp, 0);
+        case 'stock':
+          return asNumber(product.stock, 0);
+        case 'defaultDiscount':
+          return asNumber(product.defaultDiscount, 0);
+        case 'is_active':
+          return Number(product.is_active ?? 1);
+        case 'created_at':
+          return new Date(product.created_at || 0).getTime();
+        case 'src':
+          return String(product.image || '').toLowerCase();
+        default:
+          return String(product[productTableSortField] ?? '').toLowerCase();
+      }
+    };
+
+    list.sort((a, b) => {
+      const av = readSortValue(a);
+      const bv = readSortValue(b);
+      if (av < bv) return productTableSortDir === 'asc' ? -1 : 1;
+      if (av > bv) return productTableSortDir === 'asc' ? 1 : -1;
+      return 0;
+    });
+
+    return list;
+  }, [
+    products,
+    productTableSearch,
+    productTableCategoryFilter,
+    productTableStatusFilter,
+    productTableLowStockOnly,
+    productTableSortField,
+    productTableSortDir
+  ]);
+
+  const toggleProductTableSort = (field) => {
+    if (productTableSortField === field) {
+      setProductTableSortDir((prev) => (prev === 'asc' ? 'desc' : 'asc'));
+      return;
+    }
+    setProductTableSortField(field);
+    setProductTableSortDir(field === 'name' || field === 'brand' || field === 'category' || field === 'sku' ? 'asc' : 'desc');
+  };
+
+  const getSortIndicator = (field) => {
+    if (productTableSortField !== field) return '';
+    return productTableSortDir === 'asc' ? ' ▲' : ' ▼';
+  };
+
+  const openTableEdit = (product) => {
+    setTableEditId(product.id);
+    setTableEditForm({
+      name: product.name || '',
+      description: product.description || '',
+      brand: product.brand || '',
+      content: product.content || '',
+      color: product.color || '',
+      category: product.category || '',
+      sku: product.sku || '',
+      barcode: product.barcode || '',
+      price: String(product.price ?? ''),
+      mrp: String(product.mrp ?? ''),
+      uom: product.uom || 'pcs',
+      stock: String(product.stock ?? 0),
+      expiry_date: product.expiry_date ? String(product.expiry_date).slice(0, 10) : '',
+      defaultDiscount: String(product.defaultDiscount ?? 0),
+      discountType: product.discountType || 'fixed',
+      is_active: Number(product.is_active ?? 1) === 1,
+      image: product.image || ''
+    });
+    setQuickEditId(null);
+  };
+
+  const cancelTableEdit = () => {
+    setTableEditId(null);
+    setTableEditSaving(false);
+  };
+
+  const handleTableEditChange = (field, value) => {
+    setTableEditForm((prev) => ({ ...prev, [field]: value }));
+  };
+
+  const handleTableEditSave = async (product) => {
+    const normalizeKey = (value) => String(value || '').trim().toLowerCase();
+    const identityOf = (row) => `${normalizeKey(row?.name)}|${normalizeKey(row?.brand)}|${normalizeKey(row?.content)}`;
+
+    const payload = {
+      name: String(tableEditForm.name || '').trim(),
+      description: String(tableEditForm.description || '').trim(),
+      brand: String(tableEditForm.brand || '').trim(),
+      content: String(tableEditForm.content || '').trim(),
+      color: String(tableEditForm.color || '').trim(),
+      category: String(tableEditForm.category || '').trim(),
+      sku: String(tableEditForm.sku || '').trim(),
+      barcode: String(tableEditForm.barcode || '').trim(),
+      price: asNumber(tableEditForm.price, 0),
+      mrp: asNumber(tableEditForm.mrp, 0),
+      uom: String(tableEditForm.uom || 'pcs').trim() || 'pcs',
+      stock: asNumber(tableEditForm.stock, 0),
+      expiry_date: tableEditForm.expiry_date || null,
+      defaultDiscount: asNumber(tableEditForm.defaultDiscount, 0),
+      discountType: tableEditForm.discountType === 'percentage' ? 'percentage' : 'fixed',
+      image: String(tableEditForm.image || '').trim(),
+      is_active: tableEditForm.is_active ? 1 : 0,
+      base_unit: product.base_unit || 'pcs',
+      uom_type: product.uom_type || 'selling',
+      conversion_factor: asNumber(product.conversion_factor, 1) || 1
+    };
+
+    if (!payload.name) {
+      showNotification('Product name is required', 'error');
+      return;
+    }
+    if (!payload.category) {
+      showNotification('Category is required', 'error');
+      return;
+    }
+    if (!(payload.price > 0)) {
+      showNotification('Price must be greater than 0', 'error');
+      return;
+    }
+    if (payload.stock < 0) {
+      showNotification('Stock must be 0 or more', 'error');
+      return;
+    }
+
+    const duplicate = (products || []).find((row) => {
+      if (Number(row?.id || 0) === Number(product.id || 0)) return false;
+      const sameSku = normalizeKey(payload.sku) && normalizeKey(row?.sku) && normalizeKey(payload.sku) === normalizeKey(row?.sku);
+      const sameBarcode = normalizeKey(payload.barcode) && normalizeKey(row?.barcode) && normalizeKey(payload.barcode) === normalizeKey(row?.barcode);
+      const sameIdentity = normalizeKey(payload.name) && identityOf(payload) === identityOf(row);
+      return sameSku || sameBarcode || sameIdentity;
+    });
+    if (duplicate) {
+      showNotification(`Duplicate conflict with "${duplicate.name}"`, 'error');
+      return;
+    }
+
+    try {
+      setTableEditSaving(true);
+      await productsApi.update(product.id, payload);
+      await handleProductSave({ mode: 'edit', createdCount: 0 });
+      cancelTableEdit();
+    } catch (error) {
+      showNotification(error.message || 'Failed to update product', 'error');
+    } finally {
+      setTableEditSaving(false);
+    }
+  };
 
   const resetQuickAdd = () => {
     setQuickAddForm({
@@ -920,17 +1163,41 @@ function Admin({ user }) {
                 <button className="admin-btn primary" onClick={handleAddProduct}>
                   <Plus size={20} /> Add Product
                 </button>
+                <div className="products-io-icons">
+                  <button
+                    type="button"
+                    className="products-icon-btn"
+                    onClick={() => setShowExportDialog(true)}
+                    disabled={importBusy}
+                    title="Export products"
+                    aria-label="Export products"
+                  >
+                    <Download size={16} />
+                  </button>
+                  <button
+                    type="button"
+                    className="products-icon-btn"
+                    onClick={handleStartImport}
+                    disabled={importBusy}
+                    title="Import products"
+                    aria-label="Import products"
+                  >
+                    <Upload size={16} />
+                  </button>
+                  <button
+                    type="button"
+                    className="products-icon-btn"
+                    onClick={handleConfirmImport}
+                    disabled={importBusy || !importPreviewData?.batch_id}
+                    title="Confirm import"
+                    aria-label="Confirm import"
+                  >
+                    <CheckCircle2 size={16} />
+                  </button>
+                </div>
               </div>
             </div>
             <div className="products-import-export-card">
-              <div className="products-import-export-actions">
-                <button className="admin-btn" onClick={() => setShowExportDialog(true)} disabled={importBusy}>
-                  <Download size={16} /> Export Products
-                </button>
-                <button className="admin-btn" onClick={handleStartImport} disabled={importBusy}>
-                  <Upload size={16} /> Import Products
-                </button>
-              </div>
               <div className="products-import-controls">
                 <input
                   ref={importFileInputRef}
@@ -941,13 +1208,6 @@ function Admin({ user }) {
                   style={{ display: 'none' }}
                 />
                 <span>{importFile ? `Selected: ${importFile.name}` : 'No file selected'}</span>
-                <button
-                  className="admin-btn primary"
-                  onClick={handleConfirmImport}
-                  disabled={importBusy || !importPreviewData?.batch_id}
-                >
-                  <CheckCircle2 size={16} /> Confirm Import
-                </button>
               </div>
               {importPreviewData?.summary && (
                 <div className="products-import-preview-summary">
@@ -988,55 +1248,147 @@ function Admin({ user }) {
               )}
             </div>
             {productViewMode === 'table' ? (
-              <div className="products-table">
-                <table>
-                  <thead>
-                    <tr>
-                      <th>ID</th>
-                      <th>Image</th>
-                      <th>Name</th>
-                      <th>Category</th>
-                      <th>Price</th>
-                      <th>Stock</th>
-                      <th>Actions</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {products.map(product => (
-                      <tr key={product.id}>
-                        <td>{product.id}</td>
-                        <td>
-                          <img 
-                            src={getProductImageSrc(product)} 
-                            alt={product.name}
-                            className="product-thumbnail"
-                            onError={(e) => {
-                              e.currentTarget.onerror = null;
-                              e.currentTarget.src = getProductFallbackImage(product);
-                            }}
-                          />
-                        </td>
-                        <td>{product.name}</td>
-                        <td>{product.category}</td>
-                        <td>{formatCurrencyColored(product.price)}</td>
-                        <td>
-                          <span className={product.stock < 10 ? 'low-stock' : ''}>
-                            {product.stock}
-                          </span>
-                        </td>
-                        <td>
-                          <button className="action-btn edit" onClick={() => handleEditProduct(product)}>
-                            <Edit size={16} />
-                          </button>
-                          <button className="action-btn delete" onClick={() => handleDeleteProduct(product.id)}>
-                            <Trash2 size={16} />
-                          </button>
-                        </td>
-                      </tr>
+              <>
+                <div className="products-table-toolbar">
+                  <input
+                    type="text"
+                    className="products-table-search"
+                    placeholder="Search by name, SKU, barcode, category, brand..."
+                    value={productTableSearch}
+                    onChange={(e) => setProductTableSearch(e.target.value)}
+                  />
+                  <select
+                    className="products-table-filter"
+                    value={productTableCategoryFilter}
+                    onChange={(e) => setProductTableCategoryFilter(e.target.value)}
+                  >
+                    <option value="">All Categories</option>
+                    {productCategories.map((category) => (
+                      <option key={`filter-${category}`} value={category}>{category}</option>
                     ))}
-                  </tbody>
-                </table>
-              </div>
+                  </select>
+                  <select
+                    className="products-table-filter"
+                    value={productTableStatusFilter}
+                    onChange={(e) => setProductTableStatusFilter(e.target.value)}
+                  >
+                    <option value="all">All Status</option>
+                    <option value="active">Active</option>
+                    <option value="inactive">Inactive</option>
+                  </select>
+                  <label className="products-table-filter products-table-checkbox">
+                    <input
+                      type="checkbox"
+                      checked={productTableLowStockOnly}
+                      onChange={(e) => setProductTableLowStockOnly(e.target.checked)}
+                    />
+                    Low Stock
+                  </label>
+                  <span className="products-table-count">Rows: {visibleProducts.length}</span>
+                </div>
+                <div className="products-table">
+                  <table>
+                    <thead>
+                      <tr>
+                        <th className="sortable" onClick={() => toggleProductTableSort('name')}>Name{getSortIndicator('name')}</th>
+                        <th className="sortable" onClick={() => toggleProductTableSort('brand')}>Brand{getSortIndicator('brand')}</th>
+                        <th className="sortable" onClick={() => toggleProductTableSort('category')}>Category{getSortIndicator('category')}</th>
+                        <th className="sortable" onClick={() => toggleProductTableSort('price')}>Price{getSortIndicator('price')}</th>
+                        <th className="sortable" onClick={() => toggleProductTableSort('mrp')}>MRP{getSortIndicator('mrp')}</th>
+                        <th className="sortable" onClick={() => toggleProductTableSort('stock')}>Stock{getSortIndicator('stock')}</th>
+                        <th className="sortable" onClick={() => toggleProductTableSort('sku')}>SKU{getSortIndicator('sku')}</th>
+                        <th className="sortable" onClick={() => toggleProductTableSort('barcode')}>Barcode{getSortIndicator('barcode')}</th>
+                        <th className="sortable" onClick={() => toggleProductTableSort('is_active')}>Status{getSortIndicator('is_active')}</th>
+                        <th>Description</th>
+                        <th>Content</th>
+                        <th>Color</th>
+                        <th>UOM</th>
+                        <th>Expiry</th>
+                        <th className="sortable" onClick={() => toggleProductTableSort('defaultDiscount')}>Discount{getSortIndicator('defaultDiscount')}</th>
+                        <th>Disc Type</th>
+                        <th className="sortable" onClick={() => toggleProductTableSort('id')}>ID{getSortIndicator('id')}</th>
+                        <th className="sortable" onClick={() => toggleProductTableSort('created_at')}>Created{getSortIndicator('created_at')}</th>
+                        <th className="sortable" onClick={() => toggleProductTableSort('src')}>Src{getSortIndicator('src')}</th>
+                        <th>Actions</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {visibleProducts.map(product => {
+                        const isEditingRow = tableEditId === product.id;
+                        return (
+                          <tr key={product.id}>
+                            <td>{isEditingRow ? <input className="table-edit-input" value={tableEditForm.name} onChange={(e) => handleTableEditChange('name', e.target.value)} /> : product.name}</td>
+                            <td>{isEditingRow ? <input className="table-edit-input" value={tableEditForm.brand} onChange={(e) => handleTableEditChange('brand', e.target.value)} /> : (product.brand || '-')}</td>
+                            <td>{isEditingRow ? <input className="table-edit-input" list="admin-product-category-list" value={tableEditForm.category} onChange={(e) => handleTableEditChange('category', e.target.value)} /> : product.category}</td>
+                            <td>{isEditingRow ? <input className="table-edit-input" type="number" min="0" step="0.01" value={tableEditForm.price} onChange={(e) => handleTableEditChange('price', e.target.value)} /> : formatCurrencyColored(product.price)}</td>
+                            <td>{isEditingRow ? <input className="table-edit-input" type="number" min="0" step="0.01" value={tableEditForm.mrp} onChange={(e) => handleTableEditChange('mrp', e.target.value)} /> : formatCurrencyColored(product.mrp)}</td>
+                            <td>{isEditingRow ? <input className="table-edit-input" type="number" min="0" step="1" value={tableEditForm.stock} onChange={(e) => handleTableEditChange('stock', e.target.value)} /> : <span className={product.stock < 10 ? 'low-stock' : ''}>{product.stock}</span>}</td>
+                            <td>{isEditingRow ? <input className="table-edit-input" value={tableEditForm.sku} onChange={(e) => handleTableEditChange('sku', e.target.value)} /> : (product.sku || '-')}</td>
+                            <td>{isEditingRow ? <input className="table-edit-input" value={tableEditForm.barcode} onChange={(e) => handleTableEditChange('barcode', e.target.value)} /> : (product.barcode || '-')}</td>
+                            <td>
+                              {isEditingRow ? (
+                                <select className="table-edit-input" value={tableEditForm.is_active ? '1' : '0'} onChange={(e) => handleTableEditChange('is_active', e.target.value === '1')}>
+                                  <option value="1">Active</option>
+                                  <option value="0">Inactive</option>
+                                </select>
+                              ) : (Number(product.is_active ?? 1) === 1 ? 'Active' : 'Inactive')}
+                            </td>
+                            <td>
+                              {isEditingRow ? (
+                                <input className="table-edit-input" value={tableEditForm.description} onChange={(e) => handleTableEditChange('description', e.target.value)} />
+                              ) : (
+                                <span className="description-snippet" title={product.description || '-'}>
+                                  {product.description || '-'}
+                                </span>
+                              )}
+                            </td>
+                            <td>{isEditingRow ? <input className="table-edit-input" value={tableEditForm.content} onChange={(e) => handleTableEditChange('content', e.target.value)} /> : (product.content || '-')}</td>
+                            <td>{isEditingRow ? <input className="table-edit-input" value={tableEditForm.color} onChange={(e) => handleTableEditChange('color', e.target.value)} /> : (product.color || '-')}</td>
+                            <td>{isEditingRow ? <input className="table-edit-input" value={tableEditForm.uom} onChange={(e) => handleTableEditChange('uom', e.target.value)} /> : (product.uom || '-')}</td>
+                            <td>{isEditingRow ? <input className="table-edit-input" type="date" value={tableEditForm.expiry_date} onChange={(e) => handleTableEditChange('expiry_date', e.target.value)} /> : (product.expiry_date ? new Date(product.expiry_date).toLocaleDateString() : '-')}</td>
+                            <td>{isEditingRow ? <input className="table-edit-input" type="number" min="0" step="0.01" value={tableEditForm.defaultDiscount} onChange={(e) => handleTableEditChange('defaultDiscount', e.target.value)} /> : asNumber(product.defaultDiscount, 0)}</td>
+                            <td>
+                              {isEditingRow ? (
+                                <select className="table-edit-input" value={tableEditForm.discountType} onChange={(e) => handleTableEditChange('discountType', e.target.value)}>
+                                  <option value="fixed">fixed</option>
+                                  <option value="percentage">percentage</option>
+                                </select>
+                              ) : (product.discountType || 'fixed')}
+                            </td>
+                            <td>{product.id}</td>
+                            <td>{product.created_at ? new Date(product.created_at).toLocaleDateString() : '-'}</td>
+                            <td>{isEditingRow ? <input className="table-edit-input" value={tableEditForm.image} onChange={(e) => handleTableEditChange('image', e.target.value)} /> : <span className="src-cell" title={product.image || '-'}>{product.image || '-'}</span>}</td>
+                            <td>
+                              {isEditingRow ? (
+                                <div className="table-edit-actions">
+                                  <button className="action-btn edit" onClick={() => handleTableEditSave(product)} disabled={tableEditSaving}>
+                                    {tableEditSaving ? '...' : 'Save'}
+                                  </button>
+                                  <button className="action-btn delete" onClick={cancelTableEdit} disabled={tableEditSaving}>
+                                    Cancel
+                                  </button>
+                                </div>
+                              ) : (
+                                <>
+                                  <button className="action-btn edit" onClick={() => openTableEdit(product)} title="Inline edit">
+                                    <Edit size={16} />
+                                  </button>
+                                  <button className="action-btn edit" onClick={() => handleEditProduct(product)} title="Advanced edit">
+                                    <FolderOpen size={16} />
+                                  </button>
+                                  <button className="action-btn delete" onClick={() => handleDeleteProduct(product.id)}>
+                                    <Trash2 size={16} />
+                                  </button>
+                                </>
+                              )}
+                            </td>
+                          </tr>
+                        );
+                      })}
+                    </tbody>
+                  </table>
+                </div>
+              </>
             ) : (
               <div className="products-grid-admin">
                 <div className="product-admin-card add-product-card">
@@ -1093,7 +1445,7 @@ function Admin({ user }) {
                     </div>
                   )}
                 </div>
-                {products.map(product => {
+                {visibleProducts.map(product => {
                   const isEditingQuick = quickEditId === product.id;
                   const imageSourceProduct = isEditingQuick
                     ? {
