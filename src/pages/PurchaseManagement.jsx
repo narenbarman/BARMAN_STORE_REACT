@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useMemo } from 'react';
 import { Plus, Edit, Trash2, X, Search, Package, Truck, RotateCcw, Eye, Check, Clock, ArrowUpDown } from 'lucide-react';
 import { purchaseOrdersApi, distributorsApi, productsApi, purchaseReturnsApi, stockLedgerApi, distributorLedgerApi } from '../services/api';
 import './PurchaseManagement.css';
@@ -363,6 +363,55 @@ function PurchaseManagement({ user }) {
     ) || null;
   };
 
+  const getDistributorProductOptions = (distributorId) => {
+    const selectedDistributorId = String(distributorId || '').trim();
+    if (!selectedDistributorId) {
+      return {
+        prioritized: [],
+        all: products
+      };
+    }
+
+    const productById = new Map(
+      products.map((product) => [String(product.id), product])
+    );
+    const scoreByProductId = new Map();
+
+    (purchaseOrders || []).forEach((order) => {
+      if (String(order?.distributor_id || '') !== selectedDistributorId) return;
+
+      const orderTime = new Date(order?.created_at || order?.order_date || order?.expected_delivery || 0).getTime();
+      const items = Array.isArray(order?.items) ? order.items : [];
+
+      items.forEach((item) => {
+        const productId = String(item?.product_id || '').trim();
+        if (!productId) return;
+
+        const existing = scoreByProductId.get(productId) || { count: 0, latest: 0 };
+        scoreByProductId.set(productId, {
+          count: existing.count + 1,
+          latest: Math.max(existing.latest, Number.isFinite(orderTime) ? orderTime : 0)
+        });
+      });
+    });
+
+    const prioritizedIds = [...scoreByProductId.entries()]
+      .sort((a, b) => {
+        if (b[1].latest !== a[1].latest) return b[1].latest - a[1].latest;
+        return b[1].count - a[1].count;
+      })
+      .map(([productId]) => productId);
+
+    const prioritized = prioritizedIds
+      .map((productId) => productById.get(productId))
+      .filter(Boolean);
+
+    const prioritizedIdSet = new Set(prioritized.map((product) => String(product.id)));
+    const all = products.filter((product) => !prioritizedIdSet.has(String(product.id)));
+
+    return { prioritized, all };
+  };
+
   const handleDistributorInputChange = (value) => {
     const match = resolveDistributorByInput(value);
     setOrderFormData(prev => ({
@@ -465,6 +514,7 @@ function PurchaseManagement({ user }) {
         items[index].uom = product.uom || 'pcs';
         items[index].last_purchase_hint = '';
       } else {
+        items[index].product_query = '';
         items[index].product_name = '';
         items[index].last_purchase_hint = '';
       }
@@ -689,6 +739,7 @@ function PurchaseManagement({ user }) {
         items[index].product_query = product.name;
         items[index].uom = product.uom || 'pcs';
       } else {
+        items[index].product_query = '';
         items[index].product_name = '';
       }
     }
@@ -1065,6 +1116,14 @@ function PurchaseManagement({ user }) {
 
   const orderTotals = calculateOrderTotals(orderFormData.items);
   const ledgerBalanceSummary = getLedgerBalanceSummary(ledgerRecords, filters.distributor_id);
+  const orderProductOptions = useMemo(
+    () => getDistributorProductOptions(orderFormData.distributor_id),
+    [orderFormData.distributor_id, purchaseOrders, products]
+  );
+  const quickOrderProductOptions = useMemo(
+    () => getDistributorProductOptions(quickOrderFormData.distributor_id),
+    [quickOrderFormData.distributor_id, purchaseOrders, products]
+  );
 
   if (loading) {
     return (
@@ -1396,18 +1455,28 @@ function PurchaseManagement({ user }) {
                       ) : quickOrderFormData.items.map((item, index) => (
                         <tr key={index}>
                           <td>
-                            <input
-                              type="text"
-                              list={`po-quick-product-list-${index}`}
-                              value={item.product_query || item.product_name || ''}
-                              onChange={e => handleQuickOrderProductInputChange(index, e.target.value)}
-                              placeholder="Type product name or SKU"
-                            />
-                            <datalist id={`po-quick-product-list-${index}`}>
-                              {products.map(p => (
-                                <option key={p.id} value={p.name}>{p.sku}</option>
-                              ))}
-                            </datalist>
+                            <select
+                              value={item.product_id || ''}
+                              onChange={e => handleQuickOrderItemChange(index, 'product_id', e.target.value)}
+                            >
+                              <option value="">Select product</option>
+                              {quickOrderProductOptions.prioritized.length > 0 && (
+                                <optgroup label="Previously ordered from this distributor">
+                                  {quickOrderProductOptions.prioritized.map((p) => (
+                                    <option key={`quick-priority-${p.id}`} value={String(p.id)}>
+                                      {p.name}{p.sku ? ` (${p.sku})` : ''}
+                                    </option>
+                                  ))}
+                                </optgroup>
+                              )}
+                              <optgroup label="All products">
+                                {quickOrderProductOptions.all.map((p) => (
+                                  <option key={`quick-all-${p.id}`} value={String(p.id)}>
+                                    {p.name}{p.sku ? ` (${p.sku})` : ''}
+                                  </option>
+                                ))}
+                              </optgroup>
+                            </select>
                           </td>
                           <td>
                             <input
@@ -1500,6 +1569,9 @@ function PurchaseManagement({ user }) {
                     <Plus size={16} /> Add Item
                   </button>
                 </div>
+                <small className="field-help">
+                  Product dropdown is grouped as previously ordered items for selected distributor, then all products.
+                </small>
                 <div className="items-list">
                   {orderFormData.items.map((item, index) => {
                     const line = calculateOrderItem(item);
@@ -1507,23 +1579,28 @@ function PurchaseManagement({ user }) {
                       <div key={index} className="item-row order-item-row">
                         <div className="item-field product">
                           <label>Product</label>
-                          <input
-                            type="text"
-                            list={`po-product-list-${index}`}
-                            value={item.product_query || item.product_name || ''}
-                            onChange={e => handleOrderProductInputChange(index, e.target.value)}
-                            placeholder="Type product name or SKU"
-                          />
-                          <datalist id={`po-product-list-${index}`}>
-                            {products.map(p => (
-                              <option key={p.id} value={p.name}>{p.sku}</option>
-                            ))}
-                          </datalist>
-                          {!!(String(item.product_query || '').trim() && !item.product_id) && (
-                            <small style={{ display: 'block', marginTop: 4, color: '#c62828' }}>
-                              Select a valid product from suggestions
-                            </small>
-                          )}
+                          <select
+                            value={item.product_id || ''}
+                            onChange={e => handleOrderItemChange(index, 'product_id', e.target.value)}
+                          >
+                            <option value="">Select product</option>
+                            {orderProductOptions.prioritized.length > 0 && (
+                              <optgroup label="Previously ordered from this distributor">
+                                {orderProductOptions.prioritized.map((p) => (
+                                  <option key={`order-priority-${p.id}`} value={String(p.id)}>
+                                    {p.name}{p.sku ? ` (${p.sku})` : ''}
+                                  </option>
+                                ))}
+                              </optgroup>
+                            )}
+                            <optgroup label="All products">
+                              {orderProductOptions.all.map((p) => (
+                                <option key={`order-all-${p.id}`} value={String(p.id)}>
+                                  {p.name}{p.sku ? ` (${p.sku})` : ''}
+                                </option>
+                              ))}
+                            </optgroup>
+                          </select>
                           {item.last_purchase_hint && (
                             <small style={{ display: 'block', marginTop: 4, color: '#666' }}>{item.last_purchase_hint}</small>
                           )}

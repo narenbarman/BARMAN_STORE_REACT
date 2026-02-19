@@ -1,7 +1,8 @@
 import { useState, useEffect } from 'react';
-import { X, Search, Image, Package, QrCode, Plus, Trash2 } from 'lucide-react';
+import { X, Package, QrCode, Plus, Trash2 } from 'lucide-react';
 import { productsApi, categoriesApi } from '../services/api';
-import ImageSearchModal from './ImageSearchModal';
+import { getProductImageSrc } from '../utils/productImage';
+import ImageUrlPicker from '../components/ImageUrlPicker';
 import './ProductForm.css';
 
 function ProductForm({ product, onClose, onSave }) {
@@ -32,7 +33,6 @@ function ProductForm({ product, onClose, onSave }) {
   const [error, setError] = useState('');
   const [errors, setErrors] = useState({});
   const [batchProducts, setBatchProducts] = useState([]);
-  const [showImageSearch, setShowImageSearch] = useState(false);
   const [isDescriptionAuto, setIsDescriptionAuto] = useState(true);
 
   // UOM options for groceries
@@ -640,42 +640,27 @@ function ProductForm({ product, onClose, onSave }) {
             
             <div className="form-group">
               <label htmlFor="image">Image URL</label>
-              <div className="image-url-input">
-                <input
-                  type="url"
-                  id="image"
-                  name="image"
-                  value={formData.image}
-                  onChange={handleChange}
-                  placeholder="https://example.com/image.jpg"
-                  className="input-field"
-                />
-                <button
-                  type="button"
-                  className="search-image-btn"
-                  onClick={() => setShowImageSearch(true)}
-                  title="Search for images"
-                >
-                  <Search size={18} /> Search
-                </button>
-              </div>
+              <ImageUrlPicker
+                value={formData.image}
+                disabled={loading}
+                productMeta={{
+                  name: formData.name,
+                  brand: formData.brand,
+                  content: formData.content,
+                  category: formData.category,
+                }}
+                onChange={(nextUrl) => {
+                  setFormData((prev) => ({ ...prev, image: nextUrl }));
+                }}
+              />
             </div>
 
             {formData.image && (
               <div className="image-preview">
-                <img src={formData.image} alt="Product preview" onError={(e) => e.target.style.display = 'none'} />
+                <img src={getProductImageSrc(formData.image)} alt="Product preview" onError={(e) => e.target.style.display = 'none'} />
               </div>
             )}
 
-            {/* Image Search Modal */}
-            {showImageSearch && (
-              <ImageSearchModal
-                onClose={() => setShowImageSearch(false)}
-                onSelectImage={(url) => {
-                  setFormData(prev => ({ ...prev, image: url }));
-                }}
-              />
-            )}
           </div>
 
           <div className="form-actions">

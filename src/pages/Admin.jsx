@@ -1,6 +1,6 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { Link, useNavigate, useSearchParams } from 'react-router-dom';
-import { Package, ShoppingCart, Users, TrendingUp, LogOut, Plus, Edit, Trash2, X, FolderOpen, CreditCard, FileText, Truck, ShoppingBag, History, BarChart2, Gift, KeyRound, Eye, Menu } from 'lucide-react';
+import { Package, ShoppingCart, Users, TrendingUp, LogOut, Plus, Edit, Trash2, X, FolderOpen, CreditCard, FileText, Truck, ShoppingBag, History, BarChart2, Gift, KeyRound, Eye, Menu, Upload, Download, CheckCircle2 } from 'lucide-react';
 import { statsApi, productsApi, ordersApi, usersApi, adminApi } from '../services/api';
 import { getProductImageSrc, getProductFallbackImage } from '../utils/productImage';
 import ProductForm from './ProductForm';
@@ -100,6 +100,12 @@ function Admin({ user }) {
     stock: '',
     image: ''
   });
+  const [importFile, setImportFile] = useState(null);
+  const [showExportDialog, setShowExportDialog] = useState(false);
+  const [exportFormat, setExportFormat] = useState('csv');
+  const [importPreviewData, setImportPreviewData] = useState(null);
+  const [importBusy, setImportBusy] = useState(false);
+  const importFileInputRef = useRef(null);
   const tabGroupMap = {
     dashboard: 'general',
     orders: 'general',
@@ -488,6 +494,126 @@ function Admin({ user }) {
     }
   };
 
+  const readFileAsBase64 = (file) =>
+    new Promise((resolve, reject) => {
+      const reader = new FileReader();
+      reader.onload = () => {
+        const result = String(reader.result || '');
+        const base64 = result.includes(',') ? result.split(',')[1] : result;
+        resolve(base64);
+      };
+      reader.onerror = reject;
+      reader.readAsDataURL(file);
+    });
+
+  const downloadProtectedFile = async (url, fallbackName) => {
+    let token = user?.token || null;
+    if (!token) {
+      try {
+        const raw = localStorage.getItem('user') || '{}';
+        token = JSON.parse(raw)?.token || null;
+      } catch (_) {
+        token = null;
+      }
+    }
+    if (!token) {
+      throw new Error('Please login again. Missing auth token.');
+    }
+    const response = await fetch(url, {
+      headers: { Authorization: `Bearer ${token}` },
+    });
+    if (!response.ok) {
+      const payload = await response.json().catch(() => ({}));
+      throw new Error(payload.error || 'Download failed');
+    }
+    const blob = await response.blob();
+    const href = URL.createObjectURL(blob);
+    const anchor = document.createElement('a');
+    const disposition = String(response.headers.get('Content-Disposition') || '');
+    const match = disposition.match(/filename="?([^"]+)"?/i);
+    anchor.href = href;
+    anchor.download = match?.[1] || fallbackName;
+    document.body.appendChild(anchor);
+    anchor.click();
+    document.body.removeChild(anchor);
+    URL.revokeObjectURL(href);
+  };
+
+  const handleExportProducts = async () => {
+    const format = exportFormat === 'xlsx' ? 'xlsx' : 'csv';
+    try {
+      // include_inactive=true ensures all existing DB products are exported.
+      const url = productsApi.getExportUrl(format, true);
+      await downloadProtectedFile(url, `products-export.${format === 'xlsx' ? 'xlsx' : 'csv'}`);
+      showNotification('Products exported successfully', 'success');
+      setShowExportDialog(false);
+    } catch (error) {
+      showNotification(error.message || 'Failed to export products', 'error');
+    }
+  };
+
+  const handleStartImport = () => {
+    if (importBusy) return;
+    if (importFileInputRef.current) {
+      importFileInputRef.current.value = '';
+      importFileInputRef.current.click();
+    }
+  };
+
+  const handleFileSelected = async (e) => {
+    const file = e.target.files?.[0] || null;
+    if (!file) return;
+    setImportFile(file);
+    await handlePreviewImport(file);
+  };
+
+  const handlePreviewImport = async (selectedFile = null) => {
+    const file = selectedFile || importFile;
+    if (!file) {
+      showNotification('Select a CSV/XLSX file first', 'error');
+      return;
+    }
+    try {
+      setImportBusy(true);
+      const base64 = await readFileAsBase64(file);
+      const data = await productsApi.importPreview({
+        file_name: file.name,
+        file_content_base64: base64,
+        mode: 'upsert',
+        stock_mode: 'replace',
+      });
+      setImportPreviewData(data);
+      showNotification('Import preview generated. Review and confirm.', 'success');
+    } catch (error) {
+      setImportPreviewData(null);
+      showNotification(error.message || 'Failed to preview import', 'error');
+    } finally {
+      setImportBusy(false);
+    }
+  };
+
+  const handleConfirmImport = async () => {
+    if (!importPreviewData?.batch_id || !importPreviewData?.checksum) {
+      showNotification('Generate preview before confirming import', 'error');
+      return;
+    }
+    try {
+      setImportBusy(true);
+      const result = await productsApi.importConfirm({
+        batch_id: importPreviewData.batch_id,
+        checksum: importPreviewData.checksum,
+      });
+      await handleProductSave({ mode: 'create' });
+      setImportPreviewData(null);
+      setImportFile(null);
+      showNotification(`Import applied. Created: ${result.created}, Updated: ${result.updated}`, 'success');
+    } catch (error) {
+      showNotification(error.message || 'Failed to confirm import', 'error');
+    } finally {
+      setImportBusy(false);
+    }
+  };
+
   const handleEditUser = (user) => {
     setEditingUser(user);
   };
@@ -795,6 +921,71 @@ function Admin({ user }) {
                   <Plus size={20} /> Add Product
                 </button>
               </div>
+            </div>
+            <div className="products-import-export-card">
+              <div className="products-import-export-actions">
+                <button className="admin-btn" onClick={() => setShowExportDialog(true)} disabled={importBusy}>
+                  <Download size={16} /> Export Products
+                </button>
+                <button className="admin-btn" onClick={handleStartImport} disabled={importBusy}>
+                  <Upload size={16} /> Import Products
+                </button>
+              </div>
+              <div className="products-import-controls">
+                <input
+                  ref={importFileInputRef}
+                  type="file"
+                  accept=".csv,.xlsx,.xls"
+                  onChange={handleFileSelected}
+                  disabled={importBusy}
+                  style={{ display: 'none' }}
+                />
+                <span>{importFile ? `Selected: ${importFile.name}` : 'No file selected'}</span>
+                <button
+                  className="admin-btn primary"
+                  onClick={handleConfirmImport}
+                  disabled={importBusy || !importPreviewData?.batch_id}
+                >
+                  <CheckCircle2 size={16} /> Confirm Import
+                </button>
+              </div>
+              {importPreviewData?.summary && (
+                <div className="products-import-preview-summary">
+                  <span>Creates: {importPreviewData.summary.creates}</span>
+                  <span>Updates: {importPreviewData.summary.updates}</span>
+                  <span>Errors: {importPreviewData.summary.errors}</span>
+                  <span>Expires: {new Date(importPreviewData.expires_at).toLocaleString()}</span>
+                </div>
+              )}
+              {Array.isArray(importPreviewData?.preview) && importPreviewData.preview.length > 0 && (
+                <div className="products-import-preview-table-wrap">
+                  <table className="products-import-preview-table">
+                    <thead>
+                      <tr>
+                        <th>Row</th>
+                        <th>Action</th>
+                        <th>Status</th>
+                        <th>Details</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {importPreviewData.preview.slice(0, 25).map((row) => (
+                        <tr key={`preview-${row.row}`}>
+                          <td>{row.row}</td>
+                          <td>{row.action}</td>
+                          <td>{row.status}</td>
+                          <td>{row.errors?.length ? row.errors.join('; ') : 'Ready'}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                  {importPreviewData.preview.length > 25 && (
+                    <p className="products-import-preview-note">
+                      Showing first 25 rows of {importPreviewData.preview.length}. Confirm applies full validated batch.
+                    </p>
+                  )}
+                </div>
+              )}
             </div>
             {productViewMode === 'table' ? (
               <div className="products-table">
@@ -1232,8 +1423,8 @@ function Admin({ user }) {
           onSave={handleProductSave}
         />
       )}
-    {showApproveModal && modalOrder && (
-      <div className="modal-backdrop">
+      {showApproveModal && modalOrder && (
+        <div className="modal-backdrop">
         <div className="modal-card">
           <h2>Approve Order {modalOrder.order_number || `#${modalOrder.id}`}</h2>
           {modalLoading ? (
@@ -1272,6 +1463,38 @@ function Admin({ user }) {
         </div>
       </div>
     )}
+      {showExportDialog && (
+        <div className="modal-backdrop">
+          <div className="modal-card export-modal-card">
+            <h2>Export Products</h2>
+            <p>Select format, then confirm export.</p>
+            <div className="export-format-toggle-group">
+              <button
+                className={`admin-btn ${exportFormat === 'csv' ? 'primary' : ''}`}
+                onClick={() => setExportFormat('csv')}
+                disabled={importBusy}
+              >
+                CSV (.csv)
+              </button>
+              <button
+                className={`admin-btn ${exportFormat === 'xlsx' ? 'primary' : ''}`}
+                onClick={() => setExportFormat('xlsx')}
+                disabled={importBusy}
+              >
+                Excel (.xlsx)
+              </button>
+            </div>
+            <div style={{ display: 'flex', gap: 8, marginTop: 12, justifyContent: 'flex-end' }}>
+              <button className="admin-btn" onClick={() => setShowExportDialog(false)} disabled={importBusy}>
+                Cancel
+              </button>
+              <button className="admin-btn primary" onClick={handleExportProducts} disabled={importBusy}>
+                Confirm Export
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
       {/* Category Management Modal */}
       {showCategoryManagement && (
         <CategoryManagement

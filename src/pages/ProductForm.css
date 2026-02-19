@@ -347,38 +347,6 @@
   cursor: not-allowed;
 }
 
-/* Image Search Button */
-.image-url-input {
-  display: flex;
-  gap: 10px;
-}
-
-.image-url-input input {
-  flex: 1;
-}
-
-.search-image-btn {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  padding: 0.875rem 1rem;
-  background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
-  color: white;
-  border: none;
-  border-radius: 8px;
-  font-family: var(--font-mono);
-  font-size: 0.85rem;
-  font-weight: 600;
-  cursor: pointer;
-  transition: all 0.3s ease;
-  white-space: nowrap;
-}
-
-.search-image-btn:hover {
-  transform: translateY(-2px);
-  box-shadow: 0 4px 12px rgba(102, 126, 234, 0.4);
-}
-
 /* Error Message */
 .error-message {
   background: #fee2e2;
@@ -427,15 +395,6 @@
   .submit-btn {
     width: 100%;
     text-align: center;
-  }
-
-  .image-url-input {
-    flex-direction: column;
-  }
-
-  .search-image-btn {
-    width: 100%;
-    justify-content: center;
   }
 
   .error-message {

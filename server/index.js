@@ -5,6 +5,7 @@ const path = require('path');
 const fs = require('fs');
 const crypto = require('crypto');
 const bcrypt = require('bcrypt');
+const XLSX = require('xlsx');
 
 const app = express();
 const PORT = process.env.PORT || 5000;
@@ -171,6 +172,386 @@ const dbRun = (sql, params = []) => db.prepare(sql).run(params);
 const dbGet = (sql, params = []) => db.prepare(sql).get(params);
 const dbAll = (sql, params = []) => db.prepare(sql).all(params);
 
+const PRODUCT_IMPORT_BATCH_TTL_MS = Number(process.env.PRODUCT_IMPORT_BATCH_TTL_MS || 30 * 60 * 1000);
+const PRODUCT_IMPORT_HEADERS = [
+  'id',
+  'sku',
+  'barcode',
+  'name',
+  'category',
+  'brand',
+  'content',
+  'color',
+  'uom',
+  'price',
+  'mrp',
+  'stock',
+  'expiry_date',
+  'image',
+  'description',
+  'defaultDiscount',
+  'discountType',
+  'is_active',
+];
+const PRODUCT_IMPORT_SAMPLE = {
+  id: '',
+  sku: 'NESCBRAN250G0129',
+  barcode: '',
+  name: 'Sample Product',
+  category: 'Groceries',
+  brand: 'BrandX',
+  content: '250g',
+  color: '',
+  uom: 'pcs',
+  price: 99,
+  mrp: 120,
+  stock: 25,
+  expiry_date: '',
+  image: '',
+  description: 'Sample product description',
+  defaultDiscount: 0,
+  discountType: 'fixed',
+  is_active: 1,
+};
+const productImportBatches = new Map();
+
+const toNumberOrNull = (value) => {
+  if (value === null || value === undefined || value === '') return null;
+  const n = Number(value);
+  return Number.isFinite(n) ? n : null;
+};
+
+const toPositiveIntOrNull = (value) => {
+  const n = toNumberOrNull(value);
+  if (n === null) return null;
+  return Math.trunc(n);
+};
+
+const normalizeDiscountType = (value) => {
+  const raw = String(value || 'fixed').trim().toLowerCase();
+  return raw === 'percentage' ? 'percentage' : 'fixed';
+};
+
+const normalizeHttpImageUrl = (value) => {
+  const raw = String(value || '').trim();
+  if (!raw) return null;
+  try {
+    const url = new URL(raw);
+    if (url.protocol === 'http:' || url.protocol === 'https:') return url.href;
+    return null;
+  } catch (_) {
+    return null;
+  }
+};
+
+const normalizeBooleanish = (value, fallback = 1) => {
+  if (value === null || value === undefined || value === '') return fallback;
+  const raw = String(value).trim().toLowerCase();
+  if (raw === '1' || raw === 'true' || raw === 'yes' || raw === 'active') return 1;
+  if (raw === '0' || raw === 'false' || raw === 'no' || raw === 'inactive') return 0;
+  const n = Number(raw);
+  if (!Number.isNaN(n)) return n > 0 ? 1 : 0;
+  return fallback;
+};
+
+const normalizeProductRecord = (row) => {
+  if (!row) return null;
+  const out = { ...row };
+  out.defaultDiscount = Number(out.default_discount ?? 0);
+  out.discountType = String(out.discount_type || 'fixed');
+  out.is_active = Number(out.is_active ?? 1);
+  return out;
+};
+
+const normalizeProductInput = (input = {}, current = null) => {
+  const body = input || {};
+  const existing = current || {};
+  const name = body.name ?? existing.name ?? '';
+  const category = body.category ?? existing.category ?? 'Groceries';
+  const description = body.description ?? existing.description ?? null;
+  const brand = body.brand ?? existing.brand ?? null;
+  const content = body.content ?? existing.content ?? null;
+  const color = body.color ?? existing.color ?? null;
+  const priceRaw = body.price ?? existing.price ?? 0;
+  const mrpRaw = body.mrp ?? existing.mrp ?? priceRaw;
+  const uom = body.uom ?? existing.uom ?? 'pcs';
+  const skuCandidate = body.sku ?? existing.sku ?? '';
+  const image = body.image ?? existing.image ?? null;
+  const stockRaw = body.stock ?? existing.stock ?? 0;
+  const expiryDate = body.expiry_date ?? existing.expiry_date ?? null;
+  const defaultDiscountRaw = body.defaultDiscount ?? body.default_discount ?? existing.default_discount ?? existing.defaultDiscount ?? 0;
+  const discountTypeRaw = body.discountType ?? body.discount_type ?? existing.discount_type ?? existing.discountType ?? 'fixed';
+  const isActiveRaw = body.is_active ?? existing.is_active ?? 1;
+
+  const price = Number(priceRaw);
+  const mrp = Number(mrpRaw);
+  const stock = Number(stockRaw);
+  const defaultDiscount = Number(defaultDiscountRaw || 0);
+  const discountType = normalizeDiscountType(discountTypeRaw);
+  const isActive = normalizeBooleanish(isActiveRaw, 1);
+  const sku = String(skuCandidate || '').trim() || generateSku(name, brand, content, mrp || price);
+
+  return {
+    name: String(name || '').trim(),
+    description: description === null || description === undefined ? null : String(description).trim() || null,
+    brand: brand === null || brand === undefined ? null : String(brand).trim() || null,
+    content: content === null || content === undefined ? null : String(content).trim() || null,
+    color: color === null || color === undefined ? null : String(color).trim() || null,
+    price,
+    mrp: Number.isFinite(mrp) ? mrp : price,
+    uom: String(uom || 'pcs').trim() || 'pcs',
+    sku,
+    image: normalizeHttpImageUrl(image),
+    stock,
+    category: String(category || '').trim() || 'Groceries',
+    expiry_date: expiryDate ? String(expiryDate).slice(0, 10) : null,
+    default_discount: defaultDiscount,
+    discount_type: discountType,
+    is_active: isActive,
+  };
+};
+
+const validateProductPayload = (payload, { partial = false } = {}) => {
+  const errors = [];
+  if (!partial || payload.name !== undefined) {
+    if (!String(payload.name || '').trim()) errors.push('name is required');
+  }
+  if (!partial || payload.category !== undefined) {
+    if (!String(payload.category || '').trim()) errors.push('category is required');
+  }
+  if (!partial || payload.price !== undefined) {
+    if (!Number.isFinite(Number(payload.price)) || Number(payload.price) <= 0) errors.push('price must be greater than 0');
+  }
+  if (!partial || payload.stock !== undefined) {
+    if (!Number.isFinite(Number(payload.stock)) || Number(payload.stock) < 0) errors.push('stock must be 0 or more');
+  }
+  if (payload.mrp !== undefined && (!Number.isFinite(Number(payload.mrp)) || Number(payload.mrp) < 0)) {
+    errors.push('mrp must be 0 or more');
+  }
+  if (payload.default_discount !== undefined && (!Number.isFinite(Number(payload.default_discount)) || Number(payload.default_discount) < 0)) {
+    errors.push('defaultDiscount must be 0 or more');
+  }
+  if (payload.discount_type !== undefined) {
+    const type = normalizeDiscountType(payload.discount_type);
+    if (!['fixed', 'percentage'].includes(type)) errors.push('discountType must be fixed or percentage');
+  }
+  if (payload.expiry_date) {
+    const expiry = String(payload.expiry_date);
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(expiry)) errors.push('expiry_date must be YYYY-MM-DD');
+  }
+  return errors;
+};
+
+const findExistingProductForImport = (row) => {
+  const id = toPositiveIntOrNull(row.id);
+  if (id) {
+    const byId = dbGet(`SELECT * FROM products WHERE id = ?`, [id]);
+    if (byId) return byId;
+  }
+  const sku = String(row.sku || '').trim();
+  if (sku) {
+    const bySku = dbGet(`SELECT * FROM products WHERE sku = ?`, [sku]);
+    if (bySku) return bySku;
+  }
+  const barcode = String(row.barcode || '').trim();
+  if (barcode) {
+    const byBarcode = dbGet(`SELECT * FROM products WHERE barcode = ?`, [barcode]);
+    if (byBarcode) return byBarcode;
+  }
+  return null;
+};
+
+const resolveOrCreateCategoryName = (inputCategory) => {
+  const requested = String(inputCategory || '').trim() || 'Groceries';
+  const existing = dbGet(`SELECT name FROM categories WHERE lower(name) = lower(?)`, [requested]);
+  if (existing?.name) return existing.name;
+  dbRun(`INSERT OR IGNORE INTO categories (name, description) VALUES (?, ?)`, [requested, 'Product category']);
+  return requested;
+};
+
+const createImportBatchChecksum = (rows, mode, stockMode) => {
+  return crypto
+    .createHash('sha256')
+    .update(JSON.stringify({ rows, mode, stockMode }))
+    .digest('hex');
+};
+
+const cleanupExpiredImportBatches = () => {
+  const now = Date.now();
+  for (const [batchId, batch] of productImportBatches.entries()) {
+    if (batch.expiresAt <= now) productImportBatches.delete(batchId);
+  }
+};
+
+const applyProductImportBatch = ({ batchId, checksum, authUser }) => {
+  cleanupExpiredImportBatches();
+  const normalizedBatchId = String(batchId || '').trim();
+  const normalizedChecksum = String(checksum || '').trim();
+  if (!normalizedBatchId || !normalizedChecksum) {
+    const err = new Error('batch_id and checksum are required');
+    err.status = 400;
+    throw err;
+  }
+
+  const batch = productImportBatches.get(normalizedBatchId);
+  if (!batch) {
+    const err = new Error('Import batch not found or expired');
+    err.status = 404;
+    throw err;
+  }
+  if (batch.checksum !== normalizedChecksum) {
+    const err = new Error('Batch checksum mismatch');
+    err.status = 409;
+    throw err;
+  }
+  if ((authUser?.id || null) !== (batch.createdBy || null) && authUser?.role !== 'admin') {
+    const err = new Error('Not allowed to confirm this batch');
+    err.status = 403;
+    throw err;
+  }
+
+  const result = {
+    created: 0,
+    updated: 0,
+    failed: 0,
+    errors: [],
+  };
+
+  const tx = db.transaction(() => {
+    batch.rows.forEach((row) => {
+      try {
+        const existing = row.action === 'update'
+          ? dbGet(`SELECT * FROM products WHERE id = ?`, [row.matched_product_id])
+          : null;
+        if (row.action === 'update' && !existing) {
+          throw new Error('Matched product no longer exists');
+        }
+
+        const payload = normalizeProductInput(row.payload, existing || null);
+        const validationErrors = validateProductPayload(payload);
+        if (validationErrors.length) {
+          throw new Error(validationErrors.join('; '));
+        }
+
+        if (row.action === 'create') {
+          dbRun(
+            `INSERT INTO products
+            (name, description, brand, content, color, price, mrp, uom, sku, barcode, image, stock, category, expiry_date, default_discount, discount_type, is_active)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+            [
+              payload.name,
+              payload.description,
+              payload.brand,
+              payload.content,
+              payload.color,
+              payload.price,
+              payload.mrp,
+              payload.uom,
+              payload.sku,
+              row.barcode,
+              payload.image,
+              payload.stock,
+              payload.category,
+              payload.expiry_date,
+              payload.default_discount,
+              payload.discount_type,
+              payload.is_active,
+            ]
+          );
+          dbRun(`INSERT OR IGNORE INTO categories (name, description) VALUES (?, ?)`, [payload.category, 'Product category']);
+          result.created += 1;
+        } else {
+          dbRun(
+            `UPDATE products SET
+             name=?, description=?, brand=?, content=?, color=?, price=?, mrp=?, uom=?, sku=?, barcode=?, image=?, stock=?, category=?, expiry_date=?, default_discount=?, discount_type=?, is_active=?
+             WHERE id=?`,
+            [
+              payload.name,
+              payload.description,
+              payload.brand,
+              payload.content,
+              payload.color,
+              payload.price,
+              payload.mrp,
+              payload.uom,
+              payload.sku,
+              row.barcode,
+              payload.image,
+              payload.stock,
+              payload.category,
+              payload.expiry_date,
+              payload.default_discount,
+              payload.discount_type,
+              payload.is_active,
+              row.matched_product_id,
+            ]
+          );
+          dbRun(`INSERT OR IGNORE INTO categories (name, description) VALUES (?, ?)`, [payload.category, 'Product category']);
+          result.updated += 1;
+        }
+      } catch (err) {
+        result.failed += 1;
+        result.errors.push({ row: row.row, message: err.message });
+        throw err;
+      }
+    });
+  });
+
+  tx();
+  productImportBatches.delete(normalizedBatchId);
+  dbRun(`UPDATE import_batches SET status = 'applied' WHERE batch_id = ?`, [normalizedBatchId]);
+
+  return {
+    batch_id: normalizedBatchId,
+    checksum: normalizedChecksum,
+    result,
+  };
+};
+
+const parseProductFileToRows = ({ fileName, fileContentBase64 }) => {
+  if (!fileName || !fileContentBase64) {
+    throw new Error('file_name and file_content_base64 are required');
+  }
+  const ext = String(path.extname(fileName || '')).toLowerCase();
+  const buffer = Buffer.from(String(fileContentBase64 || ''), 'base64');
+  let workbook;
+  if (ext === '.csv') {
+    workbook = XLSX.read(buffer.toString('utf8'), { type: 'string' });
+  } else if (ext === '.xlsx' || ext === '.xls') {
+    workbook = XLSX.read(buffer, { type: 'buffer' });
+  } else {
+    throw new Error('Unsupported file format. Use .csv, .xlsx or .xls');
+  }
+
+  const firstSheet = workbook.SheetNames[0];
+  if (!firstSheet) throw new Error('No sheet found in file');
+  const sheet = workbook.Sheets[firstSheet];
+  const rows = XLSX.utils.sheet_to_json(sheet, { defval: '' });
+  if (!Array.isArray(rows) || rows.length === 0) throw new Error('No data rows found');
+  return rows;
+};
+
+const toProductExportRow = (row) => ({
+  id: row.id,
+  sku: row.sku || '',
+  barcode: row.barcode || '',
+  name: row.name || '',
+  category: row.category || '',
+  brand: row.brand || '',
+  content: row.content || '',
+  color: row.color || '',
+  uom: row.uom || 'pcs',
+  price: Number(row.price || 0),
+  mrp: Number(row.mrp || 0),
+  stock: Number(row.stock || 0),
+  expiry_date: row.expiry_date || '',
+  image: row.image || '',
+  description: row.description || '',
+  defaultDiscount: Number(row.default_discount || 0),
+  discountType: row.discount_type || 'fixed',
+  is_active: Number(row.is_active ?? 1),
+});
+
 const closeDatabase = () => {
   try {
     if (db) db.close();
@@ -289,10 +670,14 @@ const initDB = () => {
       mrp REAL,
       uom TEXT DEFAULT 'pcs',
       sku TEXT,
+      barcode TEXT,
       image TEXT,
       stock INTEGER DEFAULT 0,
       category TEXT NOT NULL,
       expiry_date DATE,
+      default_discount REAL DEFAULT 0,
+      discount_type TEXT DEFAULT 'fixed',
+      is_active INTEGER DEFAULT 1,
       created_at DATETIME DEFAULT CURRENT_TIMESTAMP
     );
 
@@ -524,6 +909,18 @@ const initDB = () => {
       created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
       updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
     );
+
+    CREATE TABLE IF NOT EXISTS import_batches (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      batch_id TEXT UNIQUE NOT NULL,
+      kind TEXT NOT NULL,
+      created_by INTEGER,
+      payload TEXT NOT NULL,
+      checksum TEXT NOT NULL,
+      status TEXT DEFAULT 'staged',
+      created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+      expires_at DATETIME
+    );
   `);
 
   alterTableSafe(`ALTER TABLE products ADD COLUMN brand TEXT`);
@@ -532,7 +929,11 @@ const initDB = () => {
   alterTableSafe(`ALTER TABLE products ADD COLUMN mrp REAL`);
   alterTableSafe(`ALTER TABLE products ADD COLUMN uom TEXT DEFAULT 'pcs'`);
   alterTableSafe(`ALTER TABLE products ADD COLUMN sku TEXT`);
+  alterTableSafe(`ALTER TABLE products ADD COLUMN barcode TEXT`);
   alterTableSafe(`ALTER TABLE products ADD COLUMN expiry_date DATE`);
+  alterTableSafe(`ALTER TABLE products ADD COLUMN default_discount REAL DEFAULT 0`);
+  alterTableSafe(`ALTER TABLE products ADD COLUMN discount_type TEXT DEFAULT 'fixed'`);
+  alterTableSafe(`ALTER TABLE products ADD COLUMN is_active INTEGER DEFAULT 1`);
   alterTableSafe(`ALTER TABLE orders ADD COLUMN order_number TEXT`);
   alterTableSafe(`ALTER TABLE orders ADD COLUMN user_id INTEGER`);
   alterTableSafe(`ALTER TABLE orders ADD COLUMN shipping_address TEXT`);
@@ -1108,12 +1509,16 @@ app.get('/api/products', (req, res) => {
     const qName = String(req.query?.name || '').trim();
     const qCategory = String(req.query?.category || '').trim();
     const qLowStock = String(req.query?.low_stock || '').trim();
+    const includeInactive = String(req.query?.include_inactive || '').trim() === 'true';
     let sql = `SELECT * FROM products WHERE 1=1`;
     const params = [];
+    if (!includeInactive) {
+      sql += ` AND COALESCE(is_active, 1) = 1`;
+    }
     if (qName) {
-      sql += ` AND (name LIKE ? OR sku LIKE ? OR brand LIKE ?)`;
+      sql += ` AND (name LIKE ? OR sku LIKE ? OR brand LIKE ? OR barcode LIKE ?)`;
       const like = `%${qName}%`;
-      params.push(like, like, like);
+      params.push(like, like, like, like);
     }
     if (qCategory) {
       sql += ` AND category = ?`;
@@ -1123,13 +1528,13 @@ app.get('/api/products', (req, res) => {
       sql += ` AND stock <= 10`;
     }
     sql += ` ORDER BY created_at DESC`;
-    return res.json(dbAll(sql, params));
+    return res.json(dbAll(sql, params).map(normalizeProductRecord));
   } catch (error) {
     return res.status(500).json({ error: error.message });
   }
 });
 
-app.get('/api/products/:id/last-purchase', (req, res) => {
+app.get('/api/products/:id(\\d+)/last-purchase', (req, res) => {
   try {
     const productId = Number(req.params.id);
     if (!productId) return res.status(400).json({ error: 'Invalid product id' });
@@ -1161,11 +1566,15 @@ app.get('/api/products/:id/last-purchase', (req, res) => {
   }
 });
 
-app.get('/api/products/:id', (req, res) => {
+app.get('/api/products/:id(\\d+)', (req, res) => {
   try {
-    const product = dbGet(`SELECT * FROM products WHERE id = ?`, [req.params.id]);
+    const includeInactive = String(req.query?.include_inactive || '').trim() === 'true';
+    const product = dbGet(
+      `SELECT * FROM products WHERE id = ? ${includeInactive ? '' : 'AND COALESCE(is_active, 1) = 1'}`,
+      [req.params.id]
+    );
     if (!product) return res.status(404).json({ error: 'Product not found' });
-    return res.json(product);
+    return res.json(normalizeProductRecord(product));
   } catch (error) {
     return res.status(500).json({ error: error.message });
   }
@@ -1173,20 +1582,27 @@ app.get('/api/products/:id', (req, res) => {
 
 app.get('/api/products/category/:category', (req, res) => {
   try {
-    return res.json(dbAll(`SELECT * FROM products WHERE category = ? ORDER BY created_at DESC`, [req.params.category]));
+    const includeInactive = String(req.query?.include_inactive || '').trim() === 'true';
+    const rows = dbAll(
+      `SELECT * FROM products WHERE category = ? ${includeInactive ? '' : 'AND COALESCE(is_active, 1) = 1'} ORDER BY created_at DESC`,
+      [req.params.category]
+    );
+    return res.json(rows.map(normalizeProductRecord));
   } catch (error) {
     return res.status(500).json({ error: error.message });
   }
 });
 
-app.post('/api/products', (req, res) => {
+app.post('/api/products', requireAdmin, (req, res) => {
   try {
-    const body = req.body || {};
-    const sku = body.sku || generateSku(body.name, body.brand, body.content, body.mrp || body.price);
+    const body = normalizeProductInput(req.body || {});
+    const errors = validateProductPayload(body);
+    if (errors.length) return res.status(400).json({ error: 'Validation failed', details: errors });
+    const categoryName = resolveOrCreateCategoryName(body.category || 'Groceries');
     const result = dbRun(
       `INSERT INTO products
-      (name, description, brand, content, color, price, mrp, uom, sku, image, stock, category, expiry_date)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      (name, description, brand, content, color, price, mrp, uom, sku, barcode, image, stock, category, expiry_date, default_discount, discount_type, is_active)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       [
         body.name,
         body.description || null,
@@ -1196,58 +1612,271 @@ app.post('/api/products', (req, res) => {
         Number(body.price || 0),
         body.mrp != null ? Number(body.mrp) : Number(body.price || 0),
         body.uom || 'pcs',
-        sku,
+        body.sku,
+        req.body?.barcode ? String(req.body.barcode).trim() : null,
         body.image || null,
         Number(body.stock || 0),
-        body.category || 'Groceries',
+        categoryName,
         body.expiry_date || null,
+        Number(body.default_discount || 0),
+        body.discount_type || 'fixed',
+        Number(body.is_active ?? 1),
       ]
     );
-    dbRun(`INSERT OR IGNORE INTO categories (name, description) VALUES (?, ?)`, [body.category || 'Groceries', 'Product category']);
-    return res.status(201).json(dbGet(`SELECT * FROM products WHERE id = ?`, [result.lastInsertRowid]));
+    return res.status(201).json(normalizeProductRecord(dbGet(`SELECT * FROM products WHERE id = ?`, [result.lastInsertRowid])));
   } catch (error) {
     return res.status(500).json({ error: error.message });
   }
 });
 
-app.put('/api/products/:id', (req, res) => {
+app.put('/api/products/:id(\\d+)', requireAdmin, (req, res) => {
   try {
     const current = dbGet(`SELECT * FROM products WHERE id = ?`, [req.params.id]);
     if (!current) return res.status(404).json({ error: 'Product not found' });
-    const body = req.body || {};
+    const body = normalizeProductInput(req.body || {}, current);
+    const errors = validateProductPayload(body);
+    if (errors.length) return res.status(400).json({ error: 'Validation failed', details: errors });
+    const categoryName = resolveOrCreateCategoryName(body.category || current.category || 'Groceries');
     dbRun(
       `UPDATE products SET
-       name=?, description=?, brand=?, content=?, color=?, price=?, mrp=?, uom=?, sku=?, image=?, stock=?, category=?, expiry_date=?
+       name=?, description=?, brand=?, content=?, color=?, price=?, mrp=?, uom=?, sku=?, barcode=?, image=?, stock=?, category=?, expiry_date=?, default_discount=?, discount_type=?, is_active=?
        WHERE id=?`,
       [
-        body.name ?? current.name,
-        body.description ?? current.description,
-        body.brand ?? current.brand,
-        body.content ?? current.content,
-        body.color ?? current.color,
-        Number(body.price ?? current.price),
-        Number(body.mrp ?? current.mrp ?? current.price),
-        body.uom ?? current.uom,
-        body.sku ?? current.sku ?? generateSku(body.name ?? current.name, body.brand ?? current.brand, body.content ?? current.content, body.mrp ?? current.mrp ?? current.price),
-        body.image ?? current.image,
-        Number(body.stock ?? current.stock),
-        body.category ?? current.category,
-        body.expiry_date ?? current.expiry_date,
+        body.name,
+        body.description,
+        body.brand,
+        body.content,
+        body.color,
+        Number(body.price),
+        Number(body.mrp),
+        body.uom,
+        body.sku,
+        req.body?.barcode !== undefined ? String(req.body.barcode || '').trim() || null : current.barcode || null,
+        body.image,
+        Number(body.stock),
+        categoryName,
+        body.expiry_date,
+        Number(body.default_discount || 0),
+        body.discount_type || 'fixed',
+        Number(body.is_active ?? 1),
         req.params.id,
       ]
     );
-    return res.json(dbGet(`SELECT * FROM products WHERE id = ?`, [req.params.id]));
+    return res.json(normalizeProductRecord(dbGet(`SELECT * FROM products WHERE id = ?`, [req.params.id])));
   } catch (error) {
     return res.status(500).json({ error: error.message });
   }
 });
 
-app.delete('/api/products/:id', (req, res) => {
+app.delete('/api/products/:id(\\d+)', requireAdmin, (req, res) => {
   try {
-    dbRun(`DELETE FROM products WHERE id = ?`, [req.params.id]);
+    const current = dbGet(`SELECT * FROM products WHERE id = ?`, [req.params.id]);
+    if (!current) return res.status(404).json({ error: 'Product not found' });
+    dbRun(`UPDATE products SET is_active = 0 WHERE id = ?`, [req.params.id]);
     return res.json({ success: true, message: 'Product deleted successfully' });
   } catch (error) {
     return res.status(500).json({ error: error.message });
+  }
+});
+
+app.get('/api/products/template', requireAdmin, (req, res) => {
+  try {
+    const format = String(req.query?.format || 'csv').trim().toLowerCase();
+    const rows = [PRODUCT_IMPORT_SAMPLE];
+    if (format === 'xlsx' || format === 'xls') {
+      const sheet = XLSX.utils.json_to_sheet(rows, { header: PRODUCT_IMPORT_HEADERS });
+      const wb = XLSX.utils.book_new();
+      XLSX.utils.book_append_sheet(wb, sheet, 'Products');
+      const buffer = XLSX.write(wb, { type: 'buffer', bookType: 'xlsx' });
+      res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
+      res.setHeader('Content-Disposition', 'attachment; filename="products-template.xlsx"');
+      return res.send(buffer);
+    }
+    const csv = XLSX.utils.sheet_to_csv(XLSX.utils.json_to_sheet(rows, { header: PRODUCT_IMPORT_HEADERS }));
+    res.setHeader('Content-Type', 'text/csv; charset=utf-8');
+    res.setHeader('Content-Disposition', 'attachment; filename="products-template.csv"');
+    return res.send(`\uFEFF${csv}`);
+  } catch (error) {
+    return res.status(500).json({ error: error.message });
+  }
+});
+
+app.get('/api/products/export', requireAdmin, (req, res) => {
+  try {
+    const format = String(req.query?.format || 'csv').trim().toLowerCase();
+    const includeInactive = String(req.query?.include_inactive || '').trim() === 'true';
+    const rows = dbAll(
+      `SELECT * FROM products ${includeInactive ? '' : 'WHERE COALESCE(is_active,1)=1'} ORDER BY created_at DESC`
+    ).map(toProductExportRow);
+    if (format === 'xlsx' || format === 'xls') {
+      const sheet = XLSX.utils.json_to_sheet(rows, { header: PRODUCT_IMPORT_HEADERS });
+      const wb = XLSX.utils.book_new();
+      XLSX.utils.book_append_sheet(wb, sheet, 'Products');
+      const buffer = XLSX.write(wb, { type: 'buffer', bookType: 'xlsx' });
+      res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
+      res.setHeader('Content-Disposition', `attachment; filename="products-export-${new Date().toISOString().slice(0, 10)}.xlsx"`);
+      return res.send(buffer);
+    }
+    const csv = XLSX.utils.sheet_to_csv(XLSX.utils.json_to_sheet(rows, { header: PRODUCT_IMPORT_HEADERS }));
+    res.setHeader('Content-Type', 'text/csv; charset=utf-8');
+    res.setHeader('Content-Disposition', `attachment; filename="products-export-${new Date().toISOString().slice(0, 10)}.csv"`);
+    return res.send(`\uFEFF${csv}`);
+  } catch (error) {
+    return res.status(500).json({ error: error.message });
+  }
+});
+
+app.post('/api/products/import/preview', requireAdmin, (req, res) => {
+  try {
+    cleanupExpiredImportBatches();
+    const mode = String(req.body?.mode || 'upsert').trim().toLowerCase();
+    const stockMode = String(req.body?.stock_mode || 'replace').trim().toLowerCase();
+    if (!['create_only', 'update_only', 'upsert'].includes(mode)) {
+      return res.status(400).json({ error: 'Invalid mode. Use create_only, update_only or upsert' });
+    }
+    if (!['replace', 'delta'].includes(stockMode)) {
+      return res.status(400).json({ error: 'Invalid stock_mode. Use replace or delta' });
+    }
+
+    const rows = parseProductFileToRows({
+      fileName: req.body?.file_name,
+      fileContentBase64: req.body?.file_content_base64,
+    });
+
+    const normalizedRows = [];
+    const preview = [];
+    let creates = 0;
+    let updates = 0;
+    let skips = 0;
+    let errors = 0;
+
+    rows.forEach((row, index) => {
+      const rowNo = index + 2;
+      const existing = findExistingProductForImport(row);
+      const action = existing ? 'update' : 'create';
+      const normalized = normalizeProductInput(
+        {
+          ...row,
+          stock: stockMode === 'delta' && existing
+            ? Number(existing.stock || 0) + Number(row.stock || 0)
+            : row.stock,
+        },
+        existing || null
+      );
+      const rowErrors = validateProductPayload(normalized);
+
+      if (mode === 'create_only' && existing) rowErrors.push('Row matches existing product but mode is create_only');
+      if (mode === 'update_only' && !existing) rowErrors.push('Row does not match an existing product but mode is update_only');
+
+      if (rowErrors.length) {
+        errors += 1;
+        preview.push({ row: rowNo, action, status: 'error', errors: rowErrors, matched_product_id: existing?.id || null });
+        return;
+      }
+
+      normalizedRows.push({
+        row: rowNo,
+        action,
+        matched_product_id: existing?.id || null,
+        payload: normalized,
+        barcode: row.barcode !== undefined ? String(row.barcode || '').trim() || null : (existing?.barcode || null),
+      });
+
+      if (action === 'create') creates += 1;
+      if (action === 'update') updates += 1;
+      preview.push({ row: rowNo, action, status: 'ready', errors: [], matched_product_id: existing?.id || null });
+    });
+
+    if (!normalizedRows.length) {
+      return res.status(400).json({
+        error: 'No valid rows found in import file',
+        preview,
+      });
+    }
+
+    const batchId = crypto.randomUUID();
+    const checksum = createImportBatchChecksum(normalizedRows, mode, stockMode);
+    const createdAt = Date.now();
+    const expiresAt = createdAt + PRODUCT_IMPORT_BATCH_TTL_MS;
+
+    const batchPayload = {
+      mode,
+      stockMode,
+      rows: normalizedRows,
+      createdBy: req.authUser?.id || null,
+      createdAt,
+      expiresAt,
+    };
+    productImportBatches.set(batchId, {
+      ...batchPayload,
+      checksum,
+    });
+    dbRun(
+      `INSERT OR REPLACE INTO import_batches (batch_id, kind, created_by, payload, checksum, status, expires_at)
+       VALUES (?, ?, ?, ?, ?, ?, datetime(? / 1000, 'unixepoch'))`,
+      [
+        batchId,
+        'products',
+        req.authUser?.id || null,
+        JSON.stringify(batchPayload),
+        checksum,
+        errors ? 'staged_with_errors' : 'staged',
+        expiresAt,
+      ]
+    );
+
+    const responsePayload = {
+      batch_id: batchId,
+      checksum,
+      expires_at: new Date(expiresAt).toISOString(),
+      summary: {
+        creates,
+        updates,
+        skips,
+        errors,
+      },
+      preview,
+    };
+
+    if (Boolean(req.body?.auto_confirm)) {
+      const applied = applyProductImportBatch({
+        batchId,
+        checksum,
+        authUser: req.authUser,
+      });
+      responsePayload.auto_confirmed = true;
+      responsePayload.apply_result = applied.result;
+      responsePayload.notification = {
+        type: 'success',
+        title: 'Product import completed',
+        message: `Created ${applied.result.created}, updated ${applied.result.updated}, failed ${applied.result.failed}`,
+      };
+    }
+
+    return res.json(responsePayload);
+  } catch (error) {
+    return res.status(error.status || 400).json({ error: error.message });
+  }
+});
+
+app.post('/api/products/import/confirm', requireAdmin, (req, res) => {
+  try {
+    const applied = applyProductImportBatch({
+      batchId: req.body?.batch_id,
+      checksum: req.body?.checksum,
+      authUser: req.authUser,
+    });
+    return res.json({
+      success: true,
+      ...applied.result,
+      notification: {
+        type: 'success',
+        title: 'Product import completed',
+        message: `Created ${applied.result.created}, updated ${applied.result.updated}, failed ${applied.result.failed}`,
+      },
+    });
+  } catch (error) {
+    return res.status(error.status || 400).json({ error: error.message });
   }
 });
 
@@ -2454,19 +3083,19 @@ app.get('/api/billing/products/search', requireAdmin, (req, res) => {
   try {
     const q = String(req.query.q || '').trim();
     const category = String(req.query.category || '').trim();
-    let sql = `SELECT * FROM products WHERE 1=1`;
+    let sql = `SELECT * FROM products WHERE COALESCE(is_active, 1) = 1`;
     const params = [];
     if (q) {
-      sql += ` AND (name LIKE ? OR sku LIKE ? OR brand LIKE ?)`;
+      sql += ` AND (name LIKE ? OR sku LIKE ? OR brand LIKE ? OR barcode LIKE ?)`;
       const like = `%${q}%`;
-      params.push(like, like, like);
+      params.push(like, like, like, like);
     }
     if (category) {
       sql += ` AND category = ?`;
       params.push(category);
     }
     sql += ` ORDER BY name LIMIT 50`;
-    return res.json(dbAll(sql, params));
+    return res.json(dbAll(sql, params).map(normalizeProductRecord));
   } catch (error) {
     return res.status(500).json({ error: error.message });
   }
@@ -2477,6 +3106,8 @@ app.post('/api/bills/create', requireAdmin, (req, res) => {
     const b = req.body || {};
     const items = Array.isArray(b.items) ? b.items : [];
     if (!items.length) return res.status(400).json({ error: 'items are required' });
+    const billTypeRaw = String(b.bill_type || 'sales').trim().toLowerCase();
+    const billType = billTypeRaw === 'purchase' ? 'purchase' : 'sales';
 
     const customerId = Number(b.customer_id || 0);
     if (!customerId) return res.status(400).json({ error: 'customer_id is required' });
@@ -2490,9 +3121,30 @@ app.post('/api/bills/create', requireAdmin, (req, res) => {
     const customerEmail = normalizeEmail(customer.email);
     const customerPhone = normalizePhone(customer.phone);
     const customerAddress = customer.address ? String(customer.address).trim() : null;
-
-    const sanitizedItems = items.map((it) => {
-      const productId = Number(it.product_id || 0) || null;
+    const productCache = new Map();
+    const itemErrors = [];
+    const sanitizedItems = items.map((it, index) => {
+      const rowNo = index + 1;
+      const productId = Number(it.product_id || 0);
+      if (!productId) {
+        itemErrors.push(`Item ${rowNo}: product_id is required`);
+        return null;
+      }
+      if (!productCache.has(productId)) {
+        productCache.set(
+          productId,
+          dbGet(`SELECT id, name, stock, is_active FROM products WHERE id = ?`, [productId]) || null
+        );
+      }
+      const product = productCache.get(productId);
+      if (!product) {
+        itemErrors.push(`Item ${rowNo}: Product ${productId} not found`);
+        return null;
+      }
+      if (Number(product.is_active ?? 1) !== 1) {
+        itemErrors.push(`Item ${rowNo}: Product ${productId} is inactive`);
+        return null;
+      }
       const qty = Math.max(0, Number(it.qty || 0));
       const mrp = Math.max(0, Number(it.mrp || 0));
       const lineSubtotal = mrp * qty;
@@ -2500,10 +3152,10 @@ app.post('/api/bills/create', requireAdmin, (req, res) => {
       const amount = Math.max(0, lineSubtotal - discount);
       const productName =
         String(it.product_name || '').trim() ||
-        (productId ? dbGet(`SELECT name FROM products WHERE id = ?`, [productId])?.name : null) ||
+        product.name ||
         'Unknown';
       return {
-        product_id: productId,
+        product_id: Number(product.id),
         product_name: productName,
         mrp,
         qty,
@@ -2511,9 +3163,36 @@ app.post('/api/bills/create', requireAdmin, (req, res) => {
         discount,
         amount,
       };
-    }).filter((it) => it.qty > 0 && it.amount >= 0);
+    }).filter((it) => it && it.qty > 0 && it.amount >= 0);
+
+    if (itemErrors.length) {
+      return res.status(400).json({ error: 'Invalid bill items', details: itemErrors });
+    }
 
     if (!sanitizedItems.length) return res.status(400).json({ error: 'At least one valid item is required' });
+    const salesQtyByProduct = new Map();
+    if (billType === 'sales') {
+      sanitizedItems.forEach((it) => {
+        salesQtyByProduct.set(
+          it.product_id,
+          Number(salesQtyByProduct.get(it.product_id) || 0) + Number(it.qty || 0)
+        );
+      });
+      const stockErrors = [];
+      for (const [productId, neededQty] of salesQtyByProduct.entries()) {
+        const product = productCache.get(productId);
+        const currentStock = Number(product?.stock || 0);
+        if (currentStock < neededQty) {
+          stockErrors.push(`Product ${productId}: requested ${neededQty}, in stock ${currentStock}`);
+        }
+      }
+      if (stockErrors.length) {
+        return res.status(400).json({
+          error: 'Insufficient stock for one or more items',
+          details: stockErrors,
+        });
+      }
+    }
     const subtotal = sanitizedItems.reduce((sum, it) => sum + Number(it.amount || 0), 0);
     const billDiscount = Math.min(subtotal, Math.max(0, Number(b.discount_amount || 0)));
     const totalAmount = Math.max(0, subtotal - billDiscount);
@@ -2540,7 +3219,7 @@ app.post('/api/bills/create', requireAdmin, (req, res) => {
           creditAmount,
           normalizePaymentMethod(b.payment_method),
           paymentStatus,
-          b.bill_type || 'sales',
+          billType,
           createdBy,
           b.notes ? String(b.notes) : null,
         ]
@@ -2562,12 +3241,36 @@ app.post('/api/bills/create', requireAdmin, (req, res) => {
           ]
         );
       });
+      if (billType === 'sales') {
+        for (const [productId, neededQty] of salesQtyByProduct.entries()) {
+          const before = Number(dbGet(`SELECT stock FROM products WHERE id = ?`, [productId])?.stock || 0);
+          if (before < neededQty) {
+            const err = new Error(`Insufficient stock for product ${productId}`);
+            err.status = 400;
+            throw err;
+          }
+          dbRun(`UPDATE products SET stock = stock - ? WHERE id = ?`, [neededQty, productId]);
+          const after = Number(dbGet(`SELECT stock FROM products WHERE id = ?`, [productId])?.stock || 0);
+          logStockLedger({
+            productId,
+            transactionType: 'out',
+            quantityChange: -Number(neededQty || 0),
+            previousBalance: before,
+            newBalance: after,
+            referenceType: 'bill',
+            referenceId: String(billId),
+            userId: createdBy,
+            userName: req.authUser?.name || null,
+            notes: `Sales bill ${billNumber}`,
+          });
+        }
+      }
       return billId;
     });
     const billId = tx();
     return res.status(201).json({ success: true, bill_id: billId, bill_number: billNumber });
   } catch (error) {
-    return res.status(500).json({ error: error.message });
+    return res.status(error.status || 500).json({ error: error.message });
   }
 });
 

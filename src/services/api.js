@@ -106,6 +106,29 @@ export const productsApi = {
     apiFetch(`/api/products/${id}`, {
       method: 'DELETE',
     }),
+  getTemplateUrl: (format = 'csv') => {
+    const query = new URLSearchParams({ format }).toString();
+    const baseUrl = getApiUrl();
+    return `${baseUrl}/api/products/template?${query}`;
+  },
+  getExportUrl: (format = 'csv', includeInactive = false) => {
+    const query = new URLSearchParams({
+      format,
+      include_inactive: includeInactive ? 'true' : 'false',
+    }).toString();
+    const baseUrl = getApiUrl();
+    return `${baseUrl}/api/products/export?${query}`;
+  },
+  importPreview: (payload) =>
+    apiFetch('/api/products/import/preview', {
+      method: 'POST',
+      body: payload,
+    }),
+  importConfirm: (payload) =>
+    apiFetch('/api/products/import/confirm', {
+      method: 'POST',
+      body: payload,
+    }),
 };
 
 // ============================================
