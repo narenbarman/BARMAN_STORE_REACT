@@ -159,6 +159,42 @@ const normalizeDistributorLedgerType = (type) => {
   return 'credit';
 };
 
+const normalizeCreditType = (type) => {
+  const raw = String(type || '').trim().toLowerCase();
+  return raw === 'payment' ? 'payment' : 'given';
+};
+
+const getLatestCreditEntry = (userId) => dbGet(
+  `SELECT *
+   FROM credit_history
+   WHERE user_id = ?
+   ORDER BY datetime(COALESCE(transaction_date, created_at)) DESC, id DESC
+   LIMIT 1`,
+  [userId]
+);
+
+const recalculateCreditBalancesForUser = db.transaction((userId) => {
+  const rows = dbAll(
+    `SELECT id, type, amount
+     FROM credit_history
+     WHERE user_id = ?
+     ORDER BY datetime(COALESCE(transaction_date, created_at)) ASC, id ASC`,
+    [userId]
+  );
+
+  let runningBalance = 0;
+  rows.forEach((row) => {
+    const normalizedType = normalizeCreditType(row.type);
+    const amount = Math.abs(Number(row.amount || 0));
+    runningBalance = normalizedType === 'payment'
+      ? (runningBalance - amount)
+      : (runningBalance + amount);
+    dbRun(`UPDATE credit_history SET balance = ? WHERE id = ?`, [runningBalance, row.id]);
+  });
+
+  return runningBalance;
+});
+
 const generateSku = (name, brand, content, mrp) => {
   const part = (v) => String(v || '').replace(/[^a-zA-Z0-9]/g, '').toUpperCase();
   const n = part(name).slice(0, 4).padEnd(4, 'X');
@@ -722,6 +758,9 @@ const initDB = () => {
       balance REAL DEFAULT 0,
       description TEXT,
       reference TEXT,
+      edited INTEGER DEFAULT 0,
+      edited_at DATETIME,
+      edited_by INTEGER,
       created_at DATETIME DEFAULT CURRENT_TIMESTAMP
     );
 
@@ -950,6 +989,9 @@ const initDB = () => {
   alterTableSafe(`ALTER TABLE users ADD COLUMN credit_limit REAL DEFAULT 0`);
   alterTableSafe(`ALTER TABLE credit_history ADD COLUMN transaction_date DATE`);
   alterTableSafe(`ALTER TABLE credit_history ADD COLUMN created_by INTEGER`);
+  alterTableSafe(`ALTER TABLE credit_history ADD COLUMN edited INTEGER DEFAULT 0`);
+  alterTableSafe(`ALTER TABLE credit_history ADD COLUMN edited_at DATETIME`);
+  alterTableSafe(`ALTER TABLE credit_history ADD COLUMN edited_by INTEGER`);
   alterTableSafe(`ALTER TABLE stock_ledger ADD COLUMN product_name TEXT`);
   alterTableSafe(`ALTER TABLE stock_ledger ADD COLUMN sku TEXT`);
   alterTableSafe(`ALTER TABLE stock_ledger ADD COLUMN transaction_type TEXT`);
@@ -2045,7 +2087,7 @@ const placeOrder = (payload) => {
 
     // Add order placed entry to credit history if user has a credit account
     if (user_id) {
-      const last = dbGet(`SELECT balance FROM credit_history WHERE user_id = ? ORDER BY created_at DESC LIMIT 1`, [user_id]);
+      const last = getLatestCreditEntry(user_id);
       const currentBalance = Number(last?.balance || 0);
       const orderRef = orderNumber || `ORDER-${orderId}`;
       dbRun(
@@ -2104,7 +2146,7 @@ app.put('/api/orders/:id/status', (req, res) => {
 
     // Update credit history with status change
     if (order.user_id) {
-      const last = dbGet(`SELECT balance FROM credit_history WHERE user_id = ? ORDER BY created_at DESC LIMIT 1`, [order.user_id]);
+      const last = getLatestCreditEntry(order.user_id);
       const currentBalance = Number(last?.balance || 0);
       const orderRef = order.order_number || `ORDER-${order.id}`;
       const statusDescription = `Order status updated to ${status} (Order #${orderRef})`;
@@ -2139,7 +2181,7 @@ app.put('/api/orders/:id/status', (req, res) => {
         });
 
         if (order.payment_method === 'credit' && order.user_id && Number(order.credit_applied || 0) === 0) {
-          const last = dbGet(`SELECT balance FROM credit_history WHERE user_id = ? ORDER BY created_at DESC LIMIT 1`, [order.user_id]);
+          const last = getLatestCreditEntry(order.user_id);
           const currentBalance = Number(last?.balance || 0);
           const nextBalance = currentBalance + Number(order.total_amount || 0);
           const orderRef = order.order_number || `ORDER-${order.id}`;
@@ -2190,7 +2232,13 @@ app.get('/api/users/:userId/credit-history', requireAuth, (req, res) => {
     if (!isAdmin && Number(req.authUser?.id) !== requestUserId) {
       return res.status(403).json({ error: 'Forbidden' });
     }
-    const rows = dbAll(`SELECT * FROM credit_history WHERE user_id = ? ORDER BY created_at DESC`, [req.params.userId]);
+    const rows = dbAll(
+      `SELECT *
+       FROM credit_history
+       WHERE user_id = ?
+       ORDER BY datetime(COALESCE(transaction_date, created_at)) DESC, id DESC`,
+      [req.params.userId]
+    );
     return res.json(rows);
   } catch (error) {
     return res.status(500).json({ error: error.message });
@@ -2204,7 +2252,14 @@ app.get('/api/users/:userId/credit-balance', requireAuth, (req, res) => {
     if (!isAdmin && Number(req.authUser?.id) !== requestUserId) {
       return res.status(403).json({ error: 'Forbidden' });
     }
-    const row = dbGet(`SELECT balance FROM credit_history WHERE user_id = ? ORDER BY created_at DESC LIMIT 1`, [req.params.userId]);
+    const row = dbGet(
+      `SELECT balance
+       FROM credit_history
+       WHERE user_id = ?
+       ORDER BY datetime(COALESCE(transaction_date, created_at)) DESC, id DESC
+       LIMIT 1`,
+      [req.params.userId]
+    );
     return res.json({ balance: row?.balance || 0 });
   } catch (error) {
     return res.status(500).json({ error: error.message });
@@ -2220,7 +2275,7 @@ app.post('/api/users/:userId/credit', requireAdmin, (req, res) => {
     if (!amount || Number(amount) <= 0) {
       return res.status(400).json({ error: 'Amount must be positive' });
     }
-    const last = dbGet(`SELECT balance FROM credit_history WHERE user_id = ? ORDER BY created_at DESC LIMIT 1`, [req.params.userId]);
+    const last = getLatestCreditEntry(req.params.userId);
     const current = Number(last?.balance || 0);
     const next = type === 'given' ? current + Number(amount) : current - Number(amount);
     const normalizedDate = transactionDate && /^\d{4}-\d{2}-\d{2}$/.test(String(transactionDate))
@@ -2234,6 +2289,67 @@ app.post('/api/users/:userId/credit', requireAdmin, (req, res) => {
       success: true,
       balance: next,
       transaction: dbGet(`SELECT * FROM credit_history WHERE id = ?`, [result.lastInsertRowid]),
+    });
+  } catch (error) {
+    return res.status(500).json({ error: error.message });
+  }
+});
+
+app.put('/api/users/:userId/credit/:entryId', requireAdmin, (req, res) => {
+  try {
+    const userId = Number(req.params.userId);
+    const entryId = Number(req.params.entryId);
+    if (!userId || !entryId) {
+      return res.status(400).json({ error: 'Invalid user or transaction id' });
+    }
+
+    const existing = dbGet(`SELECT * FROM credit_history WHERE id = ? AND user_id = ?`, [entryId, userId]);
+    if (!existing) {
+      return res.status(404).json({ error: 'Credit transaction not found' });
+    }
+
+    const latest = getLatestCreditEntry(userId);
+    if (!latest || Number(latest.id) !== entryId) {
+      return res.status(400).json({ error: 'Only the latest transaction for this customer can be edited' });
+    }
+
+    const { type, amount, description, reference, transactionDate } = req.body || {};
+    if (!type || !['given', 'payment'].includes(type)) {
+      return res.status(400).json({ error: 'Invalid transaction type' });
+    }
+
+    const parsedAmount = Number(amount);
+    if (!parsedAmount || parsedAmount <= 0) {
+      return res.status(400).json({ error: 'Amount must be positive' });
+    }
+
+    const normalizedDate = transactionDate && /^\d{4}-\d{2}-\d{2}$/.test(String(transactionDate))
+      ? String(transactionDate)
+      : null;
+
+    dbRun(
+      `UPDATE credit_history
+       SET type = ?, amount = ?, description = ?, reference = ?, transaction_date = ?, edited = 1, edited_at = CURRENT_TIMESTAMP, edited_by = ?
+       WHERE id = ? AND user_id = ?`,
+      [
+        type,
+        parsedAmount,
+        description || null,
+        reference || null,
+        normalizedDate,
+        req.authUser?.id || null,
+        entryId,
+        userId
+      ]
+    );
+
+    const nextBalance = recalculateCreditBalancesForUser(userId);
+    const updated = dbGet(`SELECT * FROM credit_history WHERE id = ?`, [entryId]);
+
+    return res.json({
+      success: true,
+      balance: Number(nextBalance || 0),
+      transaction: updated
     });
   } catch (error) {
     return res.status(500).json({ error: error.message });
@@ -2271,7 +2387,7 @@ app.post('/api/credit/check-limit', requireAuth, (req, res) => {
     if (!customerId) return res.status(400).json({ error: 'customer_id is required' });
     const user = dbGet(`SELECT id, name, credit_limit FROM users WHERE id = ?`, [customerId]);
     if (!user) return res.status(404).json({ error: 'Customer not found' });
-    const last = dbGet(`SELECT balance FROM credit_history WHERE user_id = ? ORDER BY created_at DESC LIMIT 1`, [customerId]);
+    const last = getLatestCreditEntry(customerId);
     const currentBalance = Number(last?.balance || 0);
     const creditLimit = Number(user.credit_limit || 0);
     const projected = currentBalance + additionalAmount;
@@ -2299,7 +2415,7 @@ app.get('/api/credit/aging', requireAdmin, (_, res) => {
         u.email,
         u.phone,
         COALESCE(u.credit_limit, 0) as credit_limit,
-        COALESCE((SELECT balance FROM credit_history ch WHERE ch.user_id = u.id ORDER BY created_at DESC LIMIT 1), 0) as current_balance,
+        COALESCE((SELECT balance FROM credit_history ch WHERE ch.user_id = u.id ORDER BY datetime(COALESCE(ch.transaction_date, ch.created_at)) DESC, ch.id DESC LIMIT 1), 0) as current_balance,
         COALESCE((SELECT SUM(amount) FROM credit_history ch WHERE ch.user_id = u.id AND ch.type='given' AND julianday('now') - julianday(ch.created_at) <= 30), 0) as days_0_30,
         COALESCE((SELECT SUM(amount) FROM credit_history ch WHERE ch.user_id = u.id AND ch.type='given' AND julianday('now') - julianday(ch.created_at) > 30 AND julianday('now') - julianday(ch.created_at) <= 60), 0) as days_31_60,
         COALESCE((SELECT SUM(amount) FROM credit_history ch WHERE ch.user_id = u.id AND ch.type='given' AND julianday('now') - julianday(ch.created_at) > 60 AND julianday('now') - julianday(ch.created_at) <= 90), 0) as days_61_90,

@@ -11,6 +11,8 @@ const toNumber = (value) => {
 };
 
 const getRecordDate = (entry) => new Date(entry.transaction_date || entry.created_at || entry.date || Date.now()).getTime();
+const getRecordDateLabel = (entry) => new Date(entry.transaction_date || entry.created_at || Date.now()).toLocaleDateString();
+const isLedgerEntryEdited = (entry) => Number(entry?.edited || 0) === 1 || !!entry?.edited_at;
 
 const formatCurrency = (amount) => new Intl.NumberFormat('en-IN', {
   style: 'currency',
@@ -49,6 +51,7 @@ function CreditKhata({ user }) {
   const [filters, setFilters] = useState({ user_id: '' });
   const [showLedgerForm, setShowLedgerForm] = useState(false);
   const [ledgerFormData, setLedgerFormData] = useState(getDefaultFormData());
+  const [editingLedgerEntryId, setEditingLedgerEntryId] = useState(null);
 
   const usersById = useMemo(() => {
     const map = {};
@@ -165,11 +168,32 @@ function CreditKhata({ user }) {
 
   const handleOpenLedgerForm = () => {
     setError('');
+    setEditingLedgerEntryId(null);
     setLedgerFormData({
       ...getDefaultFormData(),
       user_id: filters.user_id || ''
     });
     setShowLedgerForm(true);
+  };
+
+  const handleOpenLedgerEdit = (entry) => {
+    setError('');
+    setEditingLedgerEntryId(Number(entry.id || 0));
+    setLedgerFormData({
+      user_id: String(entry.user_id || ''),
+      type: entry.type === 'payment' ? 'payment' : 'given',
+      amount: String(toNumber(entry.amount || 0)),
+      transactionDate: String(entry.transaction_date || '').slice(0, 10) || getTodayDate(),
+      reference: entry.reference || '',
+      description: entry.description || ''
+    });
+    setShowLedgerForm(true);
+  };
+
+  const closeLedgerForm = () => {
+    setShowLedgerForm(false);
+    setEditingLedgerEntryId(null);
+    setLedgerFormData(getDefaultFormData());
   };
 
   const handleLedgerSubmit = async (e) => {
@@ -191,16 +215,26 @@ function CreditKhata({ user }) {
     }
 
     try {
-      await creditApi.addTransaction(ledgerFormData.user_id, {
-        type: ledgerFormData.type,
-        amount: Number(amount.toFixed(2)),
-        reference: ledgerFormData.reference,
-        description: ledgerFormData.description,
-        transactionDate: ledgerFormData.transactionDate,
-        created_by: user?.id
-      });
-      setShowLedgerForm(false);
-      setLedgerFormData(getDefaultFormData());
+      if (editingLedgerEntryId) {
+        await creditApi.updateTransaction(ledgerFormData.user_id, editingLedgerEntryId, {
+          type: ledgerFormData.type,
+          amount: Number(amount.toFixed(2)),
+          reference: ledgerFormData.reference,
+          description: ledgerFormData.description,
+          transactionDate: ledgerFormData.transactionDate,
+          edited_by: user?.id
+        });
+      } else {
+        await creditApi.addTransaction(ledgerFormData.user_id, {
+          type: ledgerFormData.type,
+          amount: Number(amount.toFixed(2)),
+          reference: ledgerFormData.reference,
+          description: ledgerFormData.description,
+          transactionDate: ledgerFormData.transactionDate,
+          created_by: user?.id
+        });
+      }
+      closeLedgerForm();
       await fetchLedger(filters.user_id, users);
     } catch (err) {
       if (err?.status === 401) {
@@ -208,7 +242,7 @@ function CreditKhata({ user }) {
         window.location.href = '/login';
         return;
       }
-      setError(err.message || 'Failed to add ledger transaction');
+      setError(err.message || (editingLedgerEntryId ? 'Failed to edit ledger transaction' : 'Failed to add ledger transaction'));
     }
   };
 
@@ -233,6 +267,16 @@ function CreditKhata({ user }) {
       value: Object.values(balanceByUser).reduce((sum, value) => sum + toNumber(value), 0)
     };
   }, [filters.user_id, ledgerRecords]);
+
+  const latestEntryIdByUser = useMemo(() => {
+    const map = {};
+    for (const entry of ledgerRecords) {
+      const userKey = String(entry.user_id || '');
+      if (!userKey || map[userKey]) continue;
+      map[userKey] = Number(entry.id || 0);
+    }
+    return map;
+  }, [ledgerRecords]);
 
   if (loading) {
     return (
@@ -293,40 +337,61 @@ function CreditKhata({ user }) {
               <th>Balance</th>
               <th>Reference</th>
               <th>Description</th>
+              <th>Status</th>
+              <th>Actions</th>
             </tr>
           </thead>
           <tbody>
             {ledgerLoading ? (
               <tr>
-                <td colSpan="7" className="empty-state">Loading ledger records...</td>
+                <td colSpan="9" className="empty-state">Loading ledger records...</td>
               </tr>
             ) : ledgerRecords.length === 0 ? (
               <tr>
-                <td colSpan="7" className="empty-state">No customer payment/credit records found</td>
+                <td colSpan="9" className="empty-state">No customer payment/credit records found</td>
               </tr>
             ) : (
-              ledgerRecords.map((entry, index) => (
-                <tr key={entry.id || index}>
-                  <td>{new Date(entry.created_at || entry.transaction_date || Date.now()).toLocaleDateString()}</td>
-                  <td>{usersById[String(entry.user_id)]?.name || entry.customer_name || '-'}</td>
-                  <td>{getLedgerTypeLabel(entry)}</td>
-                  <td>{formatCurrency(toNumber(entry.amount))}</td>
-                  <td>{formatCurrency(toNumber(entry.computed_balance ?? entry.balance))}</td>
-                  <td>{entry.reference || entry.invoice_number || '-'}</td>
-                  <td>{entry.description || '-'}</td>
-                </tr>
-              ))
+              ledgerRecords.map((entry, index) => {
+                const userKey = String(entry.user_id || '');
+                const isLatestForCustomer = Number(entry.id || 0) > 0 && Number(entry.id || 0) === Number(latestEntryIdByUser[userKey] || 0);
+                return (
+                  <tr key={entry.id || index}>
+                    <td>{getRecordDateLabel(entry)}</td>
+                    <td>{usersById[userKey]?.name || entry.customer_name || '-'}</td>
+                    <td>{getLedgerTypeLabel(entry)}</td>
+                    <td>{formatCurrency(toNumber(entry.amount))}</td>
+                    <td>{formatCurrency(toNumber(entry.computed_balance ?? entry.balance))}</td>
+                    <td>{entry.reference || entry.invoice_number || '-'}</td>
+                    <td>{entry.description || '-'}</td>
+                    <td>{isLedgerEntryEdited(entry) ? 'EDITED' : '-'}</td>
+                    <td>
+                      {isLatestForCustomer ? (
+                        <button
+                          type="button"
+                          className="admin-btn"
+                          onClick={() => handleOpenLedgerEdit(entry)}
+                          title="Only latest transaction for this customer can be edited"
+                        >
+                          Edit
+                        </button>
+                      ) : (
+                        '-'
+                      )}
+                    </td>
+                  </tr>
+                );
+              })
             )}
           </tbody>
         </table>
       </div>
 
       {showLedgerForm && (
-        <div className="modal-overlay" onClick={() => setShowLedgerForm(false)}>
+        <div className="modal-overlay" onClick={closeLedgerForm}>
           <div className="modal-content" onClick={(e) => e.stopPropagation()}>
             <div className="modal-header">
-              <h2>Add Customer Payment / Credit</h2>
-              <button className="close-btn" onClick={() => setShowLedgerForm(false)}>
+              <h2>{editingLedgerEntryId ? 'Edit Latest Customer Transaction' : 'Add Customer Payment / Credit'}</h2>
+              <button className="close-btn" onClick={closeLedgerForm}>
                 <X size={24} />
               </button>
             </div>
@@ -337,6 +402,7 @@ function CreditKhata({ user }) {
                   <select
                     value={ledgerFormData.user_id}
                     onChange={(e) => setLedgerFormData((prev) => ({ ...prev, user_id: e.target.value }))}
+                    disabled={!!editingLedgerEntryId}
                     required
                   >
                     <option value="">Select customer</option>
@@ -403,11 +469,11 @@ function CreditKhata({ user }) {
               </div>
 
               <div className="modal-actions">
-                <button type="button" className="cancel-btn" onClick={() => setShowLedgerForm(false)}>
+                <button type="button" className="cancel-btn" onClick={closeLedgerForm}>
                   Cancel
                 </button>
                 <button type="submit" className="submit-btn">
-                  Save Entry
+                  {editingLedgerEntryId ? 'Update Entry' : 'Save Entry'}
                 </button>
               </div>
             </form>

@@ -326,6 +326,11 @@ export const creditApi = {
       method: 'POST',
       body: data,
     }),
+  updateTransaction: (userId, entryId, data) =>
+    apiFetch(`/api/users/${userId}/credit/${entryId}`, {
+      method: 'PUT',
+      body: data,
+    }),
   checkLimit: (customerId, amount) =>
     apiFetch('/api/credit/check-limit', {
       method: 'POST',
