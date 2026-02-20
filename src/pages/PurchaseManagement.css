@@ -338,64 +338,137 @@
 
 /* Order Detail Modal */
 .purchase-management .order-detail-body {
-  padding: 1rem;
+  padding: 0;
   max-height: 70vh;
   overflow-y: auto;
 }
 
-.purchase-management .detail-row {
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-  padding: 0.5rem 0;
-  border-bottom: 1px solid var(--color-border, #e5e7eb);
+.purchase-management .po-invoice-preview {
+  margin: 20px;
+  padding: 22px;
+  border: 1px solid #d1d5db;
+  border-radius: 14px;
+  background: #fff;
 }
 
-.purchase-management .detail-row span {
+.purchase-management .po-invoice-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: 16px;
+  padding-bottom: 14px;
+  border-bottom: 2px solid #e5e7eb;
+}
+
+.purchase-management .po-invoice-header h3 {
+  margin: 0 0 6px;
+  font-size: 28px;
+  color: #0f172a;
+}
+
+.purchase-management .po-invoice-header p {
+  margin: 0;
+  color: #6b7280;
+  font-size: 14px;
+}
+
+.purchase-management .po-invoice-meta {
+  min-width: 260px;
+  display: grid;
+  gap: 8px;
+}
+
+.purchase-management .po-invoice-meta div {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  font-size: 13px;
+}
+
+.purchase-management .po-invoice-meta span {
   color: #6b7280;
 }
 
-.purchase-management .detail-row strong {
-  color: var(--color-text, #1f2937);
+.purchase-management .po-invoice-meta strong {
+  color: #111827;
+  text-align: right;
 }
 
-.purchase-management .order-detail-body h3 {
-  margin: 1.25rem 0 0.75rem;
-  font-size: 1rem;
-  color: var(--color-text, #1f2937);
+.purchase-management .po-party-grid {
+  margin-top: 14px;
+  display: grid;
+  gap: 14px;
+  grid-template-columns: 1fr 1fr;
 }
 
-.purchase-management .order-detail-body .data-table {
-  margin-bottom: 1rem;
+.purchase-management .po-party-card {
+  border: 1px solid #e5e7eb;
+  border-radius: 10px;
+  padding: 12px;
+  background: #f9fafb;
 }
 
-.purchase-management .order-totals {
-  margin-top: 1rem;
-  padding-top: 1rem;
-  border-top: 2px solid var(--color-border, #e5e7eb);
+.purchase-management .po-party-card h4 {
+  margin: 0 0 8px;
+  font-size: 13px;
+  color: #374151;
+  text-transform: uppercase;
+  letter-spacing: 0.4px;
 }
 
-.purchase-management .total-row {
-  display: flex;
-  justify-content: space-between;
-  padding: 0.35rem 0;
+.purchase-management .po-party-card p {
+  margin: 0 0 4px;
+  font-size: 13px;
+  color: #111827;
+  word-break: break-word;
 }
 
-.purchase-management .total-row span {
-  color: #6b7280;
+.purchase-management .po-invoice-table {
+  width: 100%;
+  margin-top: 14px;
+  border-collapse: collapse;
+  border: 1px solid #d1d5db;
 }
 
-.purchase-management .total-row.grand {
-  font-size: 1.1rem;
+.purchase-management .po-invoice-table th,
+.purchase-management .po-invoice-table td {
+  border: 1px solid #d1d5db;
+  padding: 8px;
+  font-size: 12px;
+  color: #111827;
+  text-align: left;
+}
+
+.purchase-management .po-invoice-table thead th {
+  background: #f3f4f6;
   font-weight: 700;
-  margin-top: 0.5rem;
-  padding-top: 0.5rem;
-  border-top: 1px solid var(--color-border, #e5e7eb);
 }
 
-.purchase-management .total-row.grand span,
-.purchase-management .total-row.grand strong {
-  color: var(--color-secondary, #d4af37);
+.purchase-management .po-invoice-summary {
+  width: 320px;
+  margin-top: 14px;
+  margin-left: auto;
+}
+
+.purchase-management .po-summary-row {
+  display: flex;
+  justify-content: space-between;
+  padding: 8px 0;
+  border-bottom: 1px solid #e5e7eb;
+  font-size: 13px;
+}
+
+.purchase-management .po-summary-row.grand {
+  border-bottom: none;
+  font-size: 16px;
+  font-weight: 700;
+  color: #0f172a;
+}
+
+.purchase-management .print-po-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
 }
 
 /* Modal Styles */
@@ -425,6 +498,10 @@
 
 .purchase-management .modal-content.large {
   max-width: 800px;
+}
+
+.purchase-management .modal-content.po-detail-modal {
+  max-width: 980px;
 }
 
 .purchase-management .modal-header {
@@ -709,6 +786,75 @@
   background: white;
 }
 
+.purchase-receive-sheet .mobile-receive-form {
+  padding-bottom: 0.4rem;
+}
+
+.purchase-receive-sheet .mobile-receive-list {
+  display: grid;
+  gap: 0.75rem;
+}
+
+.purchase-receive-sheet .mobile-receive-item {
+  border: 1px solid #e5e7eb;
+  border-radius: 10px;
+  padding: 0.7rem;
+  background: #f9fafb;
+}
+
+.purchase-receive-sheet .mobile-receive-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 0.6rem;
+  margin-bottom: 0.55rem;
+}
+
+.purchase-receive-sheet .mobile-receive-row:last-child {
+  margin-bottom: 0;
+}
+
+.purchase-receive-sheet .mobile-receive-row.value {
+  border-top: 1px solid #e5e7eb;
+  padding-top: 0.45rem;
+}
+
+.purchase-receive-sheet .mobile-receive-row input {
+  width: 120px;
+  padding: 0.5rem 0.6rem;
+  border: 1px solid #d1d5db;
+  border-radius: 8px;
+}
+
+.purchase-receive-sheet .mobile-receive-stepper {
+  display: grid;
+  grid-template-columns: 44px 1fr 44px;
+  gap: 0.4rem;
+  align-items: center;
+  margin-bottom: 0.55rem;
+}
+
+.purchase-receive-sheet .mobile-stepper-btn {
+  width: 44px;
+  height: 44px;
+  border: 1px solid #d1d5db;
+  border-radius: 10px;
+  background: white;
+  color: #111827;
+  font-size: 1.2rem;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.purchase-receive-sheet .mobile-receive-stepper input {
+  width: 100%;
+  min-height: 44px;
+  border: 1px solid #d1d5db;
+  border-radius: 10px;
+  text-align: center;
+  font-size: 1rem;
+}
+
 .purchase-management .cancel-btn {
   padding: 10px 20px;
   border: 1px solid #d1d5db;
@@ -766,6 +912,28 @@
   .purchase-management .form-row {
     grid-template-columns: 1fr;
   }
+
+  .purchase-management .po-invoice-preview {
+    margin: 12px;
+    padding: 14px;
+  }
+
+  .purchase-management .po-invoice-header {
+    flex-direction: column;
+  }
+
+  .purchase-management .po-invoice-meta {
+    width: 100%;
+    min-width: 0;
+  }
+
+  .purchase-management .po-party-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .purchase-management .po-invoice-summary {
+    width: 100%;
+  }
 }
 
 @media (max-width: 768px) {
@@ -790,5 +958,44 @@
 
   .purchase-management .data-table table {
     min-width: 800px;
+  }
+}
+
+@media print {
+  .purchase-management .modal-overlay {
+    position: static;
+    background: transparent;
+    padding: 0;
+  }
+
+  .purchase-management .modal-content {
+    box-shadow: none;
+    border: none;
+    max-width: 100%;
+    max-height: none;
+    overflow: visible;
+  }
+
+  .purchase-management .modal-header,
+  .purchase-management .modal-actions,
+  .purchase-management .close-btn {
+    display: none !important;
+  }
+
+  .purchase-management .order-detail-body {
+    max-height: none;
+    overflow: visible;
+  }
+
+  .purchase-management .po-invoice-preview {
+    margin: 0;
+    border: none;
+    border-radius: 0;
+    padding: 0;
+  }
+
+  .purchase-management .po-invoice-table tr,
+  .purchase-management .po-invoice-summary {
+    page-break-inside: avoid;
   }
 }

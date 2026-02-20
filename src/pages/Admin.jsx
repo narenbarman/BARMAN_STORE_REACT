@@ -1,8 +1,9 @@
 import { useState, useEffect, useRef, useMemo } from 'react';
 import { Link, useNavigate, useSearchParams } from 'react-router-dom';
-import { Package, ShoppingCart, Users, TrendingUp, LogOut, Plus, Edit, Trash2, X, FolderOpen, CreditCard, FileText, Truck, ShoppingBag, History, BarChart2, Gift, KeyRound, Eye, Menu, Upload, Download, CheckCircle2 } from 'lucide-react';
+import { Package, ShoppingCart, Users, TrendingUp, LogOut, Plus, Edit, Trash2, X, FolderOpen, CreditCard, FileText, Truck, ShoppingBag, History, BarChart2, Gift, KeyRound, Eye, Menu, Upload, Download, CheckCircle2, Clock } from 'lucide-react';
 import { statsApi, productsApi, ordersApi, usersApi, adminApi } from '../services/api';
 import { getProductImageSrc, getProductFallbackImage } from '../utils/productImage';
+import { formatCurrency, getSignedCurrencyClassName } from '../utils/formatters';
 import ProductForm from './ProductForm';
 import CategoryManagement from './CategoryManagement';
 import DistributorManagement from './DistributorManagement';
@@ -17,21 +18,10 @@ import PasswordResetRequests from './PasswordResetRequests';
 import CreditKhata from './CreditKhata';
 import './Admin.css';
 
-// Currency formatter with Indian Rupee symbol
-const formatCurrency = (amount) => {
-  return new Intl.NumberFormat('en-IN', {
-    style: 'currency',
-    currency: 'INR',
-    minimumFractionDigits: 2,
-    maximumFractionDigits: 2
-  }).format(amount);
-};
-
 // Currency formatter with conditional color styling
 const formatCurrencyColored = (amount) => {
   const formatted = formatCurrency(Math.abs(amount));
-  const isPositive = amount >= 0;
-  return <span className={isPositive ? 'amount-positive' : 'amount-negative'}>{formatted}</span>;
+  return <span className={getSignedCurrencyClassName(amount)}>{formatted}</span>;
 };
 
 const formatBytes = (bytes) => {
@@ -136,6 +126,7 @@ function Admin({ user }) {
   const [showExportDialog, setShowExportDialog] = useState(false);
   const [exportFormat, setExportFormat] = useState('csv');
   const [importPreviewData, setImportPreviewData] = useState(null);
+  const [importAllowIdenticalRows, setImportAllowIdenticalRows] = useState([]);
   const [importBusy, setImportBusy] = useState(false);
   const importFileInputRef = useRef(null);
   const tabGroupMap = {
@@ -166,7 +157,7 @@ function Admin({ user }) {
   const refreshAdminData = async () => {
     const [statsData, productsData, ordersData, usersData] = await Promise.all([
       statsApi.orders(),
-      productsApi.getAll(),
+      productsApi.getAll({ include_inactive: true }),
       ordersApi.getAll(),
       usersApi.getAll()
     ]);
@@ -235,8 +226,8 @@ function Admin({ user }) {
   };
 
   useEffect(() => {
-    // Check if user is admin
-    if (user && user.role !== 'admin') {
+    if (!user) return;
+    if (user.role !== 'admin') {
       navigate('/');
       return;
     }
@@ -284,9 +275,11 @@ function Admin({ user }) {
 
   const fetchData = async () => {
     try {
+      setLoading(true);
       await refreshAdminData();
     } catch (error) {
       console.error('Error fetching data:', error);
+      showNotification(error.message || 'Failed to load admin dashboard data', 'error');
     } finally {
       setLoading(false);
     }
@@ -340,18 +333,41 @@ function Admin({ user }) {
   };
 
   const handleDeleteProduct = async (id) => {
-    if (!window.confirm('Are you sure you want to delete this product?')) return;
+    if (!window.confirm('Mark this product as inactive?')) return;
     
     try {
       await productsApi.delete(id);
-      setProducts(prev => prev.filter(p => p.id !== id));
-      showNotification('Product deleted successfully', 'success');
+      const updatedProducts = await productsApi.getAll({ include_inactive: true });
+      setProducts(updatedProducts);
+      showNotification('Product marked inactive', 'success');
       
       // Refresh stats
       const statsData = await statsApi.orders();
       setStats(statsData);
     } catch (error) {
       showNotification('Failed to delete product', 'error');
+    }
+  };
+
+  const handlePermanentDeleteProduct = async (product) => {
+    if (Number(product?.is_active ?? 1) === 1) {
+      showNotification('Deactivate product before permanent delete', 'error');
+      return;
+    }
+    const productName = String(product?.name || '').trim();
+    const confirmed = window.prompt(
+      `Permanent delete "${productName}"? This cannot be undone.\nType DELETE to confirm:`,
+      ''
+    );
+    if (confirmed !== 'DELETE') return;
+
+    try {
+      await productsApi.deletePermanent(product.id);
+      const updatedProducts = await productsApi.getAll({ include_inactive: true });
+      setProducts(updatedProducts);
+      showNotification('Product permanently deleted', 'success');
+    } catch (error) {
+      showNotification(error.message || 'Failed to permanently delete product', 'error');
     }
   };
 
@@ -379,7 +395,7 @@ function Admin({ user }) {
 
   const handleProductSave = async (meta = {}) => {
     try {
-      const updatedProducts = await productsApi.getAll();
+      const updatedProducts = await productsApi.getAll({ include_inactive: true });
       setProducts(updatedProducts);
       
       // Refresh stats
@@ -412,6 +428,45 @@ function Admin({ user }) {
   const productCategories = Array.from(
     new Set(products.map(p => String(p.category || '').trim()).filter(Boolean))
   ).sort((a, b) => a.localeCompare(b));
+
+  const activeProductsCount = useMemo(
+    () => products.filter((p) => Number(p?.is_active ?? 1) === 1).length,
+    [products]
+  );
+
+  const inactiveProductsCount = Math.max(0, products.length - activeProductsCount);
+
+  const customerUsers = useMemo(
+    () => users.filter((u) => String(u?.role || '').toLowerCase() !== 'admin'),
+    [users]
+  );
+
+  const pendingOrdersList = useMemo(
+    () => orders.filter((o) => String(o?.status || '').toLowerCase() === 'pending'),
+    [orders]
+  );
+
+  const recentOrders = useMemo(
+    () => [...orders]
+      .sort((a, b) => new Date(b?.created_at || 0).getTime() - new Date(a?.created_at || 0).getTime())
+      .slice(0, 3),
+    [orders]
+  );
+
+  const lowStockProducts = useMemo(
+    () => products
+      .filter((p) => Number(p?.is_active ?? 1) === 1 && asNumber(p?.stock, 0) <= 10)
+      .sort((a, b) => asNumber(a?.stock, 0) - asNumber(b?.stock, 0))
+      .slice(0, 3),
+    [products]
+  );
+
+  const recentCustomers = useMemo(
+    () => [...customerUsers]
+      .sort((a, b) => new Date(b?.created_at || 0).getTime() - new Date(a?.created_at || 0).getTime())
+      .slice(0, 3),
+    [customerUsers]
+  );
 
   const visibleProducts = useMemo(() => {
     const query = String(productTableSearch || '').trim().toLowerCase();
@@ -557,9 +612,6 @@ function Admin({ user }) {
   };
 
   const handleTableEditSave = async (product) => {
-    const normalizeKey = (value) => String(value || '').trim().toLowerCase();
-    const identityOf = (row) => `${normalizeKey(row?.name)}|${normalizeKey(row?.brand)}|${normalizeKey(row?.content)}`;
-
     const payload = {
       name: String(tableEditForm.name || '').trim(),
       description: String(tableEditForm.description || '').trim(),
@@ -577,7 +629,7 @@ function Admin({ user }) {
       defaultDiscount: asNumber(tableEditForm.defaultDiscount, 0),
       discountType: tableEditForm.discountType === 'percentage' ? 'percentage' : 'fixed',
       image: String(tableEditForm.image || '').trim(),
-      is_active: tableEditForm.is_active ? 1 : 0,
+      is_active: Number(product.is_active ?? 1) === 0 ? 1 : (tableEditForm.is_active ? 1 : 0),
       base_unit: product.base_unit || 'pcs',
       uom_type: product.uom_type || 'selling',
       conversion_factor: asNumber(product.conversion_factor, 1) || 1
@@ -600,21 +652,20 @@ function Admin({ user }) {
       return;
     }
 
-    const duplicate = (products || []).find((row) => {
-      if (Number(row?.id || 0) === Number(product.id || 0)) return false;
-      const sameSku = normalizeKey(payload.sku) && normalizeKey(row?.sku) && normalizeKey(payload.sku) === normalizeKey(row?.sku);
-      const sameBarcode = normalizeKey(payload.barcode) && normalizeKey(row?.barcode) && normalizeKey(payload.barcode) === normalizeKey(row?.barcode);
-      const sameIdentity = normalizeKey(payload.name) && identityOf(payload) === identityOf(row);
-      return sameSku || sameBarcode || sameIdentity;
-    });
-    if (duplicate) {
-      showNotification(`Duplicate conflict with "${duplicate.name}"`, 'error');
-      return;
-    }
-
     try {
       setTableEditSaving(true);
-      await productsApi.update(product.id, payload);
+      try {
+        await productsApi.update(product.id, payload);
+      } catch (error) {
+        const conflictType = String(error?.payload?.conflict_type || '');
+        if (Number(error?.status) === 409 && conflictType === 'identical') {
+          const ok = window.confirm(`${error.message}\n\nContinue anyway?`);
+          if (!ok) return;
+          await productsApi.update(product.id, { ...payload, allow_identical: true });
+        } else {
+          throw error;
+        }
+      }
       await handleProductSave({ mode: 'edit', createdCount: 0 });
       cancelTableEdit();
     } catch (error) {
@@ -689,7 +740,19 @@ function Admin({ user }) {
 
     try {
       setQuickSaving(true);
-      await productsApi.create(makeQuickPayload(quickAddForm));
+      const payload = makeQuickPayload(quickAddForm);
+      try {
+        await productsApi.create(payload);
+      } catch (error) {
+        const conflictType = String(error?.payload?.conflict_type || '');
+        if (Number(error?.status) === 409 && conflictType === 'identical') {
+          const ok = window.confirm(`${error.message}\n\nContinue anyway?`);
+          if (!ok) return;
+          await productsApi.create({ ...payload, allow_identical: true });
+        } else {
+          throw error;
+        }
+      }
       await handleProductSave({ mode: 'create', createdCount: 1 });
       setShowQuickAdd(false);
       resetQuickAdd();
@@ -727,7 +790,19 @@ function Admin({ user }) {
 
     try {
       setQuickSaving(true);
-      await productsApi.update(product.id, makeQuickPayload(quickEditForm, product));
+      const payload = makeQuickPayload(quickEditForm, product);
+      try {
+        await productsApi.update(product.id, payload);
+      } catch (error) {
+        const conflictType = String(error?.payload?.conflict_type || '');
+        if (Number(error?.status) === 409 && conflictType === 'identical') {
+          const ok = window.confirm(`${error.message}\n\nContinue anyway?`);
+          if (!ok) return;
+          await productsApi.update(product.id, { ...payload, allow_identical: true });
+        } else {
+          throw error;
+        }
+      }
       await handleProductSave({ mode: 'edit', createdCount: 0 });
       cancelQuickEdit();
     } catch (error) {
@@ -826,6 +901,7 @@ function Admin({ user }) {
         stock_mode: 'replace',
       });
       setImportPreviewData(data);
+      setImportAllowIdenticalRows([]);
       showNotification('Import preview generated. Review and confirm.', 'success');
     } catch (error) {
       setImportPreviewData(null);
@@ -845,10 +921,12 @@ function Admin({ user }) {
       const result = await productsApi.importConfirm({
         batch_id: importPreviewData.batch_id,
         checksum: importPreviewData.checksum,
+        allow_identical_rows: importAllowIdenticalRows,
       });
       await handleProductSave({ mode: 'create' });
       setImportPreviewData(null);
       setImportFile(null);
+      setImportAllowIdenticalRows([]);
       showNotification(`Import applied. Created: ${result.created}, Updated: ${result.updated}`, 'success');
     } catch (error) {
       showNotification(error.message || 'Failed to confirm import', 'error');
@@ -894,6 +972,19 @@ function Admin({ user }) {
           <h1>Access Denied</h1>
           <p>You must be an admin to access this page.</p>
           <Link to="/login" className="admin-btn">Go to Login</Link>
+        </div>
+      </div>
+    );
+  }
+
+  if (loading) {
+    return (
+      <div className="admin-page">
+        <div className="admin-content">
+          <div className="admin-loading-state">
+            <h2>Loading admin dashboard...</h2>
+            <p>Fetching orders, products, users and summary stats.</p>
+          </div>
         </div>
       </div>
     );
@@ -1126,16 +1217,104 @@ function Admin({ user }) {
               <div className="stat-card">
                 <Package size={40} />
                 <div>
-                  <h3>{products.length}</h3>
-                  <p>Products</p>
+                  <h3>{activeProductsCount}</h3>
+                  <p>Active Products ({inactiveProductsCount} inactive)</p>
                 </div>
               </div>
               <div className="stat-card">
                 <Users size={40} />
                 <div>
-                  <h3>{users.length}</h3>
-                  <p>Users</p>
+                  <h3>{customerUsers.length}</h3>
+                  <p>Customers</p>
                 </div>
+              </div>
+              <div className="stat-card">
+                <Clock size={40} />
+                <div>
+                  <h3>{pendingOrdersList.length}</h3>
+                  <p>Pending Orders</p>
+                </div>
+              </div>
+            </div>
+
+            <div className="dashboard-panels">
+              <div className="dashboard-panel">
+                <div className="dashboard-panel-head">
+                  <h3>Quick Actions</h3>
+                </div>
+                <div className="dashboard-actions">
+                  <button className="admin-btn" onClick={() => handleTabChange('orders')}>Manage Orders</button>
+                  <button className="admin-btn" onClick={() => handleTabChange('products')}>Manage Products</button>
+                  <button className="admin-btn" onClick={() => handleTabChange('billing')}>Create Bill</button>
+                  <button className="admin-btn" onClick={() => handleTabChange('credit-khata')}>Credit Khata</button>
+                  <button className="admin-btn" onClick={() => handleTabChange('purchases')}>Purchases</button>
+                  <button className="admin-btn" onClick={() => handleTabChange('backup-restore')}>Backup & Restore</button>
+                </div>
+              </div>
+
+              <div className="dashboard-panel">
+                <div className="dashboard-panel-head">
+                  <h3>Low Stock (≤ 10)</h3>
+                  <button className="admin-btn" onClick={() => handleTabChange('products')}>Open Products</button>
+                </div>
+                {lowStockProducts.length === 0 ? (
+                  <p className="dashboard-empty">No low stock products.</p>
+                ) : (
+                  <div className="dashboard-list">
+                    {lowStockProducts.map((product) => (
+                      <div className="dashboard-list-row" key={product.id}>
+                        <span>{product.name}</span>
+                        <strong>{asNumber(product.stock, 0)}</strong>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+
+              <div className="dashboard-panel">
+                <div className="dashboard-panel-head">
+                  <h3>Recent Orders</h3>
+                  <button className="admin-btn" onClick={() => handleTabChange('orders')}>View All</button>
+                </div>
+                {recentOrders.length === 0 ? (
+                  <p className="dashboard-empty">No orders yet.</p>
+                ) : (
+                  <div className="dashboard-list">
+                    {recentOrders.map((order) => (
+                      <div className="dashboard-list-row" key={order.id}>
+                        <span>{order.order_number || `#${order.id}`}</span>
+                        <span>{new Date(order.created_at || Date.now()).toLocaleDateString()}</span>
+                        <span>{formatCurrency(order.total_amount || 0)}</span>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+
+              <div className="dashboard-panel">
+                <div className="dashboard-panel-head">
+                  <h3>Recent Customers</h3>
+                  <button className="admin-btn" onClick={() => handleTabChange('users')}>Open Users</button>
+                </div>
+                {recentCustomers.length === 0 ? (
+                  <p className="dashboard-empty">No customers found.</p>
+                ) : (
+                  <div className="dashboard-list">
+                    {recentCustomers.map((customer) => (
+                      <div className="dashboard-list-row" key={customer.id}>
+                        <span>{customer.name || '-'}</span>
+                        <span>{customer.phone || customer.email || '-'}</span>
+                        <Link
+                          className="action-btn credit"
+                          to={`/admin/users/${customer.id}/credit?returnTab=dashboard`}
+                          title="Open credit history"
+                        >
+                          <CreditCard size={14} />
+                        </Link>
+                      </div>
+                    ))}
+                  </div>
+                )}
               </div>
             </div>
           </div>
@@ -1214,6 +1393,7 @@ function Admin({ user }) {
                   <span>Creates: {importPreviewData.summary.creates}</span>
                   <span>Updates: {importPreviewData.summary.updates}</span>
                   <span>Errors: {importPreviewData.summary.errors}</span>
+                  <span>Needs Choice: {importPreviewData.summary.needs_confirmation || 0}</span>
                   <span>Expires: {new Date(importPreviewData.expires_at).toLocaleString()}</span>
                 </div>
               )}
@@ -1225,6 +1405,7 @@ function Admin({ user }) {
                         <th>Row</th>
                         <th>Action</th>
                         <th>Status</th>
+                        <th>Allow</th>
                         <th>Details</th>
                       </tr>
                     </thead>
@@ -1234,7 +1415,28 @@ function Admin({ user }) {
                           <td>{row.row}</td>
                           <td>{row.action}</td>
                           <td>{row.status}</td>
-                          <td>{row.errors?.length ? row.errors.join('; ') : 'Ready'}</td>
+                          <td>
+                            {row.status === 'needs_confirmation' ? (
+                              <input
+                                type="checkbox"
+                                checked={importAllowIdenticalRows.includes(Number(row.row))}
+                                onChange={(e) => {
+                                  const rowNo = Number(row.row);
+                                  setImportAllowIdenticalRows((prev) => {
+                                    if (e.target.checked) return Array.from(new Set([...prev, rowNo]));
+                                    return prev.filter((v) => v !== rowNo);
+                                  });
+                                }}
+                              />
+                            ) : '-'}
+                          </td>
+                          <td>
+                            {row.errors?.length
+                              ? row.errors.join('; ')
+                              : row.warnings?.length
+                                ? row.warnings.join('; ')
+                                : 'Ready'}
+                          </td>
                         </tr>
                       ))}
                     </tbody>
@@ -1379,6 +1581,15 @@ function Admin({ user }) {
                                   <button className="action-btn delete" onClick={() => handleDeleteProduct(product.id)}>
                                     <Trash2 size={16} />
                                   </button>
+                                  {Number(product.is_active ?? 1) === 0 && (
+                                    <button
+                                      className="action-btn delete"
+                                      title="Permanent delete"
+                                      onClick={() => handlePermanentDeleteProduct(product)}
+                                    >
+                                      <X size={16} />
+                                    </button>
+                                  )}
                                 </>
                               )}
                             </td>

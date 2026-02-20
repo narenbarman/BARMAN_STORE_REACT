@@ -301,6 +301,21 @@
   border-top: 1px solid var(--color-border);
 }
 
+.product-form-sheet .product-form {
+  padding: 0.2rem 0 0;
+}
+
+.product-form-sheet .error-message {
+  margin: 0 0 0.8rem;
+}
+
+.product-form-sheet .form-actions {
+  position: sticky;
+  bottom: 0;
+  background: var(--color-card);
+  padding-bottom: calc(0.6rem + env(safe-area-inset-bottom, 0px));
+}
+
 .cancel-btn {
   padding: 0.875rem 1.5rem;
   background: none;
@@ -314,6 +329,7 @@
   cursor: pointer;
   border-radius: 8px;
   transition: all 0.3s ease;
+  min-height: 44px;
 }
 
 .cancel-btn:hover {
@@ -334,6 +350,7 @@
   cursor: pointer;
   border-radius: 8px;
   transition: all 0.3s ease;
+  min-height: 44px;
 }
 
 .submit-btn:hover:not(:disabled) {

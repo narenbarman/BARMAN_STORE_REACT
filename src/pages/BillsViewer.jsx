@@ -2,6 +2,8 @@ import React, { useState, useEffect } from 'react';
 import { Download, Trash2, Search } from 'lucide-react';
 import { billingApi } from '../services/api';
 import { buildWhatsAppUrl } from '../utils/whatsapp';
+import { printHtmlDocument, escapeHtml } from '../utils/printService';
+import { createPdfDoc, addAutoTable, addPdfFooterWithPagination, savePdf, safeFileName } from '../utils/pdfService';
 import company from '../config/company';
 import './BillsViewer.css';
 
@@ -49,43 +51,91 @@ const BillsViewer = () => {
   };
 
   const downloadBillPDF = (bill) => {
-    // Generate simple PDF content
-    const content = `
-BILL
-======================================
-Bill #: ${bill.bill_number}
-Date: ${new Date(bill.created_at).toLocaleDateString()}
+    const doc = createPdfDoc();
+    const primaryColor = [41, 128, 185];
+    const secondaryColor = [52, 73, 94];
+    const rows = (Array.isArray(bill.items) ? bill.items : []).map((item) => [
+      String(item.product_name || item.name || '-'),
+      Number(item.qty || item.quantity || 0),
+      String(item.unit || '-'),
+      { content: `Rs ${Number(item.mrp || 0).toFixed(2)}`, styles: { halign: 'right' } },
+      { content: `Rs ${Number(item.discount || 0).toFixed(2)}`, styles: { halign: 'right' } },
+      { content: `Rs ${Number(item.amount || 0).toFixed(2)}`, styles: { halign: 'right' } },
+    ]);
 
-CUSTOMER DETAILS
-Name: ${bill.customer_name}
-Email: ${bill.customer_email}
-Phone: ${bill.customer_phone}
-Address: ${bill.customer_address || 'N/A'}
+    doc.setFillColor(...primaryColor);
+    doc.rect(0, 0, 210, 40, 'F');
+    doc.setTextColor(255, 255, 255);
+    doc.setFontSize(22);
+    doc.setFont('helvetica', 'bold');
+    doc.text(company.name || 'BARMAN STORE', 105, 15, { align: 'center' });
+    doc.setFontSize(10);
+    doc.setFont('helvetica', 'normal');
+    doc.text(`${company.address || ''} | ${company.phone || ''}`, 105, 24, { align: 'center' });
+    doc.text(`GST: ${company.gstNumber || '-'}`, 105, 31, { align: 'center' });
 
-======================================
-Items
-======================================
-Product | Qty | Unit | Discount | Amount
---------------------------------------
-${bill.items?.map(item => `${item.product_name} | ${item.qty} | ${item.unit} | ${item.discount} | ₹${item.amount}`).join('\n')}
+    doc.setTextColor(...secondaryColor);
+    doc.setFontSize(15);
+    doc.setFont('helvetica', 'bold');
+    doc.text('Bill Invoice', 105, 50, { align: 'center' });
 
-======================================
-Subtotal: ₹${bill.subtotal}
-Discount: ₹${bill.discount_amount}
-Total: ₹${bill.total_amount}
+    doc.setFontSize(10);
+    doc.setFont('helvetica', 'normal');
+    doc.text(`Bill #: ${bill.bill_number || '-'}`, 14, 60);
+    doc.text(`Date: ${new Date(bill.created_at || Date.now()).toLocaleString()}`, 14, 66);
+    doc.text(`Customer: ${bill.customer_name || '-'}`, 14, 72);
+    if (bill.customer_phone) doc.text(`Phone: ${bill.customer_phone}`, 14, 78);
+    if (bill.customer_email) doc.text(`Email: ${bill.customer_email}`, 14, 84);
+    if (bill.customer_address) doc.text(`Address: ${bill.customer_address}`, 14, 90);
 
-Payment Method: ${bill.payment_method}
-Payment Status: ${bill.payment_status}
-======================================
-    `;
+    addAutoTable(doc, {
+      startY: 96,
+      head: [['Product', 'Qty', 'Unit', 'MRP', 'Discount', 'Amount']],
+      body: rows,
+      theme: 'striped',
+      headStyles: {
+        fillColor: primaryColor,
+        textColor: [255, 255, 255],
+        fontStyle: 'bold',
+        fontSize: 9
+      },
+      bodyStyles: {
+        fontSize: 8,
+        cellPadding: 3
+      },
+      columnStyles: {
+        0: { cellWidth: 'auto' },
+        1: { cellWidth: 14, halign: 'right' },
+        2: { cellWidth: 16 },
+        3: { cellWidth: 26, halign: 'right' },
+        4: { cellWidth: 26, halign: 'right' },
+        5: { cellWidth: 28, halign: 'right' },
+      },
+      margin: { left: 14, right: 14 }
+    });
 
-    const element = document.createElement('a');
-    element.setAttribute('href', 'data:text/plain;charset=utf-8,' + encodeURIComponent(content));
-    element.setAttribute('download', `${bill.bill_number}.txt`);
-    element.style.display = 'none';
-    document.body.appendChild(element);
-    element.click();
-    document.body.removeChild(element);
+    const finalY = (doc.lastAutoTable?.finalY || 96) + 8;
+    doc.setFontSize(10);
+    doc.setFont('helvetica', 'bold');
+    doc.text(`Subtotal: Rs ${Number(bill.subtotal || 0).toFixed(2)}`, 130, finalY);
+    doc.text(`Discount: Rs ${Number(bill.discount_amount || 0).toFixed(2)}`, 130, finalY + 7);
+    doc.text(`Total: Rs ${Number(bill.total_amount || 0).toFixed(2)}`, 130, finalY + 14);
+    doc.setFont('helvetica', 'normal');
+    doc.text(`Payment: ${bill.payment_method || '-'}`, 14, finalY + 7);
+    doc.text(`Status: ${bill.payment_status || '-'}`, 14, finalY + 14);
+
+    addPdfFooterWithPagination(doc, (pdf, i, pageCount) => {
+      pdf.setFontSize(8);
+      pdf.setTextColor(140, 140, 140);
+      pdf.text(
+        `Generated on ${new Date().toLocaleString('en-IN')} | Page ${i} of ${pageCount}`,
+        105,
+        pdf.internal.pageSize.height - 10,
+        { align: 'center' }
+      );
+    });
+
+    savePdf(doc, `${safeFileName(bill.bill_number || 'Bill')}_Invoice`);
   };
 
   const buildShareText = (bill) => {
@@ -127,9 +177,9 @@ Payment Status: ${bill.payment_status}
   const buildInvoiceHtml = (bill) => {
     const items = Array.isArray(bill.items) ? bill.items : [];
     const rows = items.map((it) => {
-      const name = it.product_name || it.name || 'Item';
+      const name = escapeHtml(it.product_name || it.name || 'Item');
       const qty = Number(it.qty || it.quantity || 0);
-      const unit = it.unit || '';
+      const unit = escapeHtml(it.unit || '');
       const mrp = Number(it.mrp || 0);
       const discount = Number(it.discount || 0);
       const amount = Number(it.amount || 0);
@@ -150,25 +200,25 @@ Payment Status: ${bill.payment_status}
           <div class="invoice-brand">
             ${company.logoPath ? `<img src="${company.logoPath}" alt="Logo" />` : ''}
             <div>
-              <div class="company-name">${company.name}</div>
-              <div class="company-meta">GST: ${company.gstNumber}</div>
-              <div class="company-meta">${company.address}</div>
-              <div class="company-meta">${company.phone} | ${company.email}</div>
+              <div class="company-name">${escapeHtml(company.name)}</div>
+              <div class="company-meta">GST: ${escapeHtml(company.gstNumber)}</div>
+              <div class="company-meta">${escapeHtml(company.address)}</div>
+              <div class="company-meta">${escapeHtml(company.phone)} | ${escapeHtml(company.email)}</div>
             </div>
           </div>
           <div class="invoice-info">
-            <div><strong>Bill #</strong> ${bill.bill_number || ''}</div>
+            <div><strong>Bill #</strong> ${escapeHtml(bill.bill_number || '')}</div>
             <div><strong>Date</strong> ${new Date(bill.created_at || Date.now()).toLocaleString()}</div>
-            <div><strong>Status</strong> ${bill.payment_status || ''}</div>
+            <div><strong>Status</strong> ${escapeHtml(bill.payment_status || '')}</div>
           </div>
         </div>
 
         <div class="invoice-section">
           <div><strong>Customer</strong></div>
-          <div>${bill.customer_name || ''}</div>
-          ${bill.customer_phone ? `<div>${bill.customer_phone}</div>` : ''}
-          ${bill.customer_email ? `<div>${bill.customer_email}</div>` : ''}
-          ${bill.customer_address ? `<div>${bill.customer_address}</div>` : ''}
+          <div>${escapeHtml(bill.customer_name || '')}</div>
+          ${bill.customer_phone ? `<div>${escapeHtml(bill.customer_phone)}</div>` : ''}
+          ${bill.customer_email ? `<div>${escapeHtml(bill.customer_email)}</div>` : ''}
+          ${bill.customer_address ? `<div>${escapeHtml(bill.customer_address)}</div>` : ''}
         </div>
 
         <table class="invoice-table">
@@ -203,38 +253,26 @@ Payment Status: ${bill.payment_status}
 
   const handlePrint = (bill) => {
     const html = buildInvoiceHtml(bill);
-    const w = window.open('', '_blank');
-    if (!w) {
-      alert('Popup blocked. Please allow popups to print.');
-      return;
-    }
-    w.document.write(`
-      <html>
-        <head>
-          <title>Bill ${bill.bill_number || ''}</title>
-          <style>
-            body { font-family: Arial, sans-serif; padding: 24px; color: #111; }
-            .invoice { max-width: 800px; margin: 0 auto; }
-            .invoice-header { display: flex; justify-content: space-between; gap: 16px; margin-bottom: 16px; }
-            .invoice-brand { display: flex; gap: 12px; align-items: center; }
-            .invoice-brand img { width: 60px; height: 60px; object-fit: contain; }
-            .company-name { font-size: 18px; font-weight: 700; }
-            .company-meta { font-size: 12px; color: #444; }
-            .invoice-info { text-align: right; font-size: 12px; }
-            .invoice-section { margin: 12px 0 16px; font-size: 12px; }
-            .invoice-table { width: 100%; border-collapse: collapse; font-size: 12px; }
-            .invoice-table th, .invoice-table td { border: 1px solid #ddd; padding: 6px; text-align: left; }
-            .invoice-summary { margin-top: 12px; display: grid; gap: 6px; font-size: 12px; }
-            .invoice-summary div { display: flex; justify-content: space-between; }
-            .invoice-footer { margin-top: 16px; font-size: 12px; text-align: center; color: #444; }
-          </style>
-        </head>
-        <body>${html}</body>
-      </html>
-    `);
-    w.document.close();
-    w.focus();
-    w.print();
+    printHtmlDocument({
+      title: `Bill ${bill.bill_number || ''}`,
+      bodyHtml: html,
+      cssText: `
+        .invoice { max-width: 800px; margin: 0 auto; }
+        .invoice-header { display: flex; justify-content: space-between; gap: 16px; margin-bottom: 16px; }
+        .invoice-brand { display: flex; gap: 12px; align-items: center; }
+        .invoice-brand img { width: 60px; height: 60px; object-fit: contain; }
+        .company-name { font-size: 18px; font-weight: 700; }
+        .company-meta { font-size: 12px; color: #444; }
+        .invoice-info { text-align: right; font-size: 12px; }
+        .invoice-section { margin: 12px 0 16px; font-size: 12px; }
+        .invoice-table { width: 100%; border-collapse: collapse; font-size: 12px; }
+        .invoice-table th, .invoice-table td { border: 1px solid #ddd; padding: 6px; text-align: left; }
+        .invoice-summary { margin-top: 12px; display: grid; gap: 6px; font-size: 12px; }
+        .invoice-summary div { display: flex; justify-content: space-between; }
+        .invoice-footer { margin-top: 16px; font-size: 12px; text-align: center; color: #444; }
+      `,
+      onError: (message) => alert(message),
+    });
   };
 
   const handleCopyShare = async (bill) => {
@@ -341,9 +379,9 @@ Payment Status: ${bill.payment_status}
                   <button
                     className="action-btn download-btn"
                     onClick={() => downloadBillPDF(selectedBill)}
-                    title="Download bill"
+                    title="Download PDF"
                   >
-                    <Download size={18} /> Download
+                    <Download size={18} /> PDF
                   </button>
                   <button
                     className="action-btn share-btn"
@@ -479,3 +517,4 @@ Payment Status: ${bill.payment_status}
 };
 
 export default BillsViewer;
+

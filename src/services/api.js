@@ -106,6 +106,10 @@ export const productsApi = {
     apiFetch(`/api/products/${id}`, {
       method: 'DELETE',
     }),
+  deletePermanent: (id) =>
+    apiFetch(`/api/products/${id}/permanent`, {
+      method: 'DELETE',
+    }),
   getTemplateUrl: (format = 'csv') => {
     const query = new URLSearchParams({ format }).toString();
     const baseUrl = getApiUrl();

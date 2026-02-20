@@ -29,6 +29,11 @@ const routerFuture = {
   v7_relativeSplatPath: true
 };
 
+const routerBasename = (() => {
+  const base = String(import.meta.env.BASE_URL || '/');
+  return base === '/' ? '/' : base.replace(/\/$/, '');
+})();
+
 function App() {
   const [cartCount, setCartCount] = useState(0);
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
@@ -44,7 +49,7 @@ function App() {
 
   return (
     <ErrorBoundary>
-      <Router future={routerFuture}>
+      <Router basename={routerBasename} future={routerFuture}>
       <div className="app">
         {/* Header */}
         <header className="header">

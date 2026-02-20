@@ -6,17 +6,8 @@ import { openWhatsApp } from '../utils/whatsapp';
 import * as info from './info';
 import { printHtmlDocument, escapeHtml } from '../utils/printService';
 import { createPdfDoc, addAutoTable, addPdfFooterWithPagination, savePdf, safeFileName } from '../utils/pdfService';
+import { formatCurrency, getSignedCurrencyClassName } from '../utils/formatters';
 import './CreditHistory.css';
-
-// Currency formatter with Indian Rupee symbol
-const formatCurrency = (amount) => {
-  return new Intl.NumberFormat('en-IN', {
-    style: 'currency',
-    currency: 'INR',
-    minimumFractionDigits: 2,
-    maximumFractionDigits: 2
-  }).format(amount);
-};
 
 // Currency format for PDF table and summary values.
 const formatPdfCurrency = (amount) => {
@@ -107,8 +98,7 @@ const getPdfColumnStyles = (doc) => {
 // Currency formatter with conditional color styling
 const formatCurrencyColored = (amount) => {
   const formatted = formatCurrency(Math.abs(amount));
-  const isPositive = amount >= 0;
-  return <span className={isPositive ? 'amount-positive' : 'amount-negative'}>{formatted}</span>;
+  return <span className={getSignedCurrencyClassName(amount)}>{formatted}</span>;
 };
 
 const FIVE_DAYS_MS = 5 * 24 * 60 * 60 * 1000;

@@ -1,8 +1,7 @@
 import React, { useEffect, useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import { ordersApi } from '../services/api';
-
-const formatCurrency = (amount) => new Intl.NumberFormat('en-IN', { style: 'currency', currency: 'INR', minimumFractionDigits: 2 }).format(amount);
+import { formatCurrency } from '../utils/formatters';
 
 export default function MyOrders() {
   const [orders, setOrders] = useState([]);

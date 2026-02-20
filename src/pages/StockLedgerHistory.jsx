@@ -1,6 +1,7 @@
 import { useState, useEffect } from 'react';
 import { Search, Filter, Download, RefreshCw, ArrowUp, ArrowDown, Minus } from 'lucide-react';
 import { stockLedgerApi, productsApi } from '../services/api';
+import { formatCurrency } from '../utils/formatters';
 import './StockLedgerHistory.css';
 
 function StockLedgerHistory({ user }) {
@@ -90,13 +91,6 @@ function StockLedgerHistory({ user }) {
     };
     const c = config[type] || { label: type, class: '' };
     return <span className={`type-badge ${c.class}`}>{c.label}</span>;
-  };
-
-  const formatCurrency = (amount) => {
-    return new Intl.NumberFormat('en-IN', {
-      style: 'currency',
-      currency: 'INR'
-    }).format(amount);
   };
 
   const transactionTypes = [

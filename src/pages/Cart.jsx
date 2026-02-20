@@ -1,23 +1,13 @@
 import { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { Trash2, Plus, Minus, ShoppingBag } from 'lucide-react';
+import { formatCurrency, getSignedCurrencyClassName } from '../utils/formatters';
 import './Cart.css';
-
-// Currency formatter with Indian Rupee symbol
-const formatCurrency = (amount) => {
-  return new Intl.NumberFormat('en-IN', {
-    style: 'currency',
-    currency: 'INR',
-    minimumFractionDigits: 2,
-    maximumFractionDigits: 2
-  }).format(amount);
-};
 
 // Currency formatter with conditional color styling
 const formatCurrencyColored = (amount) => {
   const formatted = formatCurrency(Math.abs(amount));
-  const isPositive = amount >= 0;
-  return <span className={isPositive ? 'amount-positive' : 'amount-negative'}>{formatted}</span>;
+  return <span className={getSignedCurrencyClassName(amount)}>{formatted}</span>;
 };
 
 function Cart({ cartCount, setCartCount }) {

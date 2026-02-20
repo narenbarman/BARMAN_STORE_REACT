@@ -1,6 +1,8 @@
 import { useState, useEffect } from 'react';
 import { X } from 'lucide-react';
 import { usersApi } from '../services/api';
+import useIsMobile from '../hooks/useIsMobile';
+import MobileBottomSheet from '../components/mobile/MobileBottomSheet';
 import './UserEditModal.css';
 
 function UserEditModal({ user, onClose, onSave, isCreate = false }) {
@@ -15,6 +17,7 @@ function UserEditModal({ user, onClose, onSave, isCreate = false }) {
   const [error, setError] = useState('');
   const [success, setSuccess] = useState('');
   const [errors, setErrors] = useState({});
+  const isMobile = useIsMobile();
 
   useEffect(() => {
     if (user && !isCreate) {
@@ -93,20 +96,12 @@ function UserEditModal({ user, onClose, onSave, isCreate = false }) {
     }
   };
 
-  return (
-    <div className="user-edit-overlay">
-      <div className="user-edit-modal fade-in-up">
-        <div className="user-edit-header">
-          <h2>{isCreate ? 'Add New Customer' : 'Edit User'}</h2>
-          <button className="close-btn" onClick={onClose}>
-            <X size={24} />
-          </button>
-        </div>
+  const formContent = (
+    <>
+      {error && <div className="error-message">{error}</div>}
+      {success && <div className="success-message">{success}</div>}
 
-        {error && <div className="error-message">{error}</div>}
-        {success && <div className="success-message">{success}</div>}
-
-        <form onSubmit={handleSubmit} className="user-edit-form">
+      <form onSubmit={handleSubmit} className="user-edit-form">
           <div className="form-group">
             <label htmlFor="name">Name</label>
             <input
@@ -198,7 +193,33 @@ function UserEditModal({ user, onClose, onSave, isCreate = false }) {
               {loading ? 'Saving...' : (isCreate ? 'Add Customer' : 'Update User')}
             </button>
           </div>
-        </form>
+      </form>
+    </>
+  );
+
+  if (isMobile) {
+    return (
+      <MobileBottomSheet
+        open
+        title={isCreate ? 'Add New Customer' : 'Edit User'}
+        onClose={onClose}
+        className="user-edit-sheet"
+      >
+        {formContent}
+      </MobileBottomSheet>
+    );
+  }
+
+  return (
+    <div className="user-edit-overlay">
+      <div className="user-edit-modal fade-in-up">
+        <div className="user-edit-header">
+          <h2>{isCreate ? 'Add New Customer' : 'Edit User'}</h2>
+          <button className="close-btn" onClick={onClose}>
+            <X size={24} />
+          </button>
+        </div>
+        {formContent}
       </div>
     </div>
   );

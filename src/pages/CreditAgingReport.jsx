@@ -1,6 +1,7 @@
 import { useState, useEffect } from 'react';
 import { RefreshCw, AlertTriangle, CheckCircle, Clock, AlertCircle } from 'lucide-react';
 import { creditApi } from '../services/api';
+import { formatCurrency } from '../utils/formatters';
 import './CreditAgingReport.css';
 
 function CreditAgingReport({ user }) {
@@ -24,13 +25,6 @@ function CreditAgingReport({ user }) {
     } finally {
       setLoading(false);
     }
-  };
-
-  const formatCurrency = (amount) => {
-    return new Intl.NumberFormat('en-IN', {
-      style: 'currency',
-      currency: 'INR'
-    }).format(amount);
   };
 
   const getCreditStatus = (customer) => {

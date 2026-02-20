@@ -1,37 +1,14 @@
 import { useEffect, useMemo, useState } from 'react';
 import { Plus, X } from 'lucide-react';
 import { creditApi, usersApi } from '../services/api';
+import { formatCurrency } from '../utils/formatters';
+import { getTodayDate } from '../utils/dateTime';
+import { getLedgerEntryTimestamp, getLedgerTypeLabel, getSignedLedgerAmount, toNumber } from '../utils/ledger';
 import './CreditKhata.css';
 
-const getTodayDate = () => new Date().toISOString().split('T')[0];
-
-const toNumber = (value) => {
-  const num = Number(value);
-  return Number.isFinite(num) ? num : 0;
-};
-
-const getRecordDate = (entry) => new Date(entry.transaction_date || entry.created_at || entry.date || Date.now()).getTime();
-const getRecordDateLabel = (entry) => new Date(entry.transaction_date || entry.created_at || Date.now()).toLocaleDateString();
+const getRecordDate = (entry) => getLedgerEntryTimestamp(entry, ['transaction_date', 'created_at', 'date']);
+const getRecordDateLabel = (entry) => new Date(getRecordDate(entry)).toLocaleDateString();
 const isLedgerEntryEdited = (entry) => Number(entry?.edited || 0) === 1 || !!entry?.edited_at;
-
-const formatCurrency = (amount) => new Intl.NumberFormat('en-IN', {
-  style: 'currency',
-  currency: 'INR'
-}).format(toNumber(amount));
-
-const getLedgerTypeKey = (entry) => String(entry?.type || entry?.transaction_type || '').toLowerCase();
-
-const getSignedLedgerAmount = (entry) => {
-  const amount = Math.abs(toNumber(entry?.amount));
-  return getLedgerTypeKey(entry) === 'payment' ? -amount : amount;
-};
-
-const getLedgerTypeLabel = (entry) => {
-  const type = getLedgerTypeKey(entry);
-  if (type === 'payment') return 'Payment';
-  if (type === 'given' || type === 'credit') return 'Credit';
-  return type ? type.charAt(0).toUpperCase() + type.slice(1) : '-';
-};
 
 const getDefaultFormData = () => ({
   user_id: '',

@@ -269,6 +269,11 @@ const normalizeDiscountType = (value) => {
 };
 
 const normalizeTextKey = (value) => String(value || '').trim().toLowerCase();
+const normalizeMoneyValue = (value) => {
+  const n = Number(value);
+  if (!Number.isFinite(n)) return null;
+  return Number(n.toFixed(2));
+};
 
 const normalizeHttpImageUrl = (value) => {
   const raw = String(value || '').trim();
@@ -383,14 +388,19 @@ const validateProductPayload = (payload, { partial = false } = {}) => {
   return errors;
 };
 
-const findDuplicateProduct = (payload, { excludeId = null } = {}) => {
+const findProductConflict = (payload, { excludeId = null } = {}) => {
   const sku = normalizeTextKey(payload?.sku);
   if (sku) {
     const bySku = excludeId
       ? dbGet(`SELECT id, name, sku FROM products WHERE lower(sku) = ? AND id <> ? LIMIT 1`, [sku, Number(excludeId)])
       : dbGet(`SELECT id, name, sku FROM products WHERE lower(sku) = ? LIMIT 1`, [sku]);
     if (bySku) {
-      return { field: 'sku', message: `Duplicate SKU already exists (Product #${bySku.id}: ${bySku.name})` };
+      return {
+        field: 'sku',
+        conflict_type: 'exact',
+        severity: 'block',
+        message: `Duplicate SKU already exists (Product #${bySku.id}: ${bySku.name})`
+      };
     }
   }
 
@@ -400,51 +410,74 @@ const findDuplicateProduct = (payload, { excludeId = null } = {}) => {
       ? dbGet(`SELECT id, name, barcode FROM products WHERE lower(barcode) = ? AND id <> ? LIMIT 1`, [barcode, Number(excludeId)])
       : dbGet(`SELECT id, name, barcode FROM products WHERE lower(barcode) = ? LIMIT 1`, [barcode]);
     if (byBarcode) {
-      return { field: 'barcode', message: `Duplicate barcode already exists (Product #${byBarcode.id}: ${byBarcode.name})` };
-    }
-  }
-
-  const nameKey = normalizeTextKey(payload?.name);
-  const brandKey = normalizeTextKey(payload?.brand);
-  const contentKey = normalizeTextKey(payload?.content);
-  if (nameKey) {
-    const byIdentity = excludeId
-      ? dbGet(
-        `SELECT id, name, brand, content
-         FROM products
-         WHERE lower(trim(name)) = ?
-           AND lower(trim(COALESCE(brand, ''))) = ?
-           AND lower(trim(COALESCE(content, ''))) = ?
-           AND id <> ?
-         LIMIT 1`,
-        [nameKey, brandKey, contentKey, Number(excludeId)]
-      )
-      : dbGet(
-        `SELECT id, name, brand, content
-         FROM products
-         WHERE lower(trim(name)) = ?
-           AND lower(trim(COALESCE(brand, ''))) = ?
-           AND lower(trim(COALESCE(content, ''))) = ?
-         LIMIT 1`,
-        [nameKey, brandKey, contentKey]
-      );
-    if (byIdentity) {
       return {
-        field: 'identity',
-        message: `Duplicate product identity exists (name + brand + content) as Product #${byIdentity.id}: ${byIdentity.name}`
+        field: 'barcode',
+        conflict_type: 'exact',
+        severity: 'block',
+        message: `Duplicate barcode already exists (Product #${byBarcode.id}: ${byBarcode.name})`
       };
     }
   }
 
-  return null;
+  const nameKey = normalizeTextKey(payload?.name);
+  const brandKey = normalizeTextKey(payload?.brand);
+  if (!nameKey) return null;
+
+  const byNameBrand = excludeId
+    ? dbAll(
+      `SELECT id, name, brand, price, mrp
+       FROM products
+       WHERE lower(trim(name)) = ?
+         AND lower(trim(COALESCE(brand, ''))) = ?
+         AND id <> ?
+       ORDER BY id DESC`,
+      [nameKey, brandKey, Number(excludeId)]
+    )
+    : dbAll(
+      `SELECT id, name, brand, price, mrp
+       FROM products
+       WHERE lower(trim(name)) = ?
+         AND lower(trim(COALESCE(brand, ''))) = ?
+       ORDER BY id DESC`,
+      [nameKey, brandKey]
+    );
+  if (!byNameBrand.length) return null;
+
+  const price = normalizeMoneyValue(payload?.price);
+  const mrp = normalizeMoneyValue(payload?.mrp);
+
+  const exact = byNameBrand.find((row) =>
+    normalizeMoneyValue(row?.price) === price && normalizeMoneyValue(row?.mrp) === mrp
+  );
+  if (exact) {
+    return {
+      field: 'name_brand_price_mrp',
+      conflict_type: 'exact',
+      severity: 'block',
+      product_id: exact.id,
+      product_name: exact.name,
+      message: `Exact duplicate exists (Product #${exact.id}: ${exact.name}) for name + brand + price + MRP`
+    };
+  }
+
+  const firstMatch = byNameBrand[0];
+  return {
+    field: 'name_brand',
+    conflict_type: 'identical',
+    severity: 'confirm',
+    product_id: firstMatch.id,
+    product_name: firstMatch.name,
+    message: `Identical product name + brand exists (Product #${firstMatch.id}: ${firstMatch.name}). Choose to allow or cancel.`
+  };
 };
 
-const buildProductIdentityKey = (payload) => {
+const buildProductExactKey = (payload) => {
   const nameKey = normalizeTextKey(payload?.name);
   if (!nameKey) return '';
   const brandKey = normalizeTextKey(payload?.brand);
-  const contentKey = normalizeTextKey(payload?.content);
-  return `${nameKey}::${brandKey}::${contentKey}`;
+  const price = normalizeMoneyValue(payload?.price);
+  const mrp = normalizeMoneyValue(payload?.mrp);
+  return `${nameKey}::${brandKey}::${price ?? ''}::${mrp ?? ''}`;
 };
 
 const findExistingProductForImport = (row) => {
@@ -488,7 +521,7 @@ const cleanupExpiredImportBatches = () => {
   }
 };
 
-const applyProductImportBatch = ({ batchId, checksum, authUser }) => {
+const applyProductImportBatch = ({ batchId, checksum, authUser, allowIdenticalRows = [] }) => {
   cleanupExpiredImportBatches();
   const normalizedBatchId = String(batchId || '').trim();
   const normalizedChecksum = String(checksum || '').trim();
@@ -527,6 +560,11 @@ const applyProductImportBatch = ({ batchId, checksum, authUser }) => {
     barcode: new Map(),
     identity: new Map(),
   };
+  const allowIdenticalSet = new Set(
+    Array.isArray(allowIdenticalRows)
+      ? allowIdenticalRows.map((v) => Number(v)).filter((v) => Number.isFinite(v))
+      : []
+  );
 
   const tx = db.transaction(() => {
     batch.rows.forEach((row) => {
@@ -543,11 +581,17 @@ const applyProductImportBatch = ({ batchId, checksum, authUser }) => {
         if (validationErrors.length) {
           throw new Error(validationErrors.join('; '));
         }
-        const duplicate = findDuplicateProduct(payload, {
+        const duplicate = findProductConflict(payload, {
           excludeId: row.action === 'update' ? row.matched_product_id : null
         });
         if (duplicate) {
-          throw new Error(duplicate.message);
+          if (duplicate.severity === 'confirm') {
+            if (!allowIdenticalSet.has(Number(row.row))) {
+              throw new Error(`${duplicate.message} (row ${row.row} requires allow_identical choice)`);
+            }
+          } else {
+            throw new Error(duplicate.message);
+          }
         }
 
         const matchedId = row.action === 'update' ? Number(row.matched_product_id) : null;
@@ -568,10 +612,10 @@ const applyProductImportBatch = ({ batchId, checksum, authUser }) => {
           if (seenBarcodeRow) throw new Error(`Duplicate barcode in import batch (also seen at row ${seenBarcodeRow})`);
           seenInBatch.barcode.set(barcodeKey, row.row);
         }
-        const identityKey = buildProductIdentityKey(payload);
+        const identityKey = buildProductExactKey(payload);
         if (identityKey) {
           const seenIdentityRow = seenInBatch.identity.get(identityKey);
-          if (seenIdentityRow) throw new Error(`Duplicate product identity in import batch (also seen at row ${seenIdentityRow})`);
+          if (seenIdentityRow) throw new Error(`Exact duplicate in import batch (also seen at row ${seenIdentityRow})`);
           seenInBatch.identity.set(identityKey, row.row);
         }
 
@@ -1658,9 +1702,14 @@ app.get('/api/products', (req, res) => {
     const qCategory = String(req.query?.category || '').trim();
     const qLowStock = String(req.query?.low_stock || '').trim();
     const includeInactive = String(req.query?.include_inactive || '').trim() === 'true';
+    const status = String(req.query?.status || '').trim().toLowerCase();
     let sql = `SELECT * FROM products WHERE 1=1`;
     const params = [];
-    if (!includeInactive) {
+    if (status === 'active') {
+      sql += ` AND COALESCE(is_active, 1) = 1`;
+    } else if (status === 'inactive') {
+      sql += ` AND COALESCE(is_active, 1) = 0`;
+    } else if (!includeInactive) {
       sql += ` AND COALESCE(is_active, 1) = 1`;
     }
     if (qName) {
@@ -1746,8 +1795,20 @@ app.post('/api/products', requireAdmin, (req, res) => {
     const body = normalizeProductInput(req.body || {});
     const errors = validateProductPayload(body);
     if (errors.length) return res.status(400).json({ error: 'Validation failed', details: errors });
-    const duplicate = findDuplicateProduct(body);
-    if (duplicate) return res.status(409).json({ error: duplicate.message, field: duplicate.field });
+    const duplicate = findProductConflict(body);
+    if (duplicate) {
+      const allowIdentical = Boolean(req.body?.allow_identical);
+      if (duplicate.severity === 'confirm' && allowIdentical) {
+        // allowed by explicit user choice
+      } else {
+        return res.status(409).json({
+          error: duplicate.message,
+          field: duplicate.field,
+          conflict_type: duplicate.conflict_type,
+          conflict: duplicate
+        });
+      }
+    }
     const categoryName = resolveOrCreateCategoryName(body.category || 'Groceries');
     const result = dbRun(
       `INSERT INTO products
@@ -1786,8 +1847,23 @@ app.put('/api/products/:id(\\d+)', requireAdmin, (req, res) => {
     const body = normalizeProductInput(req.body || {}, current);
     const errors = validateProductPayload(body);
     if (errors.length) return res.status(400).json({ error: 'Validation failed', details: errors });
-    const duplicate = findDuplicateProduct(body, { excludeId: req.params.id });
-    if (duplicate) return res.status(409).json({ error: duplicate.message, field: duplicate.field });
+    if (Number(current.is_active ?? 1) !== 1) {
+      body.is_active = 1;
+    }
+    const duplicate = findProductConflict(body, { excludeId: req.params.id });
+    if (duplicate) {
+      const allowIdentical = Boolean(req.body?.allow_identical);
+      if (duplicate.severity === 'confirm' && allowIdentical) {
+        // allowed by explicit user choice
+      } else {
+        return res.status(409).json({
+          error: duplicate.message,
+          field: duplicate.field,
+          conflict_type: duplicate.conflict_type,
+          conflict: duplicate
+        });
+      }
+    }
     const categoryName = resolveOrCreateCategoryName(body.category || current.category || 'Groceries');
     dbRun(
       `UPDATE products SET
@@ -1826,6 +1902,44 @@ app.delete('/api/products/:id(\\d+)', requireAdmin, (req, res) => {
     if (!current) return res.status(404).json({ error: 'Product not found' });
     dbRun(`UPDATE products SET is_active = 0 WHERE id = ?`, [req.params.id]);
     return res.json({ success: true, message: 'Product deleted successfully' });
+  } catch (error) {
+    return res.status(500).json({ error: error.message });
+  }
+});
+
+const doesTableExist = (tableName) => Boolean(
+  dbGet(`SELECT 1 AS ok FROM sqlite_master WHERE type='table' AND name = ? LIMIT 1`, [tableName])?.ok
+);
+
+app.delete('/api/products/:id(\\d+)/permanent', requireAdmin, (req, res) => {
+  try {
+    const productId = Number(req.params.id);
+    const current = dbGet(`SELECT * FROM products WHERE id = ?`, [productId]);
+    if (!current) return res.status(404).json({ error: 'Product not found' });
+
+    const referenceChecks = [
+      { table: 'order_items', sql: `SELECT COUNT(*) as count FROM order_items WHERE product_id = ?` },
+      { table: 'purchase_order_items', sql: `SELECT COUNT(*) as count FROM purchase_order_items WHERE product_id = ?` },
+      { table: 'purchase_return_items', sql: `SELECT COUNT(*) as count FROM purchase_return_items WHERE product_id = ?` },
+      { table: 'stock_ledger', sql: `SELECT COUNT(*) as count FROM stock_ledger WHERE product_id = ?` },
+      { table: 'batch_stock', sql: `SELECT COUNT(*) as count FROM batch_stock WHERE product_id = ?` },
+    ];
+
+    const blockingRefs = [];
+    referenceChecks.forEach((check) => {
+      if (!doesTableExist(check.table)) return;
+      const count = Number(dbGet(check.sql, [productId])?.count || 0);
+      if (count > 0) blockingRefs.push(`${check.table} (${count})`);
+    });
+    if (blockingRefs.length) {
+      return res.status(409).json({
+        error: `Cannot permanently delete product. Referenced in: ${blockingRefs.join(', ')}`,
+        references: blockingRefs,
+      });
+    }
+
+    dbRun(`DELETE FROM products WHERE id = ?`, [productId]);
+    return res.json({ success: true, message: 'Product permanently deleted' });
   } catch (error) {
     return res.status(500).json({ error: error.message });
   }
@@ -1901,6 +2015,7 @@ app.post('/api/products/import/preview', requireAdmin, (req, res) => {
     let updates = 0;
     let skips = 0;
     let errors = 0;
+    let needsConfirmation = 0;
     const seenInBatch = {
       productIds: new Map(),
       sku: new Map(),
@@ -1925,8 +2040,17 @@ app.post('/api/products/import/preview', requireAdmin, (req, res) => {
 
       if (mode === 'create_only' && existing) rowErrors.push('Row matches existing product but mode is create_only');
       if (mode === 'update_only' && !existing) rowErrors.push('Row does not match an existing product but mode is update_only');
-      const duplicate = findDuplicateProduct(normalized, { excludeId: existing?.id || null });
-      if (duplicate) rowErrors.push(duplicate.message);
+      const duplicate = findProductConflict(normalized, { excludeId: existing?.id || null });
+      let requiresIdenticalConfirmation = false;
+      let warnings = [];
+      if (duplicate) {
+        if (duplicate.severity === 'confirm') {
+          requiresIdenticalConfirmation = true;
+          warnings = [duplicate.message];
+        } else {
+          rowErrors.push(duplicate.message);
+        }
+      }
 
       const matchedId = existing?.id ? Number(existing.id) : null;
       if (matchedId) {
@@ -1943,10 +2067,10 @@ app.post('/api/products/import/preview', requireAdmin, (req, res) => {
         const seenBarcodeRow = seenInBatch.barcode.get(barcodeKey);
         if (seenBarcodeRow) rowErrors.push(`Duplicate barcode in import file (also row ${seenBarcodeRow})`);
       }
-      const identityKey = buildProductIdentityKey(normalized);
+      const identityKey = buildProductExactKey(normalized);
       if (identityKey) {
         const seenIdentityRow = seenInBatch.identity.get(identityKey);
-        if (seenIdentityRow) rowErrors.push(`Duplicate product identity in import file (also row ${seenIdentityRow})`);
+        if (seenIdentityRow) rowErrors.push(`Exact duplicate in import file (also row ${seenIdentityRow})`);
       }
 
       if (rowErrors.length) {
@@ -1966,11 +2090,22 @@ app.post('/api/products/import/preview', requireAdmin, (req, res) => {
         matched_product_id: existing?.id || null,
         payload: normalized,
         barcode: normalized.barcode,
+        requires_identical_confirmation: requiresIdenticalConfirmation,
       });
 
       if (action === 'create') creates += 1;
       if (action === 'update') updates += 1;
-      preview.push({ row: rowNo, action, status: 'ready', errors: [], matched_product_id: existing?.id || null });
+      if (requiresIdenticalConfirmation) {
+        needsConfirmation += 1;
+      }
+      preview.push({
+        row: rowNo,
+        action,
+        status: requiresIdenticalConfirmation ? 'needs_confirmation' : 'ready',
+        errors: [],
+        warnings,
+        matched_product_id: existing?.id || null
+      });
     });
 
     if (!normalizedRows.length) {
@@ -2020,6 +2155,7 @@ app.post('/api/products/import/preview', requireAdmin, (req, res) => {
         updates,
         skips,
         errors,
+        needs_confirmation: needsConfirmation,
       },
       preview,
     };
@@ -2051,6 +2187,7 @@ app.post('/api/products/import/confirm', requireAdmin, (req, res) => {
       batchId: req.body?.batch_id,
       checksum: req.body?.checksum,
       authUser: req.authUser,
+      allowIdenticalRows: req.body?.allow_identical_rows,
     });
     return res.json({
       success: true,
@@ -2855,7 +2992,13 @@ app.get('/api/purchase-orders', (req, res) => {
 
 app.get('/api/purchase-orders/:id', (req, res) => {
   try {
-    const row = dbGet(`SELECT * FROM purchase_orders WHERE id = ?`, [req.params.id]);
+    const row = dbGet(
+      `SELECT po.*, d.name as distributor_name, d.address as distributor_address, d.contacts as distributor_contacts
+       FROM purchase_orders po
+       LEFT JOIN distributors d ON d.id = po.distributor_id
+       WHERE po.id = ?`,
+      [req.params.id]
+    );
     if (!row) return res.status(404).json({ error: 'Purchase order not found' });
     const items = dbAll(`SELECT * FROM purchase_order_items WHERE order_id = ?`, [row.id]);
     return res.json({ ...row, items });

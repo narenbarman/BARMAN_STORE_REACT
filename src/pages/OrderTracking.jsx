@@ -5,20 +5,13 @@ import {
   MapPin, Phone, Mail, CreditCard, Printer, RefreshCw 
 } from 'lucide-react';
 import { ordersApi } from '../services/api';
+import { printHtmlDocument, escapeHtml } from '../utils/printService';
+import { formatCurrency } from '../utils/formatters';
+import { formatDateTime } from '../utils/dateTime';
 import './OrderTracking.css';
 
-const formatCurrency = (amount) => {
-  return new Intl.NumberFormat('en-IN', {
-    style: 'currency',
-    currency: 'INR',
-    minimumFractionDigits: 2,
-    maximumFractionDigits: 2
-  }).format(amount);
-};
-
 const formatDate = (dateString) => {
-  const date = new Date(dateString);
-  return date.toLocaleDateString('en-US', {
+  return formatDateTime(dateString, 'en-US', {
     year: 'numeric',
     month: 'long',
     day: 'numeric',
@@ -105,6 +98,81 @@ function OrderTracking() {
       case 'processing': return 'status-processing';
       default: return '';
     }
+  };
+
+  const buildOrderReceiptHtml = (orderData) => {
+    const items = Array.isArray(orderData?.items) ? orderData.items : [];
+    const rows = items.map((item) => {
+      const qty = Number(item.quantity || 0);
+      const unit = Number(item.price || 0);
+      const total = Number(item.total || (qty * unit));
+      return `
+        <tr>
+          <td>${escapeHtml(item.product_name || '-')}</td>
+          <td>${qty}</td>
+          <td>${escapeHtml(formatCurrency(unit))}</td>
+          <td>${escapeHtml(formatCurrency(total))}</td>
+        </tr>
+      `;
+    }).join('');
+
+    const shipping = orderData?.shipping_address || {};
+    const subtotal = Number(orderData?.total_amount || 0) - Number(orderData?.tax_amount || 0) - Number(orderData?.shipping_amount || 0);
+
+    return `
+      <div class="order-receipt">
+        <div class="receipt-header">
+          <h1>Order Receipt</h1>
+          <div><strong>Order #</strong> ${escapeHtml(orderData?.order_number || '')}</div>
+          <div><strong>Date</strong> ${escapeHtml(formatDate(orderData?.created_at || Date.now()))}</div>
+        </div>
+        <div class="receipt-customer">
+          <div><strong>${escapeHtml(orderData?.customer_name || '-')}</strong></div>
+          <div>${escapeHtml(orderData?.customer_email || '')}</div>
+          <div>${escapeHtml(orderData?.customer_phone || '')}</div>
+          <div>${escapeHtml(shipping?.street || '')}</div>
+          <div>${escapeHtml([shipping?.city, shipping?.state, shipping?.zip].filter(Boolean).join(', '))}</div>
+        </div>
+        <table class="receipt-table">
+          <thead>
+            <tr>
+              <th>Item</th>
+              <th>Qty</th>
+              <th>Price</th>
+              <th>Total</th>
+            </tr>
+          </thead>
+          <tbody>${rows || '<tr><td colspan="4">No items</td></tr>'}</tbody>
+        </table>
+        <div class="receipt-summary">
+          <div><span>Subtotal</span><strong>${escapeHtml(formatCurrency(subtotal))}</strong></div>
+          <div><span>Tax</span><strong>${escapeHtml(formatCurrency(orderData?.tax_amount || 0))}</strong></div>
+          <div><span>Shipping</span><strong>${escapeHtml(formatCurrency(orderData?.shipping_amount || 0))}</strong></div>
+          <div class="total"><span>Total</span><strong>${escapeHtml(formatCurrency(orderData?.total_amount || 0))}</strong></div>
+        </div>
+      </div>
+    `;
+  };
+
+  const handlePrintReceipt = () => {
+    if (!order) return;
+    printHtmlDocument({
+      title: `Receipt ${order.order_number || ''}`,
+      bodyHtml: buildOrderReceiptHtml(order),
+      cssText: `
+        .order-receipt { max-width: 760px; margin: 0 auto; }
+        .receipt-header h1 { margin: 0 0 8px; font-size: 24px; }
+        .receipt-header { margin-bottom: 12px; line-height: 1.6; font-size: 12px; }
+        .receipt-customer { margin: 12px 0; font-size: 12px; line-height: 1.6; }
+        .receipt-table { width: 100%; border-collapse: collapse; font-size: 12px; }
+        .receipt-table th, .receipt-table td { border: 1px solid #d1d5db; padding: 7px; text-align: left; }
+        .receipt-table thead th { background: #f3f4f6; }
+        .receipt-summary { width: 320px; margin-top: 14px; margin-left: auto; }
+        .receipt-summary div { display: flex; justify-content: space-between; padding: 6px 0; border-bottom: 1px solid #e5e7eb; font-size: 12px; }
+        .receipt-summary .total { font-weight: 700; border-bottom: none; font-size: 14px; }
+      `,
+      onError: (message) => setError(message),
+    });
   };
 
   if (orderId && loading) {
@@ -405,7 +473,7 @@ function OrderTracking() {
 
           {/* Actions */}
           <div className="actions-card">
-            <button className="print-receipt-btn">
+            <button className="print-receipt-btn" onClick={handlePrintReceipt}>
               <Printer size={18} /> Print Receipt
             </button>
             <button className="continue-shopping-btn" onClick={() => navigate('/products')}>

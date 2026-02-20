@@ -2,6 +2,7 @@ import React, { useState, useCallback, useEffect, useRef } from 'react';
 import { Plus, Trash2 } from 'lucide-react';
 import { customersApi, productsApi, billingApi, creditApi, usersApi } from '../services/api';
 import { buildWhatsAppUrl } from '../utils/whatsapp';
+import { formatCurrency } from '../utils/formatters';
 import * as info from './info';
 import './BillingTab.css';
 import { TITLE } from './info';
@@ -176,13 +177,6 @@ const BillingSystem = () => {
       setLoading(false);
     }
   }, []);
-
-  const formatCurrency = (value) => new Intl.NumberFormat('en-IN', {
-    style: 'currency',
-    currency: 'INR',
-    minimumFractionDigits: 2,
-    maximumFractionDigits: 2
-  }).format(value);
 
   const handleCustomerChange = useCallback((e) => {
     const { value } = e.target;

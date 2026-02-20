@@ -1,10 +1,16 @@
 import { useState, useEffect, useMemo } from 'react';
-import { Plus, Edit, Trash2, X, Search, Package, Truck, RotateCcw, Eye, Check, Clock, ArrowUpDown } from 'lucide-react';
+import { Plus, Edit, Trash2, X, Search, Package, Truck, RotateCcw, Eye, Check, Clock, ArrowUpDown, Printer } from 'lucide-react';
 import { purchaseOrdersApi, distributorsApi, productsApi, purchaseReturnsApi, stockLedgerApi, distributorLedgerApi } from '../services/api';
+import { printHtmlDocument, escapeHtml } from '../utils/printService';
+import { formatCurrency, formatDate } from '../utils/formatters';
+import { getTodayDate, formatDateTime, toLocalDateKey } from '../utils/dateTime';
+import { getLedgerEntryTimestamp, getLedgerTypeLabel, getSignedLedgerAmount, toNumber } from '../utils/ledger';
+import useIsMobile from '../hooks/useIsMobile';
+import MobileBottomSheet from '../components/mobile/MobileBottomSheet';
 import './PurchaseManagement.css';
 
 function PurchaseManagement({ user }) {
-  const getTodayDate = () => new Date().toISOString().split('T')[0];
+  const isMobile = useIsMobile();
   const LOCAL_LEDGER_KEY = 'purchase_distributor_ledger_local_entries';
   const getDefaultQuickOrderFormData = () => ({
     distributor_id: '',
@@ -24,25 +30,11 @@ function PurchaseManagement({ user }) {
     description: ''
   });
 
-  const toNumber = (value) => {
-    const num = Number(value);
-    return Number.isFinite(num) ? num : 0;
-  };
-
-  const getRecordDate = (entry) => new Date(entry.created_at || entry.transaction_date || entry.date || Date.now()).getTime();
+  const getRecordDate = (entry) => getLedgerEntryTimestamp(entry, ['transaction_date', 'created_at', 'date']);
   const getLedgerDistributorKey = (entry) => {
     if (entry?.distributor_id !== undefined && entry?.distributor_id !== null) return String(entry.distributor_id);
     if (entry?.distributor_name) return `name:${String(entry.distributor_name).toLowerCase()}`;
     return 'unknown';
-  };
-
-  const getLedgerTypeKey = (entry) => String(entry?.type || entry?.transaction_type || '').toLowerCase();
-
-  const getSignedLedgerAmount = (entry) => {
-    const amount = Math.abs(toNumber(entry?.amount));
-    const type = getLedgerTypeKey(entry);
-    if (type === 'payment') return -amount;
-    return amount;
   };
 
   const calculateOrderBalanceAmount = (order) => {
@@ -436,7 +428,7 @@ function PurchaseManagement({ user }) {
     if (/^\d{4}-\d{2}-\d{2}/.test(raw)) return raw.slice(0, 10);
     const dt = new Date(value);
     if (Number.isNaN(dt.getTime())) return '';
-    return dt.toISOString().split('T')[0];
+    return toLocalDateKey(dt);
   };
 
   // Order form handlers
@@ -850,6 +842,14 @@ function PurchaseManagement({ user }) {
     setReceiveData(prev => ({ ...prev, items }));
   };
 
+  const handleReceiveQtyStep = (index, delta) => {
+    const item = receiveData.items[index];
+    if (!item) return;
+    const currentQty = toNumber(item.received_quantity);
+    const nextQty = Math.max(0, Math.min(toNumber(item.ordered_quantity), currentQty + delta));
+    handleReceiveItemChange(index, 'received_quantity', nextQty);
+  };
+
   const handleReceiveSubmit = async (e) => {
     e.preventDefault();
     setError('');
@@ -936,12 +936,14 @@ function PurchaseManagement({ user }) {
   // View order details
   const handleViewOrder = async (orderId) => {
     try {
+      setShowOrderDetail(true);
+      setOrderDetail(null);
       setOrderDetailLoading(true);
       const order = await purchaseOrdersApi.getById(orderId);
       setOrderDetail(order);
-      setShowOrderDetail(true);
     } catch (err) {
       setError('Failed to load order details');
+      setShowOrderDetail(false);
     } finally {
       setOrderDetailLoading(false);
     }
@@ -1029,18 +1031,156 @@ function PurchaseManagement({ user }) {
     return <span className={`status-badge ${config.class}`}>{config.label}</span>;
   };
 
-  const formatCurrency = (amount) => {
-    return new Intl.NumberFormat('en-IN', {
-      style: 'currency',
-      currency: 'INR'
-    }).format(amount);
+  const getDistributorPhoneFromContacts = (contacts) => {
+    if (!contacts) return '';
+    if (typeof contacts === 'object' && contacts.phone) return String(contacts.phone);
+    const raw = String(contacts).trim();
+    if (!raw) return '';
+    try {
+      const parsed = JSON.parse(raw);
+      return String(parsed?.phone || '');
+    } catch (_) {
+      return '';
+    }
   };
 
-  const getLedgerTypeLabel = (entry) => {
-    const rawType = String(entry?.type || entry?.transaction_type || '').toLowerCase();
-    if (rawType === 'payment') return 'Payment';
-    if (rawType === 'credit' || rawType === 'given') return 'Credit';
-    return rawType ? rawType.charAt(0).toUpperCase() + rawType.slice(1) : '-';
+  const getOrderDistributorInfo = (order) => {
+    if (!order) return { name: '-', phone: '-', address: '-', contacts: '' };
+    const distributor = distributors.find((d) => String(d.id) === String(order.distributor_id));
+    const contacts = order.distributor_contacts || distributor?.contacts || '';
+    const phoneFromContacts = getDistributorPhoneFromContacts(contacts);
+    return {
+      name: order.distributor_name || distributor?.name || '-',
+      phone: order.distributor_phone || distributor?.phone || phoneFromContacts || '-',
+      address: order.distributor_address || distributor?.address || '-',
+      contacts
+    };
+  };
+
+  const getItemFinancials = (item) => {
+    const quantity = toNumber(item?.quantity);
+    const rate = toNumber(item?.rate ?? item?.unit_price);
+    const fallbackLine = quantity * rate;
+    const taxableValue = toNumber(item?.taxable_value);
+    const taxAmount = toNumber(item?.tax_amount);
+    const lineTotal = toNumber(item?.line_total ?? item?.total ?? (taxableValue + taxAmount) ?? fallbackLine);
+    const resolvedTaxable = taxableValue > 0 ? taxableValue : (taxAmount > 0 ? Math.max(0, lineTotal - taxAmount) : lineTotal);
+    const gstRate = toNumber(item?.gst_rate);
+    return {
+      quantity,
+      rate,
+      taxableValue: resolvedTaxable,
+      taxAmount,
+      lineTotal: lineTotal > 0 ? lineTotal : fallbackLine,
+      gstRate
+    };
+  };
+
+  const buildPurchaseOrderPrintHtml = (order) => {
+    const items = Array.isArray(order?.items) ? order.items : [];
+    const supplier = getOrderDistributorInfo(order);
+    const rows = items.map((item, index) => {
+      const line = getItemFinancials(item);
+      return `
+        <tr>
+          <td>${index + 1}</td>
+          <td>${escapeHtml(item?.product_name || '-')}</td>
+          <td>${line.quantity}</td>
+          <td>${escapeHtml(item?.uom || '-')}</td>
+          <td>${formatCurrency(line.rate)}</td>
+          <td>${line.gstRate.toFixed(2)}%</td>
+          <td>${formatCurrency(line.taxableValue)}</td>
+          <td>${formatCurrency(line.taxAmount)}</td>
+          <td>${formatCurrency(line.lineTotal)}</td>
+        </tr>
+      `;
+    }).join('');
+
+    const taxable = toNumber(order?.taxable_value);
+    const tax = toNumber(order?.tax_amount);
+    const grand = toNumber(order?.total_amount || getOrderDisplayTotal(order));
+
+    return `
+      <div class="po-print">
+        <div class="po-print-header">
+          <div>
+            <h1>Purchase Order</h1>
+            <div class="muted">PO #${order?.po_number || '-'}</div>
+          </div>
+          <div class="meta">
+            <div><strong>Status:</strong> ${String(order?.status || '-').toUpperCase()}</div>
+            <div><strong>Date:</strong> ${formatDate(order?.created_at || order?.order_date)}</div>
+            <div><strong>Expected:</strong> ${formatDate(order?.expected_delivery)}</div>
+            <div><strong>Bill No:</strong> ${order?.bill_number || order?.invoice_number || '-'}</div>
+          </div>
+        </div>
+
+        <div class="po-print-party">
+          <div>
+            <h3>Supplier</h3>
+            <div>${escapeHtml(supplier.name)}</div>
+            <div>${escapeHtml(supplier.phone)}</div>
+            <div>${escapeHtml(supplier.address)}</div>
+          </div>
+          <div>
+            <h3>Order Notes</h3>
+            <div>${escapeHtml(order?.notes || '-')}</div>
+          </div>
+        </div>
+
+        <table class="po-print-table">
+          <thead>
+            <tr>
+              <th>#</th>
+              <th>Product</th>
+              <th>Qty</th>
+              <th>UOM</th>
+              <th>Rate</th>
+              <th>GST %</th>
+              <th>Taxable</th>
+              <th>Tax</th>
+              <th>Total</th>
+            </tr>
+          </thead>
+          <tbody>${rows || '<tr><td colspan="9">No items</td></tr>'}</tbody>
+        </table>
+
+        <div class="po-print-summary">
+          <div><span>Taxable Value</span><strong>${formatCurrency(taxable)}</strong></div>
+          <div><span>GST</span><strong>${formatCurrency(tax)}</strong></div>
+          <div class="grand"><span>Grand Total</span><strong>${formatCurrency(grand)}</strong></div>
+        </div>
+      </div>
+    `;
+  };
+
+  const handlePrintOrderDetail = (order) => {
+    if (!order) return;
+    const html = buildPurchaseOrderPrintHtml(order);
+    printHtmlDocument({
+      title: `PO ${order?.po_number || ''}`,
+      bodyHtml: html,
+      cssText: `
+        .po-print { max-width: 980px; margin: 0 auto; }
+        .po-print-header { display: flex; justify-content: space-between; align-items: flex-start; margin-bottom: 16px; }
+        .po-print-header h1 { margin: 0 0 6px; font-size: 26px; }
+        .muted { color: #555; font-size: 13px; }
+        .meta { font-size: 13px; line-height: 1.6; text-align: right; }
+        .po-print-party { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; margin: 16px 0; }
+        .po-print-party h3 { margin: 0 0 8px; font-size: 13px; text-transform: uppercase; color: #444; }
+        .po-print-table { width: 100%; border-collapse: collapse; font-size: 12px; }
+        .po-print-table th, .po-print-table td { border: 1px solid #d1d5db; padding: 7px; text-align: left; }
+        .po-print-table thead th { background: #f3f4f6; font-weight: 700; }
+        .po-print-summary { margin-top: 14px; margin-left: auto; width: 320px; }
+        .po-print-summary div { display: flex; justify-content: space-between; padding: 6px 0; border-bottom: 1px solid #e5e7eb; font-size: 13px; }
+        .po-print-summary .grand { font-size: 15px; font-weight: 700; border-bottom: none; }
+        @media print {
+          body { margin: 0; padding: 10mm; }
+          .po-print-table tr { page-break-inside: avoid; }
+        }
+      `,
+      onError: (message) => setError(message),
+    });
   };
 
   const getDistributorName = (entry) => {
@@ -1721,15 +1861,24 @@ function PurchaseManagement({ user }) {
 
       {/* Receive Modal */}
       {showReceiveModal && selectedOrder && (
-        <div className="modal-overlay" onClick={() => setShowReceiveModal(false)}>
-          <div className="modal-content large" onClick={e => e.stopPropagation()}>
-            <div className="modal-header">
-              <h2>Receive Inventory - {selectedOrder.po_number}</h2>
-              <button className="close-btn" onClick={() => setShowReceiveModal(false)}>
-                <X size={24} />
-              </button>
-            </div>
-            <form onSubmit={handleReceiveSubmit}>
+        isMobile ? (
+          <MobileBottomSheet
+            open
+            onClose={() => setShowReceiveModal(false)}
+            title={`Receive Inventory - ${selectedOrder.po_number}`}
+            className="purchase-receive-sheet"
+            actions={(
+              <>
+                <button type="button" className="cancel-btn" onClick={() => setShowReceiveModal(false)}>
+                  Cancel
+                </button>
+                <button type="submit" form="receive-inventory-form" className="submit-btn">
+                  Confirm Receipt
+                </button>
+              </>
+            )}
+          >
+            <form id="receive-inventory-form" onSubmit={handleReceiveSubmit} className="mobile-receive-form">
               <div className="form-section">
                 <div className="form-group">
                   <label>Invoice Number</label>
@@ -1744,136 +1893,244 @@ function PurchaseManagement({ user }) {
 
               <div className="form-section">
                 <h3>Received Items</h3>
-                <div className="items-list">
+                <div className="mobile-receive-list">
                   {receiveData.items.map((item, index) => (
-                    <div key={index} className="item-row">
-                      <div className="item-field product">
-                        <label>Product</label>
-                        <span>{item.product_name}</span>
+                    <div key={index} className="mobile-receive-item">
+                      <div className="mobile-receive-row">
+                        <strong>{item.product_name}</strong>
+                        <span>Ordered: {item.ordered_quantity}</span>
                       </div>
-                      <div className="item-field qty">
-                        <label>Ordered</label>
-                        <span>{item.ordered_quantity}</span>
-                      </div>
-                      <div className="item-field qty">
-                        <label>Received</label>
+                      <div className="mobile-receive-stepper">
+                        <button
+                          type="button"
+                          className="mobile-stepper-btn"
+                          onClick={() => handleReceiveQtyStep(index, -1)}
+                          aria-label="Decrease received quantity"
+                        >
+                          -
+                        </button>
                         <input
                           type="number"
                           min="0"
                           max={item.ordered_quantity}
                           value={item.received_quantity}
-                          onChange={e => handleReceiveItemChange(index, 'received_quantity', parseFloat(e.target.value))}
+                          onChange={e => handleReceiveItemChange(index, 'received_quantity', Math.max(0, Math.min(toNumber(item.ordered_quantity), toNumber(e.target.value))))}
                         />
+                        <button
+                          type="button"
+                          className="mobile-stepper-btn"
+                          onClick={() => handleReceiveQtyStep(index, 1)}
+                          aria-label="Increase received quantity"
+                        >
+                          +
+                        </button>
                       </div>
-                      <div className="item-field price">
+                      <div className="mobile-receive-row">
                         <label>Unit Cost</label>
                         <input
                           type="number"
                           step="0.01"
                           value={item.unit_price}
-                          onChange={e => handleReceiveItemChange(index, 'unit_price', parseFloat(e.target.value))}
+                          onChange={e => handleReceiveItemChange(index, 'unit_price', toNumber(e.target.value))}
                         />
                       </div>
-                      <div className="item-field total">
-                        <label>Value</label>
-                        <span>{formatCurrency(item.received_quantity * item.unit_price)}</span>
+                      <div className="mobile-receive-row value">
+                        <span>Value</span>
+                        <strong>{formatCurrency(toNumber(item.received_quantity) * toNumber(item.unit_price))}</strong>
                       </div>
                     </div>
                   ))}
                 </div>
               </div>
-
-              <div className="modal-actions">
-                <button type="button" className="cancel-btn" onClick={() => setShowReceiveModal(false)}>
-                  Cancel
-                </button>
-                <button type="submit" className="submit-btn">
-                  Confirm Receipt
+            </form>
+          </MobileBottomSheet>
+        ) : (
+          <div className="modal-overlay" onClick={() => setShowReceiveModal(false)}>
+            <div className="modal-content large" onClick={e => e.stopPropagation()}>
+              <div className="modal-header">
+                <h2>Receive Inventory - {selectedOrder.po_number}</h2>
+                <button className="close-btn" onClick={() => setShowReceiveModal(false)}>
+                  <X size={24} />
                 </button>
               </div>
-            </form>
+              <form id="receive-inventory-form" onSubmit={handleReceiveSubmit}>
+                <div className="form-section">
+                  <div className="form-group">
+                    <label>Invoice Number</label>
+                    <input
+                      type="text"
+                      value={receiveData.invoice_number}
+                      onChange={e => setReceiveData(prev => ({ ...prev, invoice_number: e.target.value }))}
+                      placeholder="Enter invoice number"
+                    />
+                  </div>
+                </div>
+
+                <div className="form-section">
+                  <h3>Received Items</h3>
+                  <div className="items-list">
+                    {receiveData.items.map((item, index) => (
+                      <div key={index} className="item-row">
+                        <div className="item-field product">
+                          <label>Product</label>
+                          <span>{item.product_name}</span>
+                        </div>
+                        <div className="item-field qty">
+                          <label>Ordered</label>
+                          <span>{item.ordered_quantity}</span>
+                        </div>
+                        <div className="item-field qty">
+                          <label>Received</label>
+                          <input
+                            type="number"
+                            min="0"
+                            max={item.ordered_quantity}
+                            value={item.received_quantity}
+                            onChange={e => handleReceiveItemChange(index, 'received_quantity', toNumber(e.target.value))}
+                          />
+                        </div>
+                        <div className="item-field price">
+                          <label>Unit Cost</label>
+                          <input
+                            type="number"
+                            step="0.01"
+                            value={item.unit_price}
+                            onChange={e => handleReceiveItemChange(index, 'unit_price', toNumber(e.target.value))}
+                          />
+                        </div>
+                        <div className="item-field total">
+                          <label>Value</label>
+                          <span>{formatCurrency(toNumber(item.received_quantity) * toNumber(item.unit_price))}</span>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+
+                <div className="modal-actions">
+                  <button type="button" className="cancel-btn" onClick={() => setShowReceiveModal(false)}>
+                    Cancel
+                  </button>
+                  <button type="submit" className="submit-btn">
+                    Confirm Receipt
+                  </button>
+                </div>
+              </form>
+            </div>
           </div>
-        </div>
+        )
       )}
 
       {/* Order Detail Modal */}
-      {showOrderDetail && orderDetail && (
+      {showOrderDetail && (
         <div className="modal-overlay" onClick={() => setShowOrderDetail(false)}>
-          <div className="modal-content large" onClick={e => e.stopPropagation()}>
+          <div className="modal-content large po-detail-modal" onClick={e => e.stopPropagation()}>
             <div className="modal-header">
-              <h2>Purchase Order: {orderDetail.po_number}</h2>
+              <h2>Purchase Order: {orderDetail?.po_number || '-'}</h2>
               <button className="close-btn" onClick={() => setShowOrderDetail(false)}>
                 <X size={24} />
               </button>
             </div>
-            <div className="order-detail-body">
-              <div className="detail-row">
-                <span>Distributor:</span>
-                <strong>{orderDetail.distributor_name}</strong>
+            {orderDetailLoading || !orderDetail ? (
+              <div className="order-detail-body">
+                <div className="loading">Loading purchase order details...</div>
               </div>
-              <div className="detail-row">
-                <span>Status:</span>
-                {getStatusBadge(orderDetail.status)}
-              </div>
-              <div className="detail-row">
-                <span>Bill Number:</span>
-                <strong>{orderDetail.bill_number || orderDetail.invoice_number || '-'}</strong>
-              </div>
-              <div className="detail-row">
-                <span>Expected Delivery:</span>
-                <strong>{orderDetail.expected_delivery ? new Date(orderDetail.expected_delivery).toLocaleDateString() : '-'}</strong>
-              </div>
-              {orderDetail.notes && (
-                <div className="detail-row">
-                  <span>Notes:</span>
-                  <strong>{orderDetail.notes}</strong>
+            ) : (
+              <div className="order-detail-body">
+              <div className="po-invoice-preview">
+                {(() => {
+                  const supplier = getOrderDistributorInfo(orderDetail);
+                  return (
+                    <>
+                <div className="po-invoice-header">
+                  <div>
+                    <h3>Purchase Order</h3>
+                    <p>PO #{orderDetail.po_number}</p>
+                  </div>
+                  <div className="po-invoice-meta">
+                    <div><span>Status</span><strong>{String(orderDetail.status || '-').toUpperCase()}</strong></div>
+                    <div><span>Created</span><strong>{formatDateTime(orderDetail.created_at || orderDetail.order_date)}</strong></div>
+                    <div><span>Expected</span><strong>{formatDate(orderDetail.expected_delivery)}</strong></div>
+                    <div><span>Bill No</span><strong>{orderDetail.bill_number || orderDetail.invoice_number || '-'}</strong></div>
+                  </div>
                 </div>
-              )}
 
-              <h3>Items</h3>
-              <div className="data-table">
-                <table className="items-table">
+                <div className="po-party-grid">
+                  <div className="po-party-card">
+                    <h4>Supplier</h4>
+                    <p>{supplier.name}</p>
+                    <p>{supplier.phone}</p>
+                    <p>{supplier.address}</p>
+                  </div>
+                  <div className="po-party-card">
+                    <h4>Notes</h4>
+                    <p>{orderDetail.notes || '-'}</p>
+                  </div>
+                </div>
+
+                <table className="po-invoice-table">
                   <thead>
                     <tr>
+                      <th>#</th>
                       <th>Product</th>
                       <th>Qty</th>
                       <th>UOM</th>
                       <th>Rate</th>
                       <th>GST %</th>
-                      <th>Line Total</th>
+                      <th>Taxable</th>
+                      <th>Tax</th>
+                      <th>Total</th>
                     </tr>
                   </thead>
                   <tbody>
-                    {(orderDetail.items || []).map((item, idx) => (
-                      <tr key={idx}>
-                        <td>{item.product_name}</td>
-                        <td>{item.quantity}</td>
-                        <td>{item.uom || '-'}</td>
-                        <td>{formatCurrency(item.rate || item.unit_price)}</td>
-                        <td>{item.gst_rate || 0}%</td>
-                        <td>{formatCurrency(item.line_total || item.total || (item.quantity * (item.rate || item.unit_price)))}</td>
-                      </tr>
-                    ))}
+                    {(orderDetail.items || []).map((item, idx) => {
+                      const line = getItemFinancials(item);
+                      return (
+                        <tr key={idx}>
+                          <td>{idx + 1}</td>
+                          <td>{item.product_name}</td>
+                          <td>{line.quantity}</td>
+                          <td>{item.uom || '-'}</td>
+                          <td>{formatCurrency(line.rate)}</td>
+                          <td>{line.gstRate.toFixed(2)}%</td>
+                          <td>{formatCurrency(line.taxableValue)}</td>
+                          <td>{formatCurrency(line.taxAmount)}</td>
+                          <td>{formatCurrency(line.lineTotal)}</td>
+                        </tr>
+                      );
+                    })}
                   </tbody>
                 </table>
-              </div>
 
-              <div className="order-totals">
-                <div className="total-row">
-                  <span>Taxable Value:</span>
-                  <strong>{formatCurrency(orderDetail.taxable_value || 0)}</strong>
+                <div className="po-invoice-summary">
+                  <div className="po-summary-row">
+                    <span>Taxable Value</span>
+                    <strong>{formatCurrency(orderDetail.taxable_value || 0)}</strong>
+                  </div>
+                  <div className="po-summary-row">
+                    <span>GST</span>
+                    <strong>{formatCurrency(orderDetail.tax_amount || 0)}</strong>
+                  </div>
+                  <div className="po-summary-row grand">
+                    <span>Grand Total</span>
+                    <strong>{formatCurrency(orderDetail.total_amount || getOrderDisplayTotal(orderDetail))}</strong>
+                  </div>
                 </div>
-                <div className="total-row">
-                  <span>GST:</span>
-                  <strong>{formatCurrency(orderDetail.tax_amount || 0)}</strong>
-                </div>
-                <div className="total-row grand">
-                  <span>Grand Total:</span>
-                  <strong>{formatCurrency(orderDetail.total_amount || getOrderDisplayTotal(orderDetail))}</strong>
-                </div>
+                    </>
+                  );
+                })()}
               </div>
             </div>
+            )}
             <div className="modal-actions">
+              <button
+                type="button"
+                className="submit-btn print-po-btn"
+                onClick={() => handlePrintOrderDetail(orderDetail)}
+                disabled={!orderDetail}
+              >
+                <Printer size={16} /> Print
+              </button>
               <button type="button" className="cancel-btn" onClick={() => setShowOrderDetail(false)}>
                 Close
               </button>

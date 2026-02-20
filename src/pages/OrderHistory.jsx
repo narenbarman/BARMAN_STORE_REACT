@@ -5,20 +5,11 @@ import {
   Search, Filter, Eye, RotateCcw, Download 
 } from 'lucide-react';
 import { ordersApi } from '../services/api';
+import { formatCurrency, formatDate as formatDateValue } from '../utils/formatters';
 import './OrderHistory.css';
 
-const formatCurrency = (amount) => {
-  return new Intl.NumberFormat('en-IN', {
-    style: 'currency',
-    currency: 'INR',
-    minimumFractionDigits: 2,
-    maximumFractionDigits: 2
-  }).format(amount);
-};
-
 const formatDate = (dateString) => {
-  const date = new Date(dateString);
-  return date.toLocaleDateString('en-US', {
+  return formatDateValue(dateString, 'en-US', {
     year: 'numeric',
     month: 'short',
     day: 'numeric'

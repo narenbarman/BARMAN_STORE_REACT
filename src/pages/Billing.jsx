@@ -8,16 +8,8 @@ import {
 } from 'lucide-react';
 import { billingApi } from '../services/api';
 import { buildWhatsAppUrl } from '../utils/whatsapp';
+import { formatCurrency } from '../utils/formatters';
 import './Billing.css';
-
-const formatCurrency = (amount) => {
-  return new Intl.NumberFormat('en-IN', {
-    style: 'currency',
-    currency: 'INR',
-    minimumFractionDigits: 2,
-    maximumFractionDigits: 2
-  }).format(amount);
-};
 
 function Billing() {
   const navigate = useNavigate();

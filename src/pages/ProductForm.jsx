@@ -3,6 +3,8 @@ import { X, Package, QrCode, Plus, Trash2 } from 'lucide-react';
 import { productsApi, categoriesApi } from '../services/api';
 import { getProductImageSrc } from '../utils/productImage';
 import ImageUrlPicker from '../components/ImageUrlPicker';
+import useIsMobile from '../hooks/useIsMobile';
+import MobileBottomSheet from '../components/mobile/MobileBottomSheet';
 import './ProductForm.css';
 
 function ProductForm({ product, onClose, onSave }) {
@@ -181,52 +183,6 @@ function ProductForm({ product, onClose, onSave }) {
     discountType: data.discountType
   });
 
-  const normalizeKey = (value) => String(value || '').trim().toLowerCase();
-
-  const buildIdentityKey = (item) => {
-    const nameKey = normalizeKey(item?.name);
-    const brandKey = normalizeKey(item?.brand);
-    const contentKey = normalizeKey(item?.content);
-    if (!nameKey) return '';
-    return `${nameKey}|${brandKey}|${contentKey}`;
-  };
-
-  const findDuplicateProduct = ({ existingProducts = [], payload, excludeId = null, queuedPayloads = [] }) => {
-    if (!payload) return null;
-    const skuKey = normalizeKey(payload.sku);
-    const barcodeKey = normalizeKey(payload.barcode);
-    const identityKey = buildIdentityKey(payload);
-
-    const hasExistingDuplicate = existingProducts.find((row) => {
-      const rowId = Number(row?.id || 0);
-      if (excludeId && rowId === Number(excludeId)) return false;
-      const rowSku = normalizeKey(row?.sku);
-      const rowBarcode = normalizeKey(row?.barcode);
-      const rowIdentity = buildIdentityKey(row);
-      if (skuKey && rowSku && skuKey === rowSku) return true;
-      if (barcodeKey && rowBarcode && barcodeKey === rowBarcode) return true;
-      if (identityKey && rowIdentity && identityKey === rowIdentity) return true;
-      return false;
-    });
-    if (hasExistingDuplicate) {
-      return `Duplicate with existing product "${hasExistingDuplicate.name}"`;
-    }
-
-    const hasQueuedDuplicate = queuedPayloads.find((row) => {
-      const rowSku = normalizeKey(row?.sku);
-      const rowBarcode = normalizeKey(row?.barcode);
-      const rowIdentity = buildIdentityKey(row);
-      if (skuKey && rowSku && skuKey === rowSku) return true;
-      if (barcodeKey && rowBarcode && barcodeKey === rowBarcode) return true;
-      if (identityKey && rowIdentity && identityKey === rowIdentity) return true;
-      return false;
-    });
-    if (hasQueuedDuplicate) {
-      return `Duplicate inside this batch for "${hasQueuedDuplicate.name}"`;
-    }
-    return null;
-  };
-
   const hasFormDraft = (data = formData) => {
     return ['name', 'description', 'brand', 'content', 'color', 'price', 'mrp', 'barcode', 'sku', 'image', 'stock', 'expiry_date', 'category', 'defaultDiscount']
       .some((field) => String(data[field] || '').trim() !== '');
@@ -290,20 +246,31 @@ function ProductForm({ product, onClose, onSave }) {
     setLoading(true);
 
     try {
-      const existingProducts = await productsApi.getAll({ include_inactive: true });
+      const submitWithIdenticalChoice = async ({ mode, payload, id }) => {
+        const send = (allowIdentical = false) => {
+          const body = allowIdentical ? { ...payload, allow_identical: true } : payload;
+          return mode === 'update'
+            ? productsApi.update(id, body)
+            : productsApi.create(body);
+        };
+
+        try {
+          return await send(false);
+        } catch (err) {
+          const conflictType = String(err?.payload?.conflict_type || '');
+          if (Number(err?.status) === 409 && conflictType === 'identical') {
+            const ok = window.confirm(`${err.message}\n\nDo you want to continue anyway?`);
+            if (!ok) throw err;
+            return send(true);
+          }
+          throw err;
+        }
+      };
+
       if (product) {
         if (!validateForm()) return;
         const productData = buildProductData(formData);
-        const duplicateMessage = findDuplicateProduct({
-          existingProducts,
-          payload: productData,
-          excludeId: product.id
-        });
-        if (duplicateMessage) {
-          setError(duplicateMessage);
-          return;
-        }
-        await productsApi.update(product.id, productData);
+        await submitWithIdenticalChoice({ mode: 'update', id: product.id, payload: productData });
         await onSave({ mode: 'edit', createdCount: 0 });
       } else {
         const payloads = [...batchProducts];
@@ -316,24 +283,10 @@ function ProductForm({ product, onClose, onSave }) {
           return;
         }
 
-        const validatedPayloads = [];
-        for (let i = 0; i < payloads.length; i += 1) {
-          const duplicateMessage = findDuplicateProduct({
-            existingProducts,
-            payload: payloads[i],
-            queuedPayloads: validatedPayloads
-          });
-          if (duplicateMessage) {
-            setError(`Duplicate at product ${i + 1} (${payloads[i].name}): ${duplicateMessage}`);
-            return;
-          }
-          validatedPayloads.push(payloads[i]);
-        }
-
         let createdCount = 0;
         for (let i = 0; i < payloads.length; i += 1) {
           try {
-            await productsApi.create(payloads[i]);
+            await submitWithIdenticalChoice({ mode: 'create', payload: payloads[i] });
             createdCount += 1;
           } catch (err) {
             if (createdCount > 0) {
@@ -354,20 +307,13 @@ function ProductForm({ product, onClose, onSave }) {
   };
 
   const isEditing = !!product;
+  const isMobile = useIsMobile();
 
-  return (
-    <div className="product-form-overlay">
-      <div className="product-form-container fade-in-up">
-        <div className="product-form-header">
-          <h2>{isEditing ? 'Edit Product' : 'Add New Product'}</h2>
-          <button className="close-btn" onClick={onClose}>
-            <X size={24} />
-          </button>
-        </div>
+  const formContent = (
+    <>
+      {error && <div className="error-message">{error}</div>}
 
-        {error && <div className="error-message">{error}</div>}
-
-        <form onSubmit={handleSubmit} className="product-form">
+      <form onSubmit={handleSubmit} className="product-form">
           {!isEditing && (
             <div className="form-section batch-section">
               <h3 className="section-title">Batch Add Products</h3>
@@ -741,7 +687,33 @@ function ProductForm({ product, onClose, onSave }) {
               {loading ? 'Saving...' : (isEditing ? 'Update Product' : `Add Product${batchProducts.length ? ` (${batchProducts.length} queued)` : ''}`)}
             </button>
           </div>
-        </form>
+      </form>
+    </>
+  );
+
+  if (isMobile) {
+    return (
+      <MobileBottomSheet
+        open
+        title={isEditing ? 'Edit Product' : 'Add New Product'}
+        onClose={onClose}
+        className="product-form-sheet"
+      >
+        {formContent}
+      </MobileBottomSheet>
+    );
+  }
+
+  return (
+    <div className="product-form-overlay">
+      <div className="product-form-container fade-in-up">
+        <div className="product-form-header">
+          <h2>{isEditing ? 'Edit Product' : 'Add New Product'}</h2>
+          <button className="close-btn" onClick={onClose}>
+            <X size={24} />
+          </button>
+        </div>
+        {formContent}
       </div>
     </div>
   );

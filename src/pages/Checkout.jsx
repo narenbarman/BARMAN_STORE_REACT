@@ -5,16 +5,8 @@ import {
   Package, AlertCircle, Search, Shield
 } from 'lucide-react';
 import { ordersApi, customersApi } from '../services/api';
+import { formatCurrency } from '../utils/formatters';
 import './Checkout.css';
-
-const formatCurrency = (amount) => {
-  return new Intl.NumberFormat('en-IN', {
-    style: 'currency',
-    currency: 'INR',
-    minimumFractionDigits: 2,
-    maximumFractionDigits: 2
-  }).format(amount);
-};
 
 // Generate session ID for guest users
 const generateSessionId = () => {

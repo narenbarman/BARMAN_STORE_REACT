@@ -113,6 +113,17 @@
   margin-top: 24px;
 }
 
+.user-edit-sheet .user-edit-form {
+  padding: 0.25rem 0 0;
+}
+
+.user-edit-sheet .form-actions {
+  position: sticky;
+  bottom: 0;
+  background: var(--color-card);
+  padding-bottom: calc(0.6rem + env(safe-area-inset-bottom, 0px));
+}
+
 .cancel-btn {
   padding: 10px 20px;
   background: none;
@@ -123,6 +134,7 @@
   cursor: pointer;
   transition: all 0.2s;
   color: #64748b;
+  min-height: 44px;
 }
 
 .cancel-btn:hover:not(:disabled) {
@@ -140,6 +152,7 @@
   font-weight: 500;
   cursor: pointer;
   transition: background-color 0.2s;
+  min-height: 44px;
 }
 
 .submit-btn:hover:not(:disabled) {
