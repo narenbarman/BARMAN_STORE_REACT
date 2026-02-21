@@ -708,3 +708,134 @@
   outline: none;
   border-color: #667eea;
 }
+
+.credit-history-page .credit-mobile-list {
+  display: none;
+}
+
+@media (max-width: 768px) {
+  .credit-history-page {
+    padding: 12px;
+  }
+
+  .credit-history-page .page-header {
+    gap: 12px;
+    margin-bottom: 14px;
+  }
+
+  .credit-history-page .header-content h1 {
+    font-size: 20px;
+  }
+
+  .credit-history-page .balance-card {
+    width: 100%;
+    min-width: 0;
+    padding: 12px 14px;
+  }
+
+  .credit-history-page .credit-table {
+    display: none;
+  }
+
+  .credit-history-page .credit-mobile-list {
+    display: block;
+    padding: 12px;
+  }
+
+  .credit-history-page .credit-day-group + .credit-day-group {
+    margin-top: 14px;
+  }
+
+  .credit-history-page .credit-day-title {
+    margin: 0 0 8px;
+    font-size: 12px;
+    color: #6b7280;
+    text-transform: uppercase;
+    letter-spacing: 0.4px;
+  }
+
+  .credit-history-page .credit-bubble-stack {
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+  }
+
+  .credit-history-page .credit-transaction-bubble {
+    width: calc(100% - 40px);
+    border-radius: 14px;
+    padding: 10px 12px;
+    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.08);
+    border: 1px solid #e5e7eb;
+  }
+
+  .credit-history-page .credit-transaction-bubble.bubble-left {
+    align-self: flex-start;
+    background: #f8fafc;
+  }
+
+  .credit-history-page .credit-transaction-bubble.bubble-right {
+    align-self: flex-end;
+    background: #ecfdf3;
+  }
+
+  .credit-history-page .bubble-head {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 8px;
+    margin-bottom: 8px;
+    font-size: 13px;
+    font-weight: 600;
+  }
+
+  .credit-history-page .bubble-type {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+  }
+
+  .credit-history-page .bubble-detail {
+    font-size: 12px;
+    line-height: 1.35;
+    color: #334155;
+    margin-bottom: 3px;
+    word-break: break-word;
+  }
+
+  .credit-history-page .bubble-actions {
+    display: flex;
+    gap: 8px;
+    margin-top: 8px;
+  }
+
+  .credit-history-page .bubble-balance {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-top: 8px;
+    padding-top: 8px;
+    border-top: 1px solid #dbe3ef;
+    font-size: 12px;
+  }
+
+  .credit-history-page .bubble-balance strong {
+    font-size: 13px;
+  }
+
+  .credit-history-page .report-controls {
+    gap: 8px;
+    padding: 12px;
+  }
+
+  .credit-history-page .report-controls label {
+    width: 100%;
+    justify-content: space-between;
+    font-size: 12px;
+  }
+
+  .credit-history-page .report-controls input[type="date"] {
+    width: 62%;
+    font-size: 12px;
+    padding: 7px 9px;
+  }
+}

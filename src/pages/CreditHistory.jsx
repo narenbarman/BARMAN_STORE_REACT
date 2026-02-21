@@ -789,6 +789,26 @@ function CreditHistory({ user }) {
   };
   const backHref = isAdminView ? getBackToAdminUrl() : '/profile';
   const backLabel = isAdminView ? 'Back to Admin' : 'Back to Profile';
+  const groupedTransactions = useMemo(() => {
+    const groups = new Map();
+    creditHistory.forEach((transaction) => {
+      const dateKey = getEffectiveTransactionDateKey(transaction) || 'Unknown';
+      if (!groups.has(dateKey)) groups.set(dateKey, []);
+      groups.get(dateKey).push(transaction);
+    });
+
+    return Array.from(groups.entries())
+      .sort(([a], [b]) => b.localeCompare(a))
+      .map(([dateKey, transactions]) => ({
+        dateKey,
+        dateLabel: /^\d{4}-\d{2}-\d{2}$/.test(dateKey)
+          ? formatTransactionDate({ transaction_date: dateKey }, { long: true })
+          : dateKey,
+        transactions: [...transactions].sort(
+          (a, b) => getEffectiveTransactionTimestamp(b) - getEffectiveTransactionTimestamp(a)
+        )
+      }));
+  }, [creditHistory]);
 
   return (
     <div className="credit-history-page">
@@ -826,71 +846,148 @@ function CreditHistory({ user }) {
             {isAdminView && <p>Click "Add Transaction" to record a transaction.</p>}
           </div>
         ) : (
-          <table className="credit-table">
-            <thead>
-              <tr>
-                <th>Date</th>
-                <th>Invoice #</th>
-                <th>Type</th>
-                <th>Amount</th>
-                <th>Balance</th>
-                <th>Description</th>
-                <th>Actions</th>
-              </tr>
-            </thead>
-            <tbody>
-	              {creditHistory.map((transaction) => {
-	                const descriptionWithRef = transaction.reference 
-	                  ? `${transaction.description || ''} (${transaction.reference})`.trim()
-	                  : transaction.description || '-';
+          <>
+            <table className="credit-table">
+              <thead>
+                <tr>
+                  <th>Date</th>
+                  <th>Invoice #</th>
+                  <th>Type</th>
+                  <th>Amount</th>
+                  <th>Balance</th>
+                  <th>Description</th>
+                  <th>Actions</th>
+                </tr>
+              </thead>
+              <tbody>
+                {creditHistory.map((transaction) => {
+                  const descriptionWithRef = transaction.reference
+                    ? `${transaction.description || ''} (${transaction.reference})`.trim()
+                    : transaction.description || '-';
                   const canShareTransaction = isAdminView && isTransactionWithinFiveDays(transaction);
-	                return (
-	                <tr key={transaction.id}>
-                  <td>{formatTransactionDate(transaction, { long: true })}</td>
-                  <td className="invoice-number">{transaction.invoice_number || '-'}</td>
-                  <td>
-                    {getTypeIcon(transaction.type)}
-                    <span>{getTypeLabel(transaction.type)}</span>
-                  </td>
-                  <td className={transaction.type === 'payment' ? 'payment-amount' : 'given-amount'}>
-                    {formatCurrencyColored(transaction.type === 'payment' ? -parseFloat(transaction.amount) : parseFloat(transaction.amount))}
-                  </td>
-                  <td>{formatCurrencyColored(parseFloat(transaction.balance))}</td>
-                  <td>{descriptionWithRef}</td>
-                  <td className="actions-cell">
-                    {transaction.image_path && (
-                      <a 
-                        href={transaction.image_path}
-                        target="_blank" 
-                        rel="noopener noreferrer"
-                        className="action-icon view"
-                        title="View Invoice"
-                      >
-                        <Eye size={16} />
-                      </a>
-                    )}
-	                    <button 
-	                      className="action-icon print"
-	                      onClick={() => handlePrintInvoice(transaction)}
-	                      title="Print Invoice"
-	                    >
-	                      <Printer size={16} />
-	                    </button>
-                      {canShareTransaction && (
+                  return (
+                    <tr key={transaction.id}>
+                      <td>{formatTransactionDate(transaction, { long: true })}</td>
+                      <td className="invoice-number">{transaction.invoice_number || '-'}</td>
+                      <td>
+                        {getTypeIcon(transaction.type)}
+                        <span>{getTypeLabel(transaction.type)}</span>
+                      </td>
+                      <td className={transaction.type === 'payment' ? 'payment-amount' : 'given-amount'}>
+                        {formatCurrencyColored(transaction.type === 'payment' ? -parseFloat(transaction.amount) : parseFloat(transaction.amount))}
+                      </td>
+                      <td>{formatCurrencyColored(parseFloat(transaction.balance))}</td>
+                      <td>{descriptionWithRef}</td>
+                      <td className="actions-cell">
+                        {transaction.image_path && (
+                          <a
+                            href={transaction.image_path}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            className="action-icon view"
+                            title="View Invoice"
+                          >
+                            <Eye size={16} />
+                          </a>
+                        )}
                         <button
-                          className="action-icon whatsapp"
-                          onClick={() => handleSendTransactionWhatsApp(transaction)}
-                          title="Share on WhatsApp"
+                          className="action-icon print"
+                          onClick={() => handlePrintInvoice(transaction)}
+                          title="Print Invoice"
                         >
-                          <MessageCircle size={16} />
+                          <Printer size={16} />
                         </button>
-                      )}
-	                  </td>
-	                </tr>
-	                );
-	              })}
-            </tbody>
-          </table>
+                        {canShareTransaction && (
+                          <button
+                            className="action-icon whatsapp"
+                            onClick={() => handleSendTransactionWhatsApp(transaction)}
+                            title="Share on WhatsApp"
+                          >
+                            <MessageCircle size={16} />
+                          </button>
+                        )}
+                      </td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+
+            <div className="credit-mobile-list">
+              {groupedTransactions.map((group) => (
+                <section key={group.dateKey} className="credit-day-group">
+                  <h3 className="credit-day-title">{group.dateLabel}</h3>
+                  <div className="credit-bubble-stack">
+                    {group.transactions.map((transaction) => {
+                      const description = transaction.description || '-';
+                      const reference = transaction.reference || '-';
+                      const signedAmount = transaction.type === 'payment'
+                        ? -parseFloat(transaction.amount)
+                        : parseFloat(transaction.amount);
+                      const canShareTransaction = isAdminView && isTransactionWithinFiveDays(transaction);
+                      return (
+                        <article
+                          key={`mobile-${transaction.id}`}
+                          className={`credit-transaction-bubble ${transaction.type === 'payment' ? 'bubble-right payment' : 'bubble-left given'}`}
+                        >
+                          <header className="bubble-head">
+                            <span className="bubble-type">
+                              {getTypeIcon(transaction.type)}
+                              {getTypeLabel(transaction.type)}
+                            </span>
+                            <span className={transaction.type === 'payment' ? 'payment-amount' : 'given-amount'}>
+                              {formatCurrencyColored(signedAmount)}
+                            </span>
+                          </header>
+
+                          <div className="bubble-detail"><strong>Desc:</strong> {description}</div>
+                          <div className="bubble-detail"><strong>Ref:</strong> {reference}</div>
+                          <div className="bubble-detail"><strong>Invoice:</strong> {transaction.invoice_number || '-'}</div>
+                          <div className="bubble-detail"><strong>Date:</strong> {formatTransactionDate(transaction, { long: true })}</div>
+
+                          <div className="bubble-actions">
+                            {transaction.image_path && (
+                              <a
+                                href={transaction.image_path}
+                                target="_blank"
+                                rel="noopener noreferrer"
+                                className="action-icon view"
+                                title="View Invoice"
+                                onClick={(e) => e.stopPropagation()}
+                              >
+                                <Eye size={16} />
+                              </a>
+                            )}
+                            <button
+                              className="action-icon print"
+                              onClick={() => handlePrintInvoice(transaction)}
+                              title="Print Invoice"
+                            >
+                              <Printer size={16} />
+                            </button>
+                            {canShareTransaction && (
+                              <button
+                                className="action-icon whatsapp"
+                                onClick={() => handleSendTransactionWhatsApp(transaction)}
+                                title="Share on WhatsApp"
+                              >
+                                <MessageCircle size={16} />
+                              </button>
+                            )}
+                          </div>
+
+                          <footer className="bubble-balance">
+                            <span>Balance</span>
+                            <strong>{formatCurrencyColored(parseFloat(transaction.balance))}</strong>
+                          </footer>
+                        </article>
+                      );
+                    })}
+                  </div>
+                </section>
+              ))}
+            </div>
+          </>
               )}
          {isAdminView && (
            <div className="report-controls">
