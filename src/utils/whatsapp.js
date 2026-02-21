@@ -1,6 +1,23 @@
+import { ONLINE_STORE_URL } from '../pages/info';
+
 const getDefaultCountryCode = () => {
   const raw = String(import.meta?.env?.VITE_DEFAULT_COUNTRY_CODE || '91').replace(/\D/g, '');
   return raw || '91';
+};
+
+const getStoreUrl = () => String(ONLINE_STORE_URL || '').trim();
+
+const appendVisitUsFooter = (text) => {
+  const baseText = String(text || '').trim();
+  const storeUrl = getStoreUrl();
+  if (!storeUrl) return baseText;
+
+  const normalizedText = baseText.toLowerCase();
+  const normalizedUrl = storeUrl.toLowerCase();
+  if (normalizedText.includes(normalizedUrl)) return baseText;
+
+  const footer = `Visit us at ${storeUrl}`;
+  return baseText ? `${baseText}\n\n${footer}` : footer;
 };
 
 export const normalizePhoneForWhatsApp = (phone, defaultCountryCode = getDefaultCountryCode()) => {
@@ -25,7 +42,7 @@ export const normalizePhoneForWhatsApp = (phone, defaultCountryCode = getDefault
 
 export const buildWhatsAppUrl = ({ phone, text, defaultCountryCode } = {}) => {
   const normalized = normalizePhoneForWhatsApp(phone, defaultCountryCode);
-  const encoded = encodeURIComponent(String(text || ''));
+  const encoded = encodeURIComponent(appendVisitUsFooter(text));
   return normalized
     ? `https://wa.me/${normalized}?text=${encoded}`
     : `https://wa.me/?text=${encoded}`;
@@ -38,4 +55,3 @@ export const openWhatsApp = (params = {}) => {
   }
   return href;
 };
-
