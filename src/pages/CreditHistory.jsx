@@ -135,6 +135,10 @@ function CreditHistory({ user }) {
   });
   const [error, setError] = useState('');
   const [success, setSuccess] = useState('');
+  const [isMobile, setIsMobile] = useState(() => {
+    if (typeof window === 'undefined') return false;
+    return window.innerWidth <= 768;
+  });
   const fileInputRef = useRef(null);
 
   // New: report states
@@ -156,6 +160,13 @@ function CreditHistory({ user }) {
     if (!effectiveUserId) return;
     fetchCreditData(effectiveUserId);
   }, [authUser, isAdminView, userId, effectiveUserId, navigate]);
+
+  useEffect(() => {
+    if (typeof window === 'undefined') return undefined;
+    const handleResize = () => setIsMobile(window.innerWidth <= 768);
+    window.addEventListener('resize', handleResize);
+    return () => window.removeEventListener('resize', handleResize);
+  }, []);
 
   const fetchCreditData = async (targetUserId = effectiveUserId) => {
     try {
@@ -288,6 +299,7 @@ function CreditHistory({ user }) {
   };
 
   const handlePrintInvoice = (transaction) => {
+    if (isMobile) return;
     setSelectedTransaction(transaction);
     setShowInvoiceModal(true);
   };
@@ -892,9 +904,11 @@ function CreditHistory({ user }) {
                           </a>
                         )}
                         <button
-                          className="action-icon print"
+                          className="action-icon print mobile-hide-print"
                           onClick={() => handlePrintInvoice(transaction)}
                           title="Print Invoice"
+                          disabled={isMobile}
+                          aria-disabled={isMobile}
                         >
                           <Printer size={16} />
                         </button>
@@ -960,9 +974,11 @@ function CreditHistory({ user }) {
                               </a>
                             )}
                             <button
-                              className="action-icon print"
+                              className="action-icon print mobile-hide-print"
                               onClick={() => handlePrintInvoice(transaction)}
                               title="Print Invoice"
+                              disabled={isMobile}
+                              aria-disabled={isMobile}
                             >
                               <Printer size={16} />
                             </button>
