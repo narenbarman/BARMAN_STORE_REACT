@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef, useMemo } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { useParams, useNavigate, Link, useLocation } from 'react-router-dom';
 import { ArrowLeft, Plus, DollarSign, CreditCard, RefreshCw, Printer, Upload, FileText, Eye, Download, MessageCircle } from 'lucide-react';
 import { creditApi, usersApi } from '../services/api';
@@ -107,14 +107,14 @@ function CreditHistory({ user }) {
   const { userId } = useParams();
   const navigate = useNavigate();
   const location = useLocation();
-  const authUser = useMemo(() => {
+  const authUser = (() => {
     if (user) return user;
     try {
       return JSON.parse(localStorage.getItem('user') || 'null');
     } catch (_) {
       return null;
     }
-  }, [user]);
+  })();
   const isAdminView = authUser?.role === 'admin';
   const effectiveUserId = isAdminView ? userId : (authUser?.id || userId);
   const [creditHistory, setCreditHistory] = useState([]);
@@ -537,7 +537,7 @@ function CreditHistory({ user }) {
     return now >= txTime && (now - txTime) <= FIVE_DAYS_MS;
   };
 
-  const groupedTransactions = useMemo(() => {
+  const groupedTransactions = (() => {
     const groups = new Map();
     creditHistory.forEach((transaction) => {
       const dateKey = getEffectiveTransactionDateKey(transaction) || 'Unknown';
@@ -556,7 +556,7 @@ function CreditHistory({ user }) {
           (a, b) => getEffectiveTransactionTimestamp(b) - getEffectiveTransactionTimestamp(a)
         )
       }));
-  }, [creditHistory]);
+  })();
 
   const buildTransactionShareText = (transaction) => {
     const amount = Number(transaction?.amount || 0);
