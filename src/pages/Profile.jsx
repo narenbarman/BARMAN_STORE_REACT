@@ -4,7 +4,7 @@ import {
   User, Phone, MapPin, Mail, Save, CheckCircle, 
   AlertCircle, ArrowLeft, Camera, Trash2
 } from 'lucide-react';
-import { usersApi, resolveMediaUrl } from '../services/api';
+import { usersApi, resolveMediaSourceForDisplay } from '../services/api';
 import './Profile.css';
 
 function Profile() {
@@ -16,6 +16,7 @@ function Profile() {
   const [success, setSuccess] = useState(null);
   const [imageUploading, setImageUploading] = useState(false);
   const [imageLoadFailed, setImageLoadFailed] = useState(false);
+  const [displayProfileImageSrc, setDisplayProfileImageSrc] = useState('');
   
   const [formData, setFormData] = useState({
     name: '',
@@ -34,6 +35,29 @@ function Profile() {
   useEffect(() => {
     setImageLoadFailed(false);
   }, [formData.profile_image]);
+
+  useEffect(() => {
+    let cancelled = false;
+    let revokeUrl = null;
+    const run = async () => {
+      if (imageLoadFailed || !formData.profile_image) {
+        setDisplayProfileImageSrc('');
+        return;
+      }
+      const resolved = await resolveMediaSourceForDisplay(formData.profile_image);
+      if (cancelled) {
+        if (resolved.revoke && resolved.src) URL.revokeObjectURL(resolved.src);
+        return;
+      }
+      setDisplayProfileImageSrc(resolved.src || '');
+      revokeUrl = resolved.revoke ? resolved.src : null;
+    };
+    run();
+    return () => {
+      cancelled = true;
+      if (revokeUrl) URL.revokeObjectURL(revokeUrl);
+    };
+  }, [formData.profile_image, imageLoadFailed]);
 
   useEffect(() => {
     loadProfile();
@@ -341,9 +365,9 @@ function Profile() {
 
             <div className="profile-image-section">
               <div className="profile-image-preview">
-                {formData.profile_image && !imageLoadFailed ? (
+                {displayProfileImageSrc && !imageLoadFailed ? (
                   <img
-                    src={resolveMediaUrl(formData.profile_image)}
+                    src={displayProfileImageSrc}
                     alt="Profile"
                     onError={() => setImageLoadFailed(true)}
                   />

@@ -1,12 +1,13 @@
 import { useState, useRef, useEffect } from 'react';
 import { Link, useNavigate, useLocation } from 'react-router-dom';
 import { User, Shield, LogOut, ChevronDown, Settings, X, ShoppingCart, CreditCard } from 'lucide-react';
-import { resolveMediaUrl } from '../services/api';
+import { resolveMediaSourceForDisplay } from '../services/api';
 import './UserMenu.css';
 
 function UserMenu({ user, setUser }) {
   const [menuOpen, setMenuOpen] = useState(false);
   const [avatarLoadFailed, setAvatarLoadFailed] = useState(false);
+  const [avatarSrc, setAvatarSrc] = useState('');
   const menuRef = useRef(null);
   const navigate = useNavigate();
   const location = useLocation();
@@ -71,7 +72,30 @@ function UserMenu({ user, setUser }) {
     setAvatarLoadFailed(false);
   }, [user?.profile_image]);
 
-  const profileImageSrc = !avatarLoadFailed ? resolveMediaUrl(user?.profile_image) : '';
+  useEffect(() => {
+    let cancelled = false;
+    let revokeUrl = null;
+    const run = async () => {
+      if (avatarLoadFailed || !user?.profile_image) {
+        setAvatarSrc('');
+        return;
+      }
+      const resolved = await resolveMediaSourceForDisplay(user.profile_image);
+      if (cancelled) {
+        if (resolved.revoke && resolved.src) URL.revokeObjectURL(resolved.src);
+        return;
+      }
+      setAvatarSrc(resolved.src || '');
+      revokeUrl = resolved.revoke ? resolved.src : null;
+    };
+    run();
+    return () => {
+      cancelled = true;
+      if (revokeUrl) URL.revokeObjectURL(revokeUrl);
+    };
+  }, [user?.profile_image, avatarLoadFailed]);
+
+  const profileImageSrc = !avatarLoadFailed ? avatarSrc : '';
   const renderAvatar = (className) => (
     <span className={className}>
       {profileImageSrc ? (

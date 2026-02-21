@@ -35,6 +35,29 @@ export const resolveMediaUrl = (value) => {
   return raw;
 };
 
+export const resolveMediaSourceForDisplay = async (value) => {
+  const directUrl = resolveMediaUrl(value);
+  if (!directUrl) return { src: '', revoke: false };
+
+  const isGitHubHost = typeof window !== 'undefined' && /\.github\.io$/i.test(window.location.hostname);
+  if (!isGitHubHost || !isNgrokUrl(directUrl)) {
+    return { src: directUrl, revoke: false };
+  }
+
+  try {
+    const response = await fetch(directUrl, {
+      headers: { 'ngrok-skip-browser-warning': 'true' },
+    });
+    if (!response.ok) return { src: directUrl, revoke: false };
+    const contentType = String(response.headers.get('content-type') || '').toLowerCase();
+    if (!contentType.startsWith('image/')) return { src: directUrl, revoke: false };
+    const blob = await response.blob();
+    return { src: URL.createObjectURL(blob), revoke: true };
+  } catch (_) {
+    return { src: directUrl, revoke: false };
+  }
+};
+
 // Get auth token from localStorage
 const getAuthToken = () => {
   try {
