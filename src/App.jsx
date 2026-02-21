@@ -1,5 +1,5 @@
 import { BrowserRouter, HashRouter, Routes, Route, Link } from 'react-router-dom';
-import { ShoppingCart, Menu, X, Package, ClipboardList, Home as HomeIcon, Store } from 'lucide-react';
+import { ShoppingCart, Menu, X, Package, ClipboardList, Home as HomeIcon, Store, Shield } from 'lucide-react';
 import { useState, useEffect, lazy, Suspense } from 'react';
 import UserMenu from './components/UserMenu';
 import ErrorBoundary from './components/ErrorBoundary';
@@ -53,6 +53,7 @@ function App() {
   const [cartCount, setCartCount] = useState(0);
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
   const [user, setUser] = useState(null);
+  const closeMobileMenu = () => setMobileMenuOpen(false);
 
   useEffect(() => {
     // Check for existing user session
@@ -104,6 +105,28 @@ function App() {
     window.location.replace(target + window.location.search);
   }, []);
 
+  useEffect(() => {
+    const handleEscape = (event) => {
+      if (event.key === 'Escape') {
+        setMobileMenuOpen(false);
+      }
+    };
+    window.addEventListener('keydown', handleEscape);
+    return () => window.removeEventListener('keydown', handleEscape);
+  }, []);
+
+  useEffect(() => {
+    if (!mobileMenuOpen) {
+      document.body.style.overflow = '';
+      return undefined;
+    }
+    const previousOverflow = document.body.style.overflow;
+    document.body.style.overflow = 'hidden';
+    return () => {
+      document.body.style.overflow = previousOverflow;
+    };
+  }, [mobileMenuOpen]);
+
   return (
     <ErrorBoundary>
       <Router basename={routerBasename} future={routerFuture}>
@@ -111,6 +134,16 @@ function App() {
         {/* Header */}
         <header className="header">
           <div className="header-content">
+            <button
+              className="mobile-menu-btn"
+              aria-expanded={mobileMenuOpen}
+              aria-controls="app-mobile-nav"
+              aria-label={mobileMenuOpen ? 'Close navigation menu' : 'Open navigation menu'}
+              onClick={() => setMobileMenuOpen((prev) => !prev)}
+            >
+              {mobileMenuOpen ? <X size={24} /> : <Menu size={24} />}
+            </button>
+
             <Link to="/" className="logo">
               <img src={logoImage} alt="Logo" className="logo-image" />
               <span className="logo-bar">BAR</span>
@@ -118,36 +151,40 @@ function App() {
               <span className="logo-store">STORE</span>
             </Link>
 
-            <nav className={`nav ${mobileMenuOpen ? 'nav-open' : ''}`}>
-              <Link to="/" onClick={() => setMobileMenuOpen(false)}>
+            <nav id="app-mobile-nav" className={`nav ${mobileMenuOpen ? 'nav-open' : ''}`}>
+              <Link to="/" onClick={closeMobileMenu}>
                 <HomeIcon size={20} /> Home
               </Link>
-              <Link to="/products" onClick={() => setMobileMenuOpen(false)}>
+              <Link to="/products" onClick={closeMobileMenu}>
                 <Store size={20} /> Products
               </Link>
-              <Link to="/order-history" onClick={() => setMobileMenuOpen(false)}>
+              <Link to="/order-history" onClick={closeMobileMenu}>
                 <ClipboardList size={20} /> Orders
               </Link>
-              <Link to="/order-tracking" onClick={() => setMobileMenuOpen(false)}>
+              <Link to="/order-tracking" onClick={closeMobileMenu}>
                 <Package size={20} /> Track
               </Link>
-              <Link to="/cart" className="cart-link" onClick={() => setMobileMenuOpen(false)}>
+              {user && (
+                <Link to="/my-orders" onClick={closeMobileMenu} className="mobile-my-orders-link">
+                  <ShoppingCart size={20} /> My Orders
+                </Link>
+              )}
+              <Link to="/cart" className="cart-link" onClick={closeMobileMenu}>
                 <ShoppingCart size={20} />
                 {cartCount > 0 && <span className="cart-badge">{cartCount}</span>}
               </Link>
+              {user?.role === 'admin' && (
+                <Link to="/admin" onClick={closeMobileMenu} className="mobile-admin-link">
+                  <Shield size={20} /> Admin Panel
+                </Link>
+              )}
               
               {/* Combined User Menu (Profile, Login/Logout, Admin) */}
-              <UserMenu user={user} setUser={setUser} />
+              <UserMenu user={user} setUser={setUser} inMobileNav onNavigate={closeMobileMenu} />
             </nav>
-
-            <button 
-              className="mobile-menu-btn"
-              onClick={() => setMobileMenuOpen(!mobileMenuOpen)}
-            >
-              {mobileMenuOpen ? <X size={24} /> : <Menu size={24} />}
-            </button>
           </div>
         </header>
+        {mobileMenuOpen ? <button className="mobile-nav-backdrop" aria-label="Close menu" onClick={closeMobileMenu} /> : null}
 
         {/* Main Content */}
         <main className="main-content">
@@ -177,19 +214,23 @@ function App() {
         {/* Footer */}
         <footer className="footer">
           <div className="footer-content">
-            <div className="footer-section">
+            <div className="footer-section footer-brand">
               <h3>{info.TITLE}</h3>
               <p>{info.SUB_TITLE}</p>
             </div>
-            <div className="footer-section">
+            <div className="footer-section footer-links">
               <h4>Quick Links</h4>
-              <Link to="/products">Shop</Link>
-              <Link to="/cart">Cart</Link>
+              <div className="footer-links-list">
+                <Link to="/products">Shop</Link>
+                <Link to="/cart">Cart</Link>
+              </div>
             </div>
-            <div className="footer-section">
+            <div className="footer-section footer-contact">
               <h4>CONTACT US</h4>
-              <p>Email:{info.EMAIL}</p>
-              <p>Phone: {info.CONTACT}</p>
+              <div className="footer-contact-list">
+                <p>Email: {info.EMAIL}</p>
+                <p>Phone: {info.CONTACT}</p>
+              </div>
             </div>
           </div>
           <div className="footer-bottom">

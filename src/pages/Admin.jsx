@@ -1,7 +1,7 @@
 import { useState, useEffect, useRef, useMemo } from 'react';
 import { Link, useNavigate, useSearchParams } from 'react-router-dom';
 import { Package, ShoppingCart, Users, TrendingUp, LogOut, Plus, Edit, Trash2, X, FolderOpen, CreditCard, FileText, Truck, ShoppingBag, History, BarChart2, Gift, KeyRound, Eye, Menu, Upload, Download, CheckCircle2, Clock } from 'lucide-react';
-import { statsApi, productsApi, ordersApi, usersApi, adminApi } from '../services/api';
+import { statsApi, productsApi, ordersApi, usersApi, adminApi, resolveMediaUrl } from '../services/api';
 import { getProductImageSrc, getProductFallbackImage } from '../utils/productImage';
 import { formatCurrency, getSignedCurrencyClassName } from '../utils/formatters';
 import ProductForm from './ProductForm';
@@ -72,6 +72,7 @@ function Admin({ user }) {
   const [backupLoading, setBackupLoading] = useState(false);
   const [backupBusy, setBackupBusy] = useState(false);
   const [isMobileSidebarOpen, setIsMobileSidebarOpen] = useState(false);
+  const [userAvatarErrors, setUserAvatarErrors] = useState({});
   const [productViewMode, setProductViewMode] = useState(() => {
     if (typeof window === 'undefined') return 'table';
     const saved = window.localStorage.getItem('admin-products-view');
@@ -285,6 +286,18 @@ function Admin({ user }) {
     }
   };
 
+  const getInitials = (name) => {
+    const value = String(name || '').trim();
+    if (!value) return 'U';
+    return value.split(' ').map((part) => part[0]).join('').slice(0, 2).toUpperCase();
+  };
+
+  const formatJoinedDate = (value) => {
+    if (!value) return '-';
+    const date = new Date(value);
+    return Number.isNaN(date.getTime()) ? '-' : date.toLocaleDateString();
+  };
+
   const fetchBackups = async () => {
     try {
       setBackupLoading(true);
@@ -438,6 +451,10 @@ function Admin({ user }) {
 
   const customerUsers = useMemo(
     () => users.filter((u) => String(u?.role || '').toLowerCase() !== 'admin'),
+    [users]
+  );
+  const adminUsers = useMemo(
+    () => users.filter((u) => String(u?.role || '').toLowerCase() === 'admin'),
     [users]
   );
 
@@ -1824,63 +1841,123 @@ function Admin({ user }) {
                 <Plus size={20} /> Add Customer
               </button>
             </div>
-            <div className="users-table">
-              <table>
-                <thead>
-                  <tr>
-                    <th>ID</th>
-                    <th>Name</th>
-                    <th>Email</th>
-                    <th>Phone</th>
-                    <th>Role</th>
-                    <th>Joined</th>
-                    <th>Actions</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {users.map(u => (
-                    <tr key={u.id}>
-                      <td>{u.id}</td>
-                      <td>{u.name}</td>
-                      <td>{u.email || '-'}</td>
-                      <td>{u.phone || '-'}</td>
-                      <td>
-                        <span className={`role ${u.role}`}>{u.role}</span>
-                      </td>
-                      <td>{new Date(u.created_at).toLocaleDateString()}</td>
-                      <td>
-                        {u.role !== 'admin' ? (
-                          <>
-                            <Link 
-                              to={`/admin/users/${u.id}/credit?returnTab=users`}
-                              className="action-btn credit"
-                              title="Credit History"
-                            >
-                              <CreditCard size={16} />
-                            </Link>
-                            <button 
-                              className="action-btn edit" 
-                              onClick={() => handleEditUser(u)}
-                              title="Edit user"
-                            >
-                              <Edit size={16} />
-                            </button>
-                            <button 
-                              className="action-btn delete" 
-                              onClick={() => handleDeleteUser(u.id)}
-                              title="Delete user"
-                            >
-                              <Trash2 size={16} />
-                            </button>
-                          </>
-                        ) : (
-                          <span className="admin-badge">Admin</span>
-                        )}
-                      </td>
+            <div className="users-group">
+              <h2>Admins ({adminUsers.length})</h2>
+              <div className="users-table">
+                <table>
+                  <thead>
+                    <tr>
+                      <th>User</th>
+                      <th>Email</th>
+                      <th>Phone</th>
                     </tr>
-                  ))}
-                </tbody>
-              </table>
+                  </thead>
+                  <tbody>
+                    {adminUsers.length === 0 ? (
+                      <tr>
+                        <td colSpan="3">No admins found.</td>
+                      </tr>
+                    ) : adminUsers.map((u) => (
+                      <tr key={u.id}>
+                        <td>
+                          <div className="admin-user-cell">
+                            <div className="admin-user-name-cell">
+                              {u.profile_image && !userAvatarErrors[u.id] ? (
+                                <img
+                                  src={resolveMediaUrl(u.profile_image)}
+                                  alt={u.name || 'User'}
+                                  className="admin-user-avatar"
+                                  onError={() => setUserAvatarErrors((prev) => ({ ...prev, [u.id]: true }))}
+                                />
+                              ) : (
+                                <span className="admin-user-avatar-fallback">{getInitials(u.name)}</span>
+                              )}
+                              <span>{u.name || '-'}</span>
+                            </div>
+                            <div className="admin-user-meta-row">
+                              <span className="admin-user-joined">Joined: {formatJoinedDate(u.created_at)}</span>
+                              <div className="admin-user-actions">
+                                <span className="admin-badge">Admin</span>
+                              </div>
+                            </div>
+                          </div>
+                        </td>
+                        <td>{u.email || '-'}</td>
+                        <td>{u.phone || '-'}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+            <div className="users-group">
+              <h2>Customers ({customerUsers.length})</h2>
+              <div className="users-table">
+                <table>
+                  <thead>
+                    <tr>
+                      <th>User</th>
+                      <th>Email</th>
+                      <th>Phone</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {customerUsers.length === 0 ? (
+                      <tr>
+                        <td colSpan="3">No customers found.</td>
+                      </tr>
+                    ) : customerUsers.map((u) => (
+                      <tr key={u.id}>
+                        <td>
+                          <div className="admin-user-cell">
+                            <div className="admin-user-name-cell">
+                              {u.profile_image && !userAvatarErrors[u.id] ? (
+                                <img
+                                  src={resolveMediaUrl(u.profile_image)}
+                                  alt={u.name || 'User'}
+                                  className="admin-user-avatar"
+                                  onError={() => setUserAvatarErrors((prev) => ({ ...prev, [u.id]: true }))}
+                                />
+                              ) : (
+                                <span className="admin-user-avatar-fallback">{getInitials(u.name)}</span>
+                              )}
+                              <span>{u.name || '-'}</span>
+                            </div>
+                            <div className="admin-user-meta-row">
+                              <span className="admin-user-joined">Joined: {formatJoinedDate(u.created_at)}</span>
+                              <div className="admin-user-actions">
+                                <Link
+                                  to={`/admin/users/${u.id}/credit?returnTab=users`}
+                                  className="action-btn credit"
+                                  title="Credit History"
+                                >
+                                  <CreditCard size={16} />
+                                </Link>
+                                <button
+                                  className="action-btn edit"
+                                  onClick={() => handleEditUser(u)}
+                                  title="Edit user"
+                                >
+                                  <Edit size={16} />
+                                </button>
+                                <button
+                                  className="action-btn delete"
+                                  onClick={() => handleDeleteUser(u.id)}
+                                  title="Delete user"
+                                >
+                                  <Trash2 size={16} />
+                                </button>
+                              </div>
+                            </div>
+                          </div>
+                        </td>
+                        <td>{u.email || '-'}</td>
+                        <td>{u.phone || '-'}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
             </div>
           </div>
         )}
