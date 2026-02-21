@@ -160,12 +160,70 @@ function Profile() {
     }
   };
 
-  const fileToDataUrl = (file) => new Promise((resolve, reject) => {
-    const reader = new FileReader();
-    reader.onload = () => resolve(String(reader.result || ''));
-    reader.onerror = () => reject(new Error('Failed to read image file'));
-    reader.readAsDataURL(file);
+  const PROFILE_IMAGE_MAX_BYTES = 2 * 1024 * 1024;
+
+  const dataUrlSizeBytes = (dataUrl) => {
+    const payload = String(dataUrl || '').split(',')[1] || '';
+    const pad = payload.endsWith('==') ? 2 : payload.endsWith('=') ? 1 : 0;
+    return Math.max(0, Math.floor((payload.length * 3) / 4) - pad);
+  };
+
+  const loadImageElement = (file) => new Promise((resolve, reject) => {
+    const objectUrl = URL.createObjectURL(file);
+    const img = new Image();
+    img.onload = () => {
+      URL.revokeObjectURL(objectUrl);
+      resolve(img);
+    };
+    img.onerror = () => {
+      URL.revokeObjectURL(objectUrl);
+      reject(new Error('Failed to read image file'));
+    };
+    img.src = objectUrl;
   });
+
+  const optimizeImageForProfile = async (file) => {
+    const img = await loadImageElement(file);
+    const canvas = document.createElement('canvas');
+    const ctx = canvas.getContext('2d');
+    if (!ctx) throw new Error('Image optimization is not supported in this browser');
+
+    // Square crop with slight upward bias keeps faces better centered in avatar circles.
+    const srcW = img.width;
+    const srcH = img.height;
+    const cropSize = Math.min(srcW, srcH);
+    const offsetX = Math.max(0, Math.floor((srcW - cropSize) / 2));
+    const offsetY = Math.max(0, Math.floor((srcH - cropSize) / 2.4));
+
+    let target = Math.min(1200, cropSize);
+    let quality = 0.9;
+    let dataUrl = '';
+
+    for (let attempt = 0; attempt < 8; attempt += 1) {
+      canvas.width = target;
+      canvas.height = target;
+      ctx.clearRect(0, 0, target, target);
+      ctx.fillStyle = '#ffffff';
+      ctx.fillRect(0, 0, target, target);
+      ctx.drawImage(img, offsetX, offsetY, cropSize, cropSize, 0, 0, target, target);
+
+      dataUrl = canvas.toDataURL('image/jpeg', quality);
+      if (dataUrlSizeBytes(dataUrl) <= PROFILE_IMAGE_MAX_BYTES) {
+        return dataUrl;
+      }
+
+      if (quality > 0.62) {
+        quality -= 0.08;
+      } else {
+        target = Math.floor(target * 0.85);
+      }
+    }
+
+    if (dataUrlSizeBytes(dataUrl) > PROFILE_IMAGE_MAX_BYTES) {
+      throw new Error('Image is too large even after optimization. Please choose a smaller photo.');
+    }
+    return dataUrl;
+  };
 
   const handleProfileImageUpload = async (e) => {
     const file = e.target.files?.[0];
@@ -178,14 +236,10 @@ function Profile() {
       setError('Please choose a JPEG, PNG, or WEBP image.');
       return;
     }
-    if (file.size > 2 * 1024 * 1024) {
-      setError('Image size must be 2MB or less.');
-      return;
-    }
 
     setImageUploading(true);
     try {
-      const imageBase64 = await fileToDataUrl(file);
+      const imageBase64 = await optimizeImageForProfile(file);
       const response = await usersApi.uploadProfileImage(user.id, imageBase64);
       const nextImage = response?.profile_image || '';
       setFormData((prev) => ({ ...prev, profile_image: nextImage }));
@@ -309,6 +363,7 @@ function Profile() {
                     style={{ display: 'none' }}
                   />
                 </label>
+                <span className="image-adjust-note">Auto-cropped and optimized below 2MB</span>
                 {formData.profile_image && (
                   <button
                     type="button"

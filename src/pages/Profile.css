@@ -260,6 +260,7 @@
   width: 100%;
   height: 100%;
   object-fit: cover;
+  object-position: center 32%;
 }
 
 .profile-image-actions {
@@ -292,6 +293,12 @@
 .image-remove-btn:disabled {
   opacity: 0.6;
   cursor: not-allowed;
+}
+
+.image-adjust-note {
+  align-self: center;
+  font-size: 0.8rem;
+  color: #64748b;
 }
 
 /* Form Actions */
@@ -401,6 +408,10 @@
   .profile-image-section {
     align-items: flex-start;
     flex-direction: column;
+  }
+
+  .image-adjust-note {
+    align-self: flex-start;
   }
 
   .validation-warning {
