@@ -3,6 +3,7 @@
   "version": "1.0.0",
   "description": "BARMAN STORE - E-commerce Application with SQLite",
   "private": true,
+  "homepage": "https://narenbarman.github.io/BARMAN_STORE_REACT",
   "dependencies": {
     "bcrypt": "^5.1.0",
     "better-sqlite3": "^9.2.0",
@@ -20,6 +21,7 @@
     "@tailwindcss/postcss": "^4.1.18",
     "@vitejs/plugin-react": "^4.2.1",
     "autoprefixer": "^10.4.24",
+    "gh-pages": "^6.3.0",
     "postcss": "^8.5.6",
     "tailwindcss": "^4.1.18",
     "vite": "^5.0.8"
@@ -32,7 +34,9 @@
     "start:prod": "node server/index.js",
     "pm2:start": "pm2 start ecosystem.config.cjs",
     "pm2:restart": "pm2 restart barman-api",
-    "pm2:logs": "pm2 logs barman-api"
+    "pm2:logs": "pm2 logs barman-api",
+    "predeploy": "npm run build",
+    "deploy": "gh-pages -d dist"
   },
   "browserslist": {
     "production": [
