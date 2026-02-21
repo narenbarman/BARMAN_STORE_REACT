@@ -14,7 +14,7 @@ module.exports = {
         PORT: 5000,
         DB_PATH: 'server/barman-store.db',
         BACKUP_DIR: 'server/backups',
-        FRONTEND_ORIGIN: 'http://127.0.0.1,http://localhost,http://192.168.29.18',
+        FRONTEND_ORIGIN: 'http://127.0.0.1,http://localhost,http://192.168.29.18,https://narenbarman.github.io',
       },
     },
   ],
