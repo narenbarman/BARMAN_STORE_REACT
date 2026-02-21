@@ -144,7 +144,14 @@ const verifyToken = (token) => {
   try {
     const payload = JSON.parse(base64UrlDecode(encoded));
     if (!payload || !Number(payload.uid)) return null;
-    if (!payload.exp || Date.now() > Number(payload.exp)) return null;
+    const now = Date.now();
+    if (payload.exp) {
+      if (now > Number(payload.exp)) return null;
+    } else if (payload.iat) {
+      if ((now - Number(payload.iat)) > TOKEN_TTL_MS) return null;
+    } else {
+      return null;
+    }
     return payload;
   } catch (_) {
     return null;
