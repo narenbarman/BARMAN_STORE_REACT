@@ -29,17 +29,17 @@ const routerFuture = {
   v7_relativeSplatPath: true
 };
 
-const routerBasename = (() => {
-  const base = String(import.meta.env.BASE_URL || '/');
-  return base === '/' ? '/' : base.replace(/\/$/, '');
-})();
-
 const isGitHubPagesHost = (() => {
   if (typeof window === 'undefined') return false;
   return /\.github\.io$/i.test(window.location.hostname);
 })();
 
 const Router = isGitHubPagesHost ? HashRouter : BrowserRouter;
+const routerBasename = (() => {
+  if (isGitHubPagesHost) return '/';
+  const base = String(import.meta.env.BASE_URL || '/');
+  return base === '/' ? '/' : base.replace(/\/$/, '');
+})();
 
 const getGitHubPagesHashUrl = (path = '/') => {
   if (typeof window === 'undefined') return path;
