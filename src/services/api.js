@@ -21,6 +21,9 @@ export const resolveMediaUrl = (value) => {
   if (raw.startsWith('/')) {
     const baseUrl = getApiUrl();
     if (raw.startsWith('/uploads/')) {
+      if (typeof window !== 'undefined' && !/\.github\.io$/i.test(window.location.hostname)) {
+        return `/api${raw}`;
+      }
       return `${baseUrl}/api${raw}`;
     }
     return `${baseUrl}${raw}`;
