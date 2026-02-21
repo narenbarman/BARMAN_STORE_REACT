@@ -537,6 +537,27 @@ function CreditHistory({ user }) {
     return now >= txTime && (now - txTime) <= FIVE_DAYS_MS;
   };
 
+  const groupedTransactions = useMemo(() => {
+    const groups = new Map();
+    creditHistory.forEach((transaction) => {
+      const dateKey = getEffectiveTransactionDateKey(transaction) || 'Unknown';
+      if (!groups.has(dateKey)) groups.set(dateKey, []);
+      groups.get(dateKey).push(transaction);
+    });
+
+    return Array.from(groups.entries())
+      .sort(([a], [b]) => b.localeCompare(a))
+      .map(([dateKey, transactions]) => ({
+        dateKey,
+        dateLabel: /^\d{4}-\d{2}-\d{2}$/.test(dateKey)
+          ? formatTransactionDate({ transaction_date: dateKey }, { long: true })
+          : dateKey,
+        transactions: [...transactions].sort(
+          (a, b) => getEffectiveTransactionTimestamp(b) - getEffectiveTransactionTimestamp(a)
+        )
+      }));
+  }, [creditHistory]);
+
   const buildTransactionShareText = (transaction) => {
     const amount = Number(transaction?.amount || 0);
     const updatedBalance = Number(transaction?.balance || 0);
@@ -789,26 +810,6 @@ function CreditHistory({ user }) {
   };
   const backHref = isAdminView ? getBackToAdminUrl() : '/profile';
   const backLabel = isAdminView ? 'Back to Admin' : 'Back to Profile';
-  const groupedTransactions = useMemo(() => {
-    const groups = new Map();
-    creditHistory.forEach((transaction) => {
-      const dateKey = getEffectiveTransactionDateKey(transaction) || 'Unknown';
-      if (!groups.has(dateKey)) groups.set(dateKey, []);
-      groups.get(dateKey).push(transaction);
-    });
-
-    return Array.from(groups.entries())
-      .sort(([a], [b]) => b.localeCompare(a))
-      .map(([dateKey, transactions]) => ({
-        dateKey,
-        dateLabel: /^\d{4}-\d{2}-\d{2}$/.test(dateKey)
-          ? formatTransactionDate({ transaction_date: dateKey }, { long: true })
-          : dateKey,
-        transactions: [...transactions].sort(
-          (a, b) => getEffectiveTransactionTimestamp(b) - getEffectiveTransactionTimestamp(a)
-        )
-      }));
-  }, [creditHistory]);
 
   return (
     <div className="credit-history-page">
