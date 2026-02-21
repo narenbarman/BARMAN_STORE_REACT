@@ -1,8 +1,14 @@
 // Resolve API base URL.
 // - Production behind reverse proxy: use relative '/api' calls (base '')
 // - Optional override with VITE_API_BASE_URL when needed
+const isGitHubPagesRuntime = () =>
+  typeof window !== 'undefined' && /\.github\.io$/i.test(window.location.hostname);
+
 const getApiUrl = () => {
   const fromEnv = String(import.meta.env.VITE_API_BASE_URL || '').trim();
+  if (!fromEnv && isGitHubPagesRuntime()) {
+    throw new Error('Missing VITE_API_BASE_URL for GitHub Pages runtime. Configure VITE_API_BASE_URL in deployment environment.');
+  }
   return fromEnv ? fromEnv.replace(/\/+$/, '') : '';
 };
 

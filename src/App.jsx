@@ -1,4 +1,4 @@
-import { BrowserRouter as Router, Routes, Route, Link } from 'react-router-dom';
+import { BrowserRouter, HashRouter, Routes, Route, Link } from 'react-router-dom';
 import { ShoppingCart, Menu, X, Package, ClipboardList, Home as HomeIcon, Store } from 'lucide-react';
 import { useState, useEffect } from 'react';
 import Home from './pages/Home';
@@ -33,6 +33,13 @@ const routerBasename = (() => {
   const base = String(import.meta.env.BASE_URL || '/');
   return base === '/' ? '/' : base.replace(/\/$/, '');
 })();
+
+const isGitHubPagesHost = (() => {
+  if (typeof window === 'undefined') return false;
+  return /\.github\.io$/i.test(window.location.hostname);
+})();
+
+const Router = isGitHubPagesHost ? HashRouter : BrowserRouter;
 
 function App() {
   const [cartCount, setCartCount] = useState(0);
