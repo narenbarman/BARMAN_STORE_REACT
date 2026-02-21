@@ -24,7 +24,11 @@ export const resolveMediaUrl = (value) => {
       if (typeof window !== 'undefined' && !/\.github\.io$/i.test(window.location.hostname)) {
         return `/api${raw}`;
       }
-      return `${baseUrl}/api${raw}`;
+      const mediaUrl = `${baseUrl}/api${raw}`;
+      if (isNgrokUrl(baseUrl)) {
+        return `${mediaUrl}${mediaUrl.includes('?') ? '&' : '?'}ngrok-skip-browser-warning=true`;
+      }
+      return mediaUrl;
     }
     return `${baseUrl}${raw}`;
   }
