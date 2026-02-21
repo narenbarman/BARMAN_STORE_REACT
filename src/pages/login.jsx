@@ -5,22 +5,16 @@ import './login.css';
 
 // Phone number validation and formatting
 const formatPhoneNumber = (phone) => {
-  // Remove all non-digit characters
   const cleaned = phone.replace(/\D/g, '');
-  // Format as XXX-XXX-XXXX if 10 digits
-  if (cleaned.length === 10) {
-    return `${cleaned.slice(0, 3)}-${cleaned.slice(3, 6)}-${cleaned.slice(6, 10)}`;
-  }
-  // Format as XXX-XXX-XXXX if 10 digits with country code
-  if (cleaned.length === 11 && cleaned.startsWith('1')) {
-    return `${cleaned.slice(0, 1)}-${cleaned.slice(1, 4)}-${cleaned.slice(4, 7)}-${cleaned.slice(7, 11)}`;
-  }
+  // Normalize to local 10-digit format when country code is provided.
+  if (cleaned.length === 12 && cleaned.startsWith('91')) return cleaned.slice(2);
+  if (cleaned.length === 11 && cleaned.startsWith('1')) return cleaned.slice(1);
   return cleaned;
 };
 
 const validatePhoneNumber = (phone) => {
-  const cleaned = phone.replace(/\D/g, '');
-  return cleaned.length >= 10 && cleaned.length <= 11;
+  const normalized = formatPhoneNumber(phone);
+  return normalized.length === 10;
 };
 
 const validateEmail = (email) => {
@@ -39,6 +33,7 @@ function Login({ setUser }) {
   const [address, setAddress] = useState('');
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
+  const [success, setSuccess] = useState('');
   const [resetReason, setResetReason] = useState('');
   const navigate = useNavigate();
 
@@ -46,6 +41,7 @@ function Login({ setUser }) {
     e.preventDefault();
     setLoading(true);
     setError('');
+    setSuccess('');
 
     try {
       let data;
@@ -75,7 +71,7 @@ function Login({ setUser }) {
 
       // Store user and token in localStorage and state
       localStorage.setItem('user', JSON.stringify({ ...data.user, token: data.token }));
-      setUser(data.user);
+      setUser({ ...data.user, token: data.token });
 
       // Redirect based on role
       if (data.user.role === 'admin') {
@@ -102,12 +98,13 @@ function Login({ setUser }) {
   const handleResetRequest = async () => {
     try {
       setError('');
+      setSuccess('');
       if (!email && !phone) {
         setError('Enter your email or phone first to request reset');
         return;
       }
       await authApi.requestPasswordReset(email || null, phone || null, resetReason || null);
-      setError('Reset request sent to admin');
+      setSuccess('Reset request sent to admin');
     } catch (err) {
       setError(err.message || 'Failed to submit reset request');
     }
@@ -124,6 +121,7 @@ function Login({ setUser }) {
         </p>
 
         {error && <div className="error-message">{error}</div>}
+        {success && <div className="success-message">{success}</div>}
 
         <form onSubmit={handleSubmit} className="login-form">
           {isRegistering && (
@@ -226,7 +224,7 @@ function Login({ setUser }) {
                 required={!isRegistering && loginMethod === 'phone'}
               />
               <small style={{ color: 'var(--color-text)', opacity: 0.7 }}>
-                Enter your registered phone number (10-11 digits)
+                Enter your registered phone number (10 digits, optional +91 prefix)
               </small>
             </div>
           )}

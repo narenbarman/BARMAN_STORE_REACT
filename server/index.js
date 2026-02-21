@@ -71,16 +71,22 @@ const normalizeEmail = (email) => {
 };
 
 const AUTH_TOKEN_SECRET = process.env.AUTH_TOKEN_SECRET || 'barman-store-local-secret';
+const TOKEN_TTL_MS = Number(process.env.AUTH_TOKEN_TTL_MS || 7 * 24 * 60 * 60 * 1000);
+if (process.env.NODE_ENV === 'production' && !process.env.AUTH_TOKEN_SECRET) {
+  console.warn('AUTH_TOKEN_SECRET is not set in production; using insecure fallback secret.');
+}
 const base64UrlEncode = (value) => Buffer.from(value).toString('base64url');
 const base64UrlDecode = (value) => Buffer.from(value, 'base64url').toString('utf8');
 const signTokenPayload = (payloadEncoded) =>
   crypto.createHmac('sha256', AUTH_TOKEN_SECRET).update(payloadEncoded).digest('base64url');
 
 const generateToken = (user = {}) => {
+  const now = Date.now();
   const payload = {
     uid: Number(user.id || 0),
     role: String(user.role || 'customer'),
-    iat: Date.now(),
+    iat: now,
+    exp: now + TOKEN_TTL_MS,
   };
   const encoded = base64UrlEncode(JSON.stringify(payload));
   const signature = signTokenPayload(encoded);
@@ -100,6 +106,7 @@ const verifyToken = (token) => {
   try {
     const payload = JSON.parse(base64UrlDecode(encoded));
     if (!payload || !Number(payload.uid)) return null;
+    if (!payload.exp || Date.now() > Number(payload.exp)) return null;
     return payload;
   } catch (_) {
     return null;
@@ -1405,7 +1412,7 @@ app.post('/api/auth/request-password-reset', (req, res) => {
   }
 });
 
-app.get('/api/admin/password-reset-requests', (_, res) => {
+app.get('/api/admin/password-reset-requests', requireAdmin, (_, res) => {
   try {
     const rows = dbAll(`
       SELECT prr.*, u.name as user_name
@@ -1419,7 +1426,7 @@ app.get('/api/admin/password-reset-requests', (_, res) => {
   }
 });
 
-app.put('/api/admin/password-reset-requests/:id', (req, res) => {
+app.put('/api/admin/password-reset-requests/:id', requireAdmin, (req, res) => {
   try {
     const { status, admin_note, new_password } = req.body || {};
     if (!['approved', 'rejected', 'pending'].includes(String(status || '').toLowerCase())) {
@@ -1442,7 +1449,7 @@ app.put('/api/admin/password-reset-requests/:id', (req, res) => {
   }
 });
 
-app.post('/api/admin/backup/create', (_, res) => {
+app.post('/api/admin/backup/create', requireAdmin, (_, res) => {
   try {
     const backup = createDatabaseBackup('manual');
     return res.status(201).json({ success: true, backup });
@@ -1451,7 +1458,7 @@ app.post('/api/admin/backup/create', (_, res) => {
   }
 });
 
-app.get('/api/admin/backup/list', (_, res) => {
+app.get('/api/admin/backup/list', requireAdmin, (_, res) => {
   try {
     return res.json(listDatabaseBackups());
   } catch (error) {
@@ -1459,7 +1466,7 @@ app.get('/api/admin/backup/list', (_, res) => {
   }
 });
 
-app.get('/api/admin/backup/download/:fileName', (req, res) => {
+app.get('/api/admin/backup/download/:fileName', requireAdmin, (req, res) => {
   try {
     const { fileName } = req.params;
     if (!validateBackupFileName(fileName)) {
@@ -1475,7 +1482,7 @@ app.get('/api/admin/backup/download/:fileName', (req, res) => {
   }
 });
 
-app.post('/api/admin/backup/restore', (req, res) => {
+app.post('/api/admin/backup/restore', requireAdmin, (req, res) => {
   try {
     const fileName = String(req.body?.file_name || '').trim();
     if (!validateBackupFileName(fileName)) {
@@ -1514,7 +1521,7 @@ app.post('/api/admin/backup/restore', (req, res) => {
   }
 });
 
-app.get('/api/users', (_, res) => {
+app.get('/api/users', requireAdmin, (_, res) => {
   try {
     const users = dbAll(`SELECT * FROM users ORDER BY created_at DESC`).map(sanitizeUser);
     return res.json(users);
@@ -1523,8 +1530,13 @@ app.get('/api/users', (_, res) => {
   }
 });
 
-app.get('/api/users/:id', (req, res) => {
+app.get('/api/users/:id', requireAuth, (req, res) => {
   try {
+    const targetUserId = Number(req.params.id);
+    if (!targetUserId) return res.status(400).json({ error: 'Invalid user id' });
+    if (req.authUser.role !== 'admin' && Number(req.authUser.id) !== targetUserId) {
+      return res.status(403).json({ error: 'Forbidden' });
+    }
     const user = sanitizeUser(dbGet(`SELECT * FROM users WHERE id = ?`, [req.params.id]));
     if (!user) return res.status(404).json({ error: 'User not found' });
     return res.json(user);
@@ -1533,7 +1545,7 @@ app.get('/api/users/:id', (req, res) => {
   }
 });
 
-app.post('/api/users', (req, res) => {
+app.post('/api/users', requireAdmin, (req, res) => {
   try {
     const { name, email, phone, address, password, role } = req.body || {};
     const normalizedPhone = normalizePhone(phone);
@@ -1561,8 +1573,16 @@ app.post('/api/users', (req, res) => {
   }
 });
 
-app.put('/api/users/:id', (req, res) => {
+app.put('/api/users/:id', requireAuth, (req, res) => {
   try {
+    const targetUserId = Number(req.params.id);
+    if (!targetUserId) return res.status(400).json({ error: 'Invalid user id' });
+    const isAdmin = req.authUser.role === 'admin';
+    const isSelf = Number(req.authUser.id) === targetUserId;
+    if (!isAdmin && !isSelf) {
+      return res.status(403).json({ error: 'Forbidden' });
+    }
+
     const { name, email, phone, address, role } = req.body || {};
     const current = dbGet(`SELECT * FROM users WHERE id = ?`, [req.params.id]);
     if (!current) return res.status(404).json({ error: 'User not found' });
@@ -1583,7 +1603,7 @@ app.put('/api/users/:id', (req, res) => {
         emailValue,
         normalizedPhone,
         address !== undefined ? address : current.address,
-        role || current.role,
+        isAdmin ? (role || current.role) : current.role,
         req.params.id,
       ]
     );
@@ -1593,7 +1613,7 @@ app.put('/api/users/:id', (req, res) => {
   }
 });
 
-app.delete('/api/users/:id', (req, res) => {
+app.delete('/api/users/:id', requireAdmin, (req, res) => {
   try {
     const user = dbGet(`SELECT * FROM users WHERE id = ?`, [req.params.id]);
     if (!user) return res.status(404).json({ error: 'User not found' });
@@ -1605,7 +1625,7 @@ app.delete('/api/users/:id', (req, res) => {
   }
 });
 
-app.get('/api/customers', (_, res) => {
+app.get('/api/customers', requireAdmin, (_, res) => {
   try {
     const customers = dbAll(`SELECT id, name, email, phone, address, created_at FROM users WHERE role = 'customer' ORDER BY name ASC`);
     return res.json(customers);
@@ -1614,7 +1634,7 @@ app.get('/api/customers', (_, res) => {
   }
 });
 
-app.get('/api/customers/search', (req, res) => {
+app.get('/api/customers/search', requireAdmin, (req, res) => {
   try {
     const q = String(req.query.q || req.query.name || '').trim();
     const limit = Number(req.query.limit || 20);
@@ -1648,8 +1668,13 @@ const validateCustomerProfile = (user, addressObj) => {
   return { complete: issues.length === 0, issues };
 };
 
-app.get('/api/customers/:id/profile', (req, res) => {
+app.get('/api/customers/:id/profile', requireAuth, (req, res) => {
   try {
+    const targetUserId = Number(req.params.id);
+    if (!targetUserId) return res.status(400).json({ error: 'Invalid customer id' });
+    if (req.authUser.role !== 'admin' && Number(req.authUser.id) !== targetUserId) {
+      return res.status(403).json({ error: 'Forbidden' });
+    }
     const user = dbGet(`SELECT id, name, email, phone, address, role FROM users WHERE id = ?`, [req.params.id]);
     if (!user) return res.status(404).json({ error: 'Customer not found' });
     let address = {};
@@ -2294,8 +2319,13 @@ app.get('/api/orders/number/:orderNumber', (req, res) => {
   }
 });
 
-app.get('/api/users/:userId/orders', (req, res) => {
+app.get('/api/users/:userId/orders', requireAuth, (req, res) => {
   try {
+    const targetUserId = Number(req.params.userId);
+    if (!targetUserId) return res.status(400).json({ error: 'Invalid user id' });
+    if (req.authUser.role !== 'admin' && Number(req.authUser.id) !== targetUserId) {
+      return res.status(403).json({ error: 'Forbidden' });
+    }
     const orders = dbAll(`SELECT * FROM orders WHERE user_id = ? ORDER BY created_at DESC`, [req.params.userId]);
     return res.json(orders);
   } catch (error) {

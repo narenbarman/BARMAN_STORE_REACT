@@ -58,7 +58,12 @@ function App() {
     // Check for existing user session
     const savedUser = localStorage.getItem('user');
     if (savedUser) {
-      setUser(JSON.parse(savedUser));
+      try {
+        setUser(JSON.parse(savedUser));
+      } catch (_) {
+        localStorage.removeItem('user');
+        setUser(null);
+      }
     }
   }, []);
 

@@ -4,9 +4,15 @@ import { authApi } from '../services/api';
 import './login.css';
 
 // Phone number validation
+const normalizePhoneNumber = (phone) => {
+  const cleaned = String(phone || '').replace(/\D/g, '');
+  if (cleaned.length === 12 && cleaned.startsWith('91')) return cleaned.slice(2);
+  if (cleaned.length === 11 && cleaned.startsWith('1')) return cleaned.slice(1);
+  return cleaned;
+};
+
 const validatePhoneNumber = (phone) => {
-  const cleaned = phone.replace(/\D/g, '');
-  return cleaned.length >= 10 && cleaned.length <= 11;
+  return normalizePhoneNumber(phone).length === 10;
 };
 
 const validateEmail = (email) => {
@@ -59,7 +65,7 @@ function ChangePassword() {
     try {
       await authApi.changePassword(
         identifierType === 'email' ? email : null,
-        identifierType === 'phone' ? phone : null,
+        identifierType === 'phone' ? normalizePhoneNumber(phone) : null,
         currentPassword,
         newPassword
       );
@@ -127,7 +133,7 @@ function ChangePassword() {
                 required={identifierType === 'phone'}
               />
               <small style={{ color: 'var(--color-text)', opacity: 0.7 }}>
-                Enter your registered phone number
+                Enter your registered phone number (10 digits, optional +91 prefix)
               </small>
             </div>
           )}
