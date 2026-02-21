@@ -20,6 +20,9 @@ export const resolveMediaUrl = (value) => {
   if (/^https?:\/\//i.test(raw) || raw.startsWith('data:')) return raw;
   if (raw.startsWith('/')) {
     const baseUrl = getApiUrl();
+    if (raw.startsWith('/uploads/')) {
+      return `${baseUrl}/api${raw}`;
+    }
     return `${baseUrl}${raw}`;
   }
   return raw;

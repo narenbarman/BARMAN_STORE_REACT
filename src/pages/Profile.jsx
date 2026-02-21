@@ -15,6 +15,7 @@ function Profile() {
   const [error, setError] = useState(null);
   const [success, setSuccess] = useState(null);
   const [imageUploading, setImageUploading] = useState(false);
+  const [imageLoadFailed, setImageLoadFailed] = useState(false);
   
   const [formData, setFormData] = useState({
     name: '',
@@ -29,6 +30,10 @@ function Profile() {
   });
   
   const [validationIssues, setValidationIssues] = useState([]);
+
+  useEffect(() => {
+    setImageLoadFailed(false);
+  }, [formData.profile_image]);
 
   useEffect(() => {
     loadProfile();
@@ -282,11 +287,11 @@ function Profile() {
 
             <div className="profile-image-section">
               <div className="profile-image-preview">
-                {formData.profile_image ? (
+                {formData.profile_image && !imageLoadFailed ? (
                   <img
                     src={resolveMediaUrl(formData.profile_image)}
                     alt="Profile"
-                    onError={(e) => { e.currentTarget.style.display = 'none'; }}
+                    onError={() => setImageLoadFailed(true)}
                   />
                 ) : (
                   <span>{(formData.name || 'U').slice(0, 1).toUpperCase()}</span>
