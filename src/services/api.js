@@ -4,6 +4,8 @@
 const isGitHubPagesRuntime = () =>
   typeof window !== 'undefined' && /\.github\.io$/i.test(window.location.hostname);
 
+const isNgrokUrl = (value) => /\.ngrok-free\.(app|dev)(\/|$)/i.test(String(value || ''));
+
 const getApiUrl = () => {
   const fromEnv = String(import.meta.env.VITE_API_BASE_URL || '').trim();
   if (!fromEnv && isGitHubPagesRuntime()) {
@@ -28,24 +30,34 @@ export const apiFetch = async (endpoint, options = {}) => {
   const url = `${baseUrl}${endpoint}`;
   
   const token = getAuthToken();
+  const isFormData = typeof FormData !== 'undefined' && options?.body instanceof FormData;
   
   const config = {
     headers: {
-      'Content-Type': 'application/json',
       ...(token && { 'Authorization': `Bearer ${token}` }),
       ...options.headers,
     },
     ...options,
   };
 
-  if (config.body && typeof config.body === 'object') {
+  if (baseUrl && isNgrokUrl(baseUrl)) {
+    config.headers['ngrok-skip-browser-warning'] = 'true';
+  }
+
+  if (config.body && typeof config.body === 'object' && !isFormData) {
     config.body = JSON.stringify(config.body);
+    if (!config.headers['Content-Type'] && !config.headers['content-type']) {
+      config.headers['Content-Type'] = 'application/json';
+    }
   }
 
   const response = await fetch(url, config);
+  const contentType = String(response.headers.get('content-type') || '').toLowerCase();
   
   if (!response.ok) {
-    const errorPayload = await response.json().catch(() => ({ error: 'Request failed' }));
+    const errorPayload = contentType.includes('application/json')
+      ? await response.json().catch(() => ({ error: 'Request failed' }))
+      : { error: 'Request failed' };
     const message = errorPayload.error || errorPayload.message || 'Request failed';
     const err = new Error(message);
     err.status = response.status;
@@ -53,6 +65,12 @@ export const apiFetch = async (endpoint, options = {}) => {
     throw err;
   }
   
+  if (!contentType.includes('application/json')) {
+    const bodyText = await response.text().catch(() => '');
+    const preview = bodyText.slice(0, 120).replace(/\s+/g, ' ').trim();
+    throw new Error(`Expected JSON but received ${contentType || 'unknown content-type'} from ${url}. Response starts with: ${preview}`);
+  }
+
   return response.json();
 };
 
