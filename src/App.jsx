@@ -68,6 +68,28 @@ function App() {
   }, []);
 
   useEffect(() => {
+    const syncUserFromStorage = () => {
+      const savedUser = localStorage.getItem('user');
+      if (!savedUser) {
+        setUser(null);
+        return;
+      }
+      try {
+        setUser(JSON.parse(savedUser));
+      } catch (_) {
+        localStorage.removeItem('user');
+        setUser(null);
+      }
+    };
+    window.addEventListener('storage', syncUserFromStorage);
+    window.addEventListener('user-updated', syncUserFromStorage);
+    return () => {
+      window.removeEventListener('storage', syncUserFromStorage);
+      window.removeEventListener('user-updated', syncUserFromStorage);
+    };
+  }, []);
+
+  useEffect(() => {
     if (!isGitHubPagesHost || typeof window === 'undefined') return;
     const currentHash = String(window.location.hash || '');
     if (currentHash && currentHash.startsWith('#/')) return;

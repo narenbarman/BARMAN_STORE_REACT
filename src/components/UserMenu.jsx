@@ -1,10 +1,12 @@
 import { useState, useRef, useEffect } from 'react';
 import { Link, useNavigate, useLocation } from 'react-router-dom';
 import { User, Shield, LogOut, ChevronDown, Settings, X, ShoppingCart, CreditCard } from 'lucide-react';
+import { resolveMediaUrl } from '../services/api';
 import './UserMenu.css';
 
 function UserMenu({ user, setUser }) {
   const [menuOpen, setMenuOpen] = useState(false);
+  const [avatarLoadFailed, setAvatarLoadFailed] = useState(false);
   const menuRef = useRef(null);
   const navigate = useNavigate();
   const location = useLocation();
@@ -65,6 +67,28 @@ function UserMenu({ user, setUser }) {
     return name.split(' ').map(n => n[0]).join('').toUpperCase().slice(0, 2);
   };
 
+  useEffect(() => {
+    setAvatarLoadFailed(false);
+  }, [user?.profile_image]);
+
+  const profileImageSrc = !avatarLoadFailed ? resolveMediaUrl(user?.profile_image) : '';
+  const renderAvatar = (className) => (
+    <span className={className}>
+      {profileImageSrc ? (
+        <img
+          src={profileImageSrc}
+          alt={user?.name || 'User'}
+          className="avatar-image"
+          onError={() => setAvatarLoadFailed(true)}
+        />
+      ) : user?.name ? (
+        getInitials(user.name)
+      ) : (
+        <User size={18} />
+      )}
+    </span>
+  );
+
   return (
     <div className="user-menu-container" ref={menuRef}>
       {user ? (
@@ -76,9 +100,7 @@ function UserMenu({ user, setUser }) {
             aria-label="Account menu"
             aria-expanded={menuOpen}
           >
-            <span className="user-avatar">
-              {user.name ? getInitials(user.name) : <User size={18} />}
-            </span>
+            {renderAvatar('user-avatar')}
             <span className="user-menu-label">Account</span>
             <ChevronDown size={16} className={`chevron ${menuOpen ? 'open' : ''}`} />
           </button>
@@ -95,9 +117,7 @@ function UserMenu({ user, setUser }) {
               <div className="user-dropdown fade-in-up open">
                 {/* User Info Header */}
                 <div className="dropdown-header">
-                  <div className="dropdown-avatar">
-                    {user.name ? getInitials(user.name) : <User size={24} />}
-                  </div>
+                  {renderAvatar('dropdown-avatar')}
                   <div className="dropdown-user-info">
                     <span className="dropdown-user-name">{user.name || 'User'}</span>
                     <span className="dropdown-user-email">{user.email || user.phone || 'No email'}</span>

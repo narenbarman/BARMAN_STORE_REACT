@@ -14,6 +14,17 @@ const getApiUrl = () => {
   return fromEnv ? fromEnv.replace(/\/+$/, '') : '';
 };
 
+export const resolveMediaUrl = (value) => {
+  const raw = String(value || '').trim();
+  if (!raw) return '';
+  if (/^https?:\/\//i.test(raw) || raw.startsWith('data:')) return raw;
+  if (raw.startsWith('/')) {
+    const baseUrl = getApiUrl();
+    return `${baseUrl}${raw}`;
+  }
+  return raw;
+};
+
 // Get auth token from localStorage
 const getAuthToken = () => {
   try {
@@ -323,6 +334,11 @@ export const usersApi = {
     apiFetch('/api/users', {
       method: 'POST',
       body: userData,
+    }),
+  uploadProfileImage: (id, imageBase64) =>
+    apiFetch(`/api/users/${id}/profile-image`, {
+      method: 'POST',
+      body: { image_base64: imageBase64 },
     }),
 };
 

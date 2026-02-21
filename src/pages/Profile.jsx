@@ -2,9 +2,9 @@ import { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { 
   User, Phone, MapPin, Mail, Save, CheckCircle, 
-  AlertCircle, ArrowLeft, Home 
+  AlertCircle, ArrowLeft, Camera, Trash2
 } from 'lucide-react';
-import { usersApi } from '../services/api';
+import { usersApi, resolveMediaUrl } from '../services/api';
 import './Profile.css';
 
 function Profile() {
@@ -14,11 +14,13 @@ function Profile() {
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState(null);
   const [success, setSuccess] = useState(null);
+  const [imageUploading, setImageUploading] = useState(false);
   
   const [formData, setFormData] = useState({
     name: '',
     email: '',
     phone: '',
+    profile_image: '',
     street: '',
     city: '',
     state: '',
@@ -64,6 +66,7 @@ function Profile() {
         name: profile.name || '',
         email: profile.email || '',
         phone: profile.phone || '',
+        profile_image: profile.profile_image || '',
         ...addressData
       });
       
@@ -123,6 +126,7 @@ function Profile() {
         name: formData.name,
         email: formData.email,
         phone: formData.phone,
+        profile_image: formData.profile_image || null,
         address: JSON.stringify(address)
       });
 
@@ -132,9 +136,11 @@ function Profile() {
         name: formData.name,
         email: formData.email,
         phone: formData.phone,
+        profile_image: formData.profile_image || null,
         address: JSON.stringify(address)
       };
       localStorage.setItem('user', JSON.stringify(updatedUser));
+      window.dispatchEvent(new Event('user-updated'));
       setUser(updatedUser);
       
       setSuccess('Profile updated successfully!');
@@ -146,6 +152,68 @@ function Profile() {
       setError(err.message);
     } finally {
       setSaving(false);
+    }
+  };
+
+  const fileToDataUrl = (file) => new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => resolve(String(reader.result || ''));
+    reader.onerror = () => reject(new Error('Failed to read image file'));
+    reader.readAsDataURL(file);
+  });
+
+  const handleProfileImageUpload = async (e) => {
+    const file = e.target.files?.[0];
+    if (!file || !user?.id) return;
+    setError(null);
+    setSuccess(null);
+
+    const allowed = new Set(['image/jpeg', 'image/png', 'image/webp']);
+    if (!allowed.has(file.type)) {
+      setError('Please choose a JPEG, PNG, or WEBP image.');
+      return;
+    }
+    if (file.size > 2 * 1024 * 1024) {
+      setError('Image size must be 2MB or less.');
+      return;
+    }
+
+    setImageUploading(true);
+    try {
+      const imageBase64 = await fileToDataUrl(file);
+      const response = await usersApi.uploadProfileImage(user.id, imageBase64);
+      const nextImage = response?.profile_image || '';
+      setFormData((prev) => ({ ...prev, profile_image: nextImage }));
+      const updatedUser = { ...user, profile_image: nextImage };
+      setUser(updatedUser);
+      localStorage.setItem('user', JSON.stringify(updatedUser));
+      window.dispatchEvent(new Event('user-updated'));
+      setSuccess('Profile image updated.');
+    } catch (err) {
+      setError(err.message || 'Failed to upload profile image');
+    } finally {
+      setImageUploading(false);
+      e.target.value = '';
+    }
+  };
+
+  const handleRemoveProfileImage = async () => {
+    if (!user?.id) return;
+    setError(null);
+    setSuccess(null);
+    setImageUploading(true);
+    try {
+      await usersApi.update(user.id, { profile_image: null });
+      setFormData((prev) => ({ ...prev, profile_image: '' }));
+      const updatedUser = { ...user, profile_image: null };
+      setUser(updatedUser);
+      localStorage.setItem('user', JSON.stringify(updatedUser));
+      window.dispatchEvent(new Event('user-updated'));
+      setSuccess('Profile image removed.');
+    } catch (err) {
+      setError(err.message || 'Failed to remove profile image');
+    } finally {
+      setImageUploading(false);
     }
   };
 
@@ -211,6 +279,43 @@ function Profile() {
           {/* Personal Information */}
           <div className="form-section">
             <h2><User size={20} /> Personal Information</h2>
+
+            <div className="profile-image-section">
+              <div className="profile-image-preview">
+                {formData.profile_image ? (
+                  <img
+                    src={resolveMediaUrl(formData.profile_image)}
+                    alt="Profile"
+                    onError={(e) => { e.currentTarget.style.display = 'none'; }}
+                  />
+                ) : (
+                  <span>{(formData.name || 'U').slice(0, 1).toUpperCase()}</span>
+                )}
+              </div>
+              <div className="profile-image-actions">
+                <label className="image-upload-btn">
+                  <Camera size={16} />
+                  {imageUploading ? 'Uploading...' : 'Upload Photo'}
+                  <input
+                    type="file"
+                    accept="image/jpeg,image/png,image/webp"
+                    onChange={handleProfileImageUpload}
+                    disabled={imageUploading}
+                    style={{ display: 'none' }}
+                  />
+                </label>
+                {formData.profile_image && (
+                  <button
+                    type="button"
+                    className="image-remove-btn"
+                    onClick={handleRemoveProfileImage}
+                    disabled={imageUploading}
+                  >
+                    <Trash2 size={16} /> Remove
+                  </button>
+                )}
+              </div>
+            </div>
             
             <div className="form-group">
               <label htmlFor="name">Full Name *</label>

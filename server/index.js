@@ -11,6 +11,8 @@ const app = express();
 const PORT = process.env.PORT || 5000;
 const DB_PATH = process.env.DB_PATH || path.join(__dirname, 'barman-store.db');
 const BACKUP_DIR = process.env.BACKUP_DIR || path.join(__dirname, 'backups');
+const UPLOADS_DIR = process.env.UPLOADS_DIR || path.join(__dirname, 'uploads');
+const PROFILE_UPLOAD_DIR = path.join(UPLOADS_DIR, 'profiles');
 let db = new Database(DB_PATH);
 
 // Restrict CORS when FRONTEND_ORIGIN is provided.
@@ -24,7 +26,10 @@ if (process.env.FRONTEND_ORIGIN) {
   corsOptions.origin = false;
 }
 app.use(cors(Object.keys(corsOptions).length ? corsOptions : undefined));
-app.use(express.json());
+app.use(express.json({ limit: '5mb' }));
+if (!fs.existsSync(UPLOADS_DIR)) fs.mkdirSync(UPLOADS_DIR, { recursive: true });
+if (!fs.existsSync(PROFILE_UPLOAD_DIR)) fs.mkdirSync(PROFILE_UPLOAD_DIR, { recursive: true });
+app.use('/uploads', express.static(UPLOADS_DIR));
 
 const SALT_ROUNDS = Number(process.env.BCRYPT_SALT_ROUNDS || 10);
 
@@ -68,6 +73,39 @@ const normalizePhone = (phone) => {
 const normalizeEmail = (email) => {
   const v = String(email || '').trim().toLowerCase();
   return v || null;
+};
+
+const PROFILE_IMAGE_ALLOWED_MIME = new Set(['image/jpeg', 'image/png', 'image/webp']);
+const PROFILE_IMAGE_MAX_BYTES = 2 * 1024 * 1024;
+
+const buildProfileImagePath = (fileName) => `/uploads/profiles/${fileName}`;
+
+const parseDataUrlImage = (value) => {
+  const raw = String(value || '').trim();
+  const match = raw.match(/^data:(image\/[a-zA-Z0-9.+-]+);base64,([A-Za-z0-9+/=]+)$/);
+  if (!match) return null;
+  return { mimeType: match[1].toLowerCase(), base64: match[2] };
+};
+
+const mimeToExt = (mimeType) => {
+  if (mimeType === 'image/jpeg') return '.jpg';
+  if (mimeType === 'image/png') return '.png';
+  if (mimeType === 'image/webp') return '.webp';
+  return '';
+};
+
+const deleteManagedProfileImage = (profileImage) => {
+  const rel = String(profileImage || '').trim();
+  if (!rel.startsWith('/uploads/profiles/')) return;
+  const fileName = path.basename(rel);
+  const filePath = path.join(PROFILE_UPLOAD_DIR, fileName);
+  if (fs.existsSync(filePath)) {
+    try {
+      fs.unlinkSync(filePath);
+    } catch (_) {
+      // ignore file delete errors
+    }
+  }
 };
 
 const AUTH_TOKEN_SECRET = process.env.AUTH_TOKEN_SECRET || 'barman-store-local-secret';
@@ -848,6 +886,7 @@ const initDB = () => {
       email TEXT UNIQUE,
       phone TEXT UNIQUE,
       address TEXT,
+      profile_image TEXT,
       password_hash TEXT NOT NULL,
       created_at DATETIME DEFAULT CURRENT_TIMESTAMP
     );
@@ -1142,6 +1181,7 @@ const initDB = () => {
   alterTableSafe(`ALTER TABLE users ADD COLUMN email TEXT`);
   alterTableSafe(`ALTER TABLE users ADD COLUMN phone TEXT`);
   alterTableSafe(`ALTER TABLE users ADD COLUMN address TEXT`);
+  alterTableSafe(`ALTER TABLE users ADD COLUMN profile_image TEXT`);
   alterTableSafe(`ALTER TABLE users ADD COLUMN password_hash TEXT`);
   alterTableSafe(`ALTER TABLE users ADD COLUMN credit_limit REAL DEFAULT 0`);
   alterTableSafe(`ALTER TABLE credit_history ADD COLUMN transaction_date DATE`);
@@ -1270,6 +1310,7 @@ const sanitizeUser = (row) => {
     email: row.email,
     phone: row.phone,
     address: row.address,
+    profile_image: row.profile_image || null,
     created_at: row.created_at,
   };
 };
@@ -1583,7 +1624,7 @@ app.put('/api/users/:id', requireAuth, (req, res) => {
       return res.status(403).json({ error: 'Forbidden' });
     }
 
-    const { name, email, phone, address, role } = req.body || {};
+    const { name, email, phone, address, profile_image, role } = req.body || {};
     const current = dbGet(`SELECT * FROM users WHERE id = ?`, [req.params.id]);
     if (!current) return res.status(404).json({ error: 'User not found' });
     const normalizedPhone = phone !== undefined ? normalizePhone(phone) : current.phone;
@@ -1597,17 +1638,61 @@ app.put('/api/users/:id', requireAuth, (req, res) => {
       if (existing) return res.status(400).json({ error: 'Phone number already in use' });
     }
     dbRun(
-      `UPDATE users SET name = ?, email = ?, phone = ?, address = ?, role = ? WHERE id = ?`,
+      `UPDATE users SET name = ?, email = ?, phone = ?, address = ?, profile_image = ?, role = ? WHERE id = ?`,
       [
         name !== undefined ? String(name).trim() : current.name,
         emailValue,
         normalizedPhone,
         address !== undefined ? address : current.address,
+        profile_image !== undefined ? (String(profile_image || '').trim() || null) : current.profile_image,
         isAdmin ? (role || current.role) : current.role,
         req.params.id,
       ]
     );
     return res.json(sanitizeUser(dbGet(`SELECT * FROM users WHERE id = ?`, [req.params.id])));
+  } catch (error) {
+    return res.status(500).json({ error: error.message });
+  }
+});
+
+app.post('/api/users/:id/profile-image', requireAuth, (req, res) => {
+  try {
+    const targetUserId = Number(req.params.id);
+    if (!targetUserId) return res.status(400).json({ error: 'Invalid user id' });
+    const isAdmin = req.authUser.role === 'admin';
+    const isSelf = Number(req.authUser.id) === targetUserId;
+    if (!isAdmin && !isSelf) return res.status(403).json({ error: 'Forbidden' });
+
+    const user = dbGet(`SELECT id, profile_image FROM users WHERE id = ?`, [targetUserId]);
+    if (!user) return res.status(404).json({ error: 'User not found' });
+
+    const parsed = parseDataUrlImage(req.body?.image_base64);
+    if (!parsed) return res.status(400).json({ error: 'Valid image_base64 data URL is required' });
+    if (!PROFILE_IMAGE_ALLOWED_MIME.has(parsed.mimeType)) {
+      return res.status(400).json({ error: 'Allowed image types: jpeg, png, webp' });
+    }
+
+    const imageBuffer = Buffer.from(parsed.base64, 'base64');
+    if (!imageBuffer || !imageBuffer.length) {
+      return res.status(400).json({ error: 'Invalid image payload' });
+    }
+    if (imageBuffer.length > PROFILE_IMAGE_MAX_BYTES) {
+      return res.status(400).json({ error: 'Image exceeds 2MB limit' });
+    }
+
+    const fileExt = mimeToExt(parsed.mimeType);
+    const fileName = `user_${targetUserId}_${Date.now()}_${crypto.randomBytes(4).toString('hex')}${fileExt}`;
+    const absPath = path.join(PROFILE_UPLOAD_DIR, fileName);
+    fs.writeFileSync(absPath, imageBuffer);
+    const nextPath = buildProfileImagePath(fileName);
+
+    dbRun(`UPDATE users SET profile_image = ? WHERE id = ?`, [nextPath, targetUserId]);
+    if (user.profile_image && user.profile_image !== nextPath) {
+      deleteManagedProfileImage(user.profile_image);
+    }
+
+    const updated = sanitizeUser(dbGet(`SELECT * FROM users WHERE id = ?`, [targetUserId]));
+    return res.json({ success: true, profile_image: nextPath, user: updated });
   } catch (error) {
     return res.status(500).json({ error: error.message });
   }
@@ -1627,7 +1712,7 @@ app.delete('/api/users/:id', requireAdmin, (req, res) => {
 
 app.get('/api/customers', requireAdmin, (_, res) => {
   try {
-    const customers = dbAll(`SELECT id, name, email, phone, address, created_at FROM users WHERE role = 'customer' ORDER BY name ASC`);
+    const customers = dbAll(`SELECT id, name, email, phone, address, profile_image, created_at FROM users WHERE role = 'customer' ORDER BY name ASC`);
     return res.json(customers);
   } catch (error) {
     return res.status(500).json({ error: error.message });
@@ -1639,12 +1724,12 @@ app.get('/api/customers/search', requireAdmin, (req, res) => {
     const q = String(req.query.q || req.query.name || '').trim();
     const limit = Number(req.query.limit || 20);
     if (!q) {
-      const rows = dbAll(`SELECT id, name, email, phone, address, created_at FROM users WHERE role='customer' ORDER BY name LIMIT ?`, [limit]);
+      const rows = dbAll(`SELECT id, name, email, phone, address, profile_image, created_at FROM users WHERE role='customer' ORDER BY name LIMIT ?`, [limit]);
       return res.json(rows);
     }
     const like = `%${q}%`;
     const rows = dbAll(
-      `SELECT id, name, email, phone, address, created_at
+      `SELECT id, name, email, phone, address, profile_image, created_at
        FROM users
        WHERE role='customer' AND (name LIKE ? OR email LIKE ? OR phone LIKE ?)
        ORDER BY name LIMIT ?`,
@@ -1675,7 +1760,7 @@ app.get('/api/customers/:id/profile', requireAuth, (req, res) => {
     if (req.authUser.role !== 'admin' && Number(req.authUser.id) !== targetUserId) {
       return res.status(403).json({ error: 'Forbidden' });
     }
-    const user = dbGet(`SELECT id, name, email, phone, address, role FROM users WHERE id = ?`, [req.params.id]);
+    const user = dbGet(`SELECT id, name, email, phone, address, profile_image, role FROM users WHERE id = ?`, [req.params.id]);
     if (!user) return res.status(404).json({ error: 'Customer not found' });
     let address = {};
     if (user.address) {
