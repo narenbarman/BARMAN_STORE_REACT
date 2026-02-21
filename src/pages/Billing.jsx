@@ -9,6 +9,7 @@ import {
 import { billingApi } from '../services/api';
 import { buildWhatsAppUrl } from '../utils/whatsapp';
 import { formatCurrency } from '../utils/formatters';
+import * as info from './info';
 import './Billing.css';
 
 function Billing() {
@@ -427,6 +428,10 @@ function Billing() {
     lines.push(`Paid: Rs ${Number(bill.paid_amount || 0)}`);
     lines.push(`Credit: Rs ${Number(bill.credit_amount || 0)}`);
     lines.push(`Status: ${bill.payment_status || ''}`);
+    if (info.ONLINE_STORE_URL) {
+      lines.push('');
+      lines.push(`Visit online: ${info.ONLINE_STORE_URL}`);
+    }
     return lines.filter(Boolean).join('\n');
   };
 

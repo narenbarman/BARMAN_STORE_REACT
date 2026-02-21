@@ -5,6 +5,7 @@ import { buildWhatsAppUrl } from '../utils/whatsapp';
 import { printHtmlDocument, escapeHtml } from '../utils/printService';
 import { createPdfDoc, addAutoTable, addPdfFooterWithPagination, savePdf, safeFileName } from '../utils/pdfService';
 import company from '../config/company';
+import * as info from './info';
 import './BillsViewer.css';
 
 const BillsViewer = () => {
@@ -166,6 +167,10 @@ const BillsViewer = () => {
     lines.push(`Paid: Rs ${Number(bill.paid_amount || 0)}`);
     lines.push(`Credit: Rs ${Number(bill.credit_amount || 0)}`);
     lines.push(`Status: ${bill.payment_status || ''}`);
+    if (info.ONLINE_STORE_URL) {
+      lines.push('');
+      lines.push(`Visit online: ${info.ONLINE_STORE_URL}`);
+    }
     return lines.filter(Boolean).join('\n');
   };
 

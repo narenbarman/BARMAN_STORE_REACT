@@ -412,6 +412,10 @@ function CreditHistory({ user }) {
       lines.push(`Current Day Balance: ${formatCurrency(parseFloat(balance || 0))}`);
     }
     lines.push('');
+    if (info.ONLINE_STORE_URL) {
+      lines.push(`Visit online: ${info.ONLINE_STORE_URL}`);
+      lines.push('');
+    }
     lines.push('Thank you for shopping with us.');
     return lines.join('\n');
   };
@@ -483,6 +487,10 @@ function CreditHistory({ user }) {
     lines.push(`Updated Balance: ${formatCurrency(Number(updatedBalance || 0))}`);
     lines.push(`Current Total Credit: ${formatCurrency(Number(updatedBalance || 0))}`);
     lines.push('');
+    if (info.ONLINE_STORE_URL) {
+      lines.push(`Visit online: ${info.ONLINE_STORE_URL}`);
+      lines.push('');
+    }
     lines.push(thankYouLine || 'Thank you for shopping with us.');
     return lines.join('\n');
   };
@@ -531,6 +539,10 @@ function CreditHistory({ user }) {
     lines.push(`Updated Balance: ${formatCurrency(updatedBalance)}`);
     lines.push(`Current Total Credit: ${formatCurrency(updatedBalance)}`);
     lines.push('');
+    if (info.ONLINE_STORE_URL) {
+      lines.push(`Visit online: ${info.ONLINE_STORE_URL}`);
+      lines.push('');
+    }
     lines.push('Thank you for shopping with us.');
     return lines.join('\n');
   };

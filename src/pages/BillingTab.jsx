@@ -499,6 +499,10 @@ const BillingSystem = () => {
     lines.push(`Credit: Rs ${Number(credit_amount || 0)}`);
     lines.push(`Current Total Credit: Rs ${Number(current_total_credit || 0)}`);
     lines.push(`Status: ${payment_status || ''}`);
+    if (info.ONLINE_STORE_URL) {
+      lines.push('');
+      lines.push(`Visit online: ${info.ONLINE_STORE_URL}`);
+    }
     lines.push('');
     lines.push(thankYouLine || 'Thank you for shopping with us.');
     return lines.join('\n');
