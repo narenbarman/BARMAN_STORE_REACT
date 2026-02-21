@@ -41,6 +41,13 @@ const isGitHubPagesHost = (() => {
 
 const Router = isGitHubPagesHost ? HashRouter : BrowserRouter;
 
+const getGitHubPagesHashUrl = (path = '/') => {
+  if (typeof window === 'undefined') return path;
+  const normalizedPath = String(path || '/').startsWith('/') ? String(path) : `/${path}`;
+  const basePath = String(import.meta.env.BASE_URL || '/').replace(/\/$/, '');
+  return `${window.location.origin}${basePath}/#${normalizedPath}`;
+};
+
 function App() {
   const [cartCount, setCartCount] = useState(0);
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
@@ -52,6 +59,21 @@ function App() {
     if (savedUser) {
       setUser(JSON.parse(savedUser));
     }
+  }, []);
+
+  useEffect(() => {
+    if (!isGitHubPagesHost || typeof window === 'undefined') return;
+    const currentHash = String(window.location.hash || '');
+    if (currentHash && currentHash.startsWith('#/')) return;
+
+    const basePath = String(import.meta.env.BASE_URL || '/').replace(/\/$/, '');
+    const pathWithoutBase = window.location.pathname.replace(basePath, '') || '/';
+    const normalizedPath = pathWithoutBase.startsWith('/') ? pathWithoutBase : `/${pathWithoutBase}`;
+
+    if (normalizedPath === '/') return;
+
+    const target = getGitHubPagesHashUrl(normalizedPath);
+    window.location.replace(target + window.location.search);
   }, []);
 
   return (
@@ -100,6 +122,28 @@ function App() {
         </header>
 
         {/* Main Content */}
+        {isGitHubPagesHost && (
+          <div
+            style={{
+              background: '#fff3cd',
+              color: '#664d03',
+              border: '1px solid #ffecb5',
+              borderRadius: '8px',
+              margin: '12px 16px 0',
+              padding: '10px 12px',
+              fontSize: '14px'
+            }}
+          >
+            GitHub Pages route tip: use hash links such as{' '}
+            <a
+              href={getGitHubPagesHashUrl('/products')}
+              style={{ color: '#664d03', textDecoration: 'underline', fontWeight: 600 }}
+            >
+              /#/products
+            </a>
+            .
+          </div>
+        )}
         <main className="main-content">
           <Routes>
             <Route path="/" element={<Home />} />
