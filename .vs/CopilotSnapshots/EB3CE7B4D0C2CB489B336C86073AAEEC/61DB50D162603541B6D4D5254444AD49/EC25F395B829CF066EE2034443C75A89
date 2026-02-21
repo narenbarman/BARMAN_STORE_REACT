@@ -1,0 +1,77 @@
+﻿import { useEffect, useState } from 'react';
+import { adminApi } from '../services/api';
+
+function PasswordResetRequests() {
+  const [requests, setRequests] = useState([]);
+  const [error, setError] = useState('');
+  const [loading, setLoading] = useState(true);
+
+  const fetchRequests = async () => {
+    try {
+      setLoading(true);
+      setRequests(await adminApi.getPasswordResetRequests());
+    } catch (e) {
+      setError('Failed to load password reset requests');
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    fetchRequests();
+  }, []);
+
+  const handleAction = async (id, status) => {
+    try {
+      await adminApi.updatePasswordResetRequest(id, { status });
+      await fetchRequests();
+    } catch (e) {
+      setError('Failed to update request');
+    }
+  };
+
+  if (loading) return <div className="billing-content"><p>Loading reset requests...</p></div>;
+
+  return (
+    <div className="billing-content">
+      <h1>Password Reset Requests</h1>
+      {error && <div className="error-message">{error}</div>}
+      <div className="table-container">
+        <table className="billing-table">
+          <thead>
+            <tr>
+              <th>User</th>
+              <th>Email</th>
+              <th>Phone</th>
+              <th>Reason</th>
+              <th>Status</th>
+              <th>Actions</th>
+            </tr>
+          </thead>
+          <tbody>
+            {requests.map((r) => (
+              <tr key={r.id}>
+                <td>{r.user_name || '-'}</td>
+                <td>{r.email || '-'}</td>
+                <td>{r.phone || '-'}</td>
+                <td>{r.reason || '-'}</td>
+                <td>{r.status}</td>
+                <td>
+                  {r.status === 'pending' && (
+                    <>
+                      <button className="admin-btn" onClick={() => handleAction(r.id, 'approved')}>Approve</button>
+                      <button className="admin-btn" onClick={() => handleAction(r.id, 'rejected')}>Reject</button>
+                    </>
+                  )}
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  );
+}
+
+export default PasswordResetRequests;
+

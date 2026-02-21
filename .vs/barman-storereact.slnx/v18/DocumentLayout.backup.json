@@ -1,0 +1,610 @@
+{
+  "Version": 1,
+  "WorkspaceRootPath": "C:\\Users\\naren\\Desktop\\barman-storereact\\",
+  "Documents": [
+    {
+      "AbsoluteMoniker": "D:0:0:{A2FE74E1-B743-11D0-AE1A-00A0C90FFFC3}|\u003CMiscFiles\u003E|C:\\Users\\naren\\Desktop\\barman-storereact\\CLEANUP_STEPS.md||{EFC0BB08-EA7D-40C6-A696-C870411A895B}",
+      "RelativeMoniker": "D:0:0:{A2FE74E1-B743-11D0-AE1A-00A0C90FFFC3}|\u003CMiscFiles\u003E|solutionrelative:CLEANUP_STEPS.md||{EFC0BB08-EA7D-40C6-A696-C870411A895B}"
+    },
+    {
+      "AbsoluteMoniker": "D:0:0:{A2FE74E1-B743-11D0-AE1A-00A0C90FFFC3}|\u003CMiscFiles\u003E|C:\\Users\\naren\\Desktop\\barman-storereact\\src\\pages\\Admin.jsx||{14D17961-FE51-464D-9111-C4AF11D7D99A}",
+      "RelativeMoniker": "D:0:0:{A2FE74E1-B743-11D0-AE1A-00A0C90FFFC3}|\u003CMiscFiles\u003E|solutionrelative:src\\pages\\Admin.jsx||{14D17961-FE51-464D-9111-C4AF11D7D99A}"
+    },
+    {
+      "AbsoluteMoniker": "D:0:0:{A2FE74E1-B743-11D0-AE1A-00A0C90FFFC3}|\u003CMiscFiles\u003E|C:\\Users\\naren\\Desktop\\barman-storereact\\src\\pages\\Admin.css||{A5401142-F49D-43DB-90B1-F57BA349E55C}",
+      "RelativeMoniker": "D:0:0:{A2FE74E1-B743-11D0-AE1A-00A0C90FFFC3}|\u003CMiscFiles\u003E|solutionrelative:src\\pages\\Admin.css||{A5401142-F49D-43DB-90B1-F57BA349E55C}"
+    },
+    {
+      "AbsoluteMoniker": "D:0:0:{A2FE74E1-B743-11D0-AE1A-00A0C90FFFC3}|\u003CMiscFiles\u003E|C:\\Users\\naren\\Desktop\\barman-storereact\\package.json||{90A6B3A7-C1A3-4009-A288-E2FF89E96FA0}",
+      "RelativeMoniker": "D:0:0:{A2FE74E1-B743-11D0-AE1A-00A0C90FFFC3}|\u003CMiscFiles\u003E|solutionrelative:package.json||{90A6B3A7-C1A3-4009-A288-E2FF89E96FA0}"
+    },
+    {
+      "AbsoluteMoniker": "D:0:0:{A2FE74E1-B743-11D0-AE1A-00A0C90FFFC3}|\u003CMiscFiles\u003E|C:\\Users\\naren\\Desktop\\barman-storereact\\src\\pages\\Home.css||{A5401142-F49D-43DB-90B1-F57BA349E55C}",
+      "RelativeMoniker": "D:0:0:{A2FE74E1-B743-11D0-AE1A-00A0C90FFFC3}|\u003CMiscFiles\u003E|solutionrelative:src\\pages\\Home.css||{A5401142-F49D-43DB-90B1-F57BA349E55C}"
+    },
+    {
+      "AbsoluteMoniker": "D:0:0:{A2FE74E1-B743-11D0-AE1A-00A0C90FFFC3}|\u003CMiscFiles\u003E|C:\\Users\\naren\\Desktop\\barman-storereact\\src\\pages\\Products.css||{A5401142-F49D-43DB-90B1-F57BA349E55C}",
+      "RelativeMoniker": "D:0:0:{A2FE74E1-B743-11D0-AE1A-00A0C90FFFC3}|\u003CMiscFiles\u003E|solutionrelative:src\\pages\\Products.css||{A5401142-F49D-43DB-90B1-F57BA349E55C}"
+    },
+    {
+      "AbsoluteMoniker": "D:0:0:{A2FE74E1-B743-11D0-AE1A-00A0C90FFFC3}|\u003CMiscFiles\u003E|C:\\Users\\naren\\Desktop\\barman-storereact\\src\\App.css||{A5401142-F49D-43DB-90B1-F57BA349E55C}",
+      "RelativeMoniker": "D:0:0:{A2FE74E1-B743-11D0-AE1A-00A0C90FFFC3}|\u003CMiscFiles\u003E|solutionrelative:src\\App.css||{A5401142-F49D-43DB-90B1-F57BA349E55C}"
+    },
+    {
+      "AbsoluteMoniker": "D:0:0:{A2FE74E1-B743-11D0-AE1A-00A0C90FFFC3}|\u003CMiscFiles\u003E|C:\\Users\\naren\\Desktop\\barman-storereact\\src\\pages\\BillingTab.jsx||{14D17961-FE51-464D-9111-C4AF11D7D99A}",
+      "RelativeMoniker": "D:0:0:{A2FE74E1-B743-11D0-AE1A-00A0C90FFFC3}|\u003CMiscFiles\u003E|solutionrelative:src\\pages\\BillingTab.jsx||{14D17961-FE51-464D-9111-C4AF11D7D99A}"
+    },
+    {
+      "AbsoluteMoniker": "D:0:0:{A2FE74E1-B743-11D0-AE1A-00A0C90FFFC3}|\u003CMiscFiles\u003E|C:\\Users\\naren\\Desktop\\barman-storereact\\src\\pages\\BillsViewer.jsx||{14D17961-FE51-464D-9111-C4AF11D7D99A}",
+      "RelativeMoniker": "D:0:0:{A2FE74E1-B743-11D0-AE1A-00A0C90FFFC3}|\u003CMiscFiles\u003E|solutionrelative:src\\pages\\BillsViewer.jsx||{14D17961-FE51-464D-9111-C4AF11D7D99A}"
+    },
+    {
+      "AbsoluteMoniker": "D:0:0:{A2FE74E1-B743-11D0-AE1A-00A0C90FFFC3}|\u003CMiscFiles\u003E|C:\\Users\\naren\\Desktop\\barman-storereact\\src\\pages\\BillsViewer.css||{A5401142-F49D-43DB-90B1-F57BA349E55C}",
+      "RelativeMoniker": "D:0:0:{A2FE74E1-B743-11D0-AE1A-00A0C90FFFC3}|\u003CMiscFiles\u003E|solutionrelative:src\\pages\\BillsViewer.css||{A5401142-F49D-43DB-90B1-F57BA349E55C}"
+    },
+    {
+      "AbsoluteMoniker": "D:0:0:{A2FE74E1-B743-11D0-AE1A-00A0C90FFFC3}|\u003CMiscFiles\u003E|C:\\Users\\naren\\Desktop\\barman-storereact\\server\\index.js||{14D17961-FE51-464D-9111-C4AF11D7D99A}",
+      "RelativeMoniker": "D:0:0:{A2FE74E1-B743-11D0-AE1A-00A0C90FFFC3}|\u003CMiscFiles\u003E|solutionrelative:server\\index.js||{14D17961-FE51-464D-9111-C4AF11D7D99A}"
+    },
+    {
+      "AbsoluteMoniker": "D:0:0:{A2FE74E1-B743-11D0-AE1A-00A0C90FFFC3}|\u003CMiscFiles\u003E|C:\\Users\\naren\\Desktop\\barman-storereact\\MOBILE_NAVIGATION_GUIDE.md||{EFC0BB08-EA7D-40C6-A696-C870411A895B}",
+      "RelativeMoniker": "D:0:0:{A2FE74E1-B743-11D0-AE1A-00A0C90FFFC3}|\u003CMiscFiles\u003E|solutionrelative:MOBILE_NAVIGATION_GUIDE.md||{EFC0BB08-EA7D-40C6-A696-C870411A895B}"
+    },
+    {
+      "AbsoluteMoniker": "D:0:0:{A2FE74E1-B743-11D0-AE1A-00A0C90FFFC3}|\u003CMiscFiles\u003E|C:\\Users\\naren\\Desktop\\barman-storereact\\src\\pages\\PasswordResetRequests.jsx||{14D17961-FE51-464D-9111-C4AF11D7D99A}",
+      "RelativeMoniker": "D:0:0:{A2FE74E1-B743-11D0-AE1A-00A0C90FFFC3}|\u003CMiscFiles\u003E|solutionrelative:src\\pages\\PasswordResetRequests.jsx||{14D17961-FE51-464D-9111-C4AF11D7D99A}"
+    },
+    {
+      "AbsoluteMoniker": "D:0:0:{A2FE74E1-B743-11D0-AE1A-00A0C90FFFC3}|\u003CMiscFiles\u003E|C:\\Users\\naren\\Desktop\\barman-storereact\\src\\pages\\MyOrders.jsx||{14D17961-FE51-464D-9111-C4AF11D7D99A}",
+      "RelativeMoniker": "D:0:0:{A2FE74E1-B743-11D0-AE1A-00A0C90FFFC3}|\u003CMiscFiles\u003E|solutionrelative:src\\pages\\MyOrders.jsx||{14D17961-FE51-464D-9111-C4AF11D7D99A}"
+    },
+    {
+      "AbsoluteMoniker": "D:0:0:{A2FE74E1-B743-11D0-AE1A-00A0C90FFFC3}|\u003CMiscFiles\u003E|C:\\Users\\naren\\Desktop\\barman-storereact\\src\\App.jsx||{14D17961-FE51-464D-9111-C4AF11D7D99A}",
+      "RelativeMoniker": "D:0:0:{A2FE74E1-B743-11D0-AE1A-00A0C90FFFC3}|\u003CMiscFiles\u003E|solutionrelative:src\\App.jsx||{14D17961-FE51-464D-9111-C4AF11D7D99A}"
+    },
+    {
+      "AbsoluteMoniker": "D:0:0:{A2FE74E1-B743-11D0-AE1A-00A0C90FFFC3}|\u003CMiscFiles\u003E|C:\\Users\\naren\\Desktop\\barman-storereact\\src\\components\\UserMenu.jsx||{14D17961-FE51-464D-9111-C4AF11D7D99A}",
+      "RelativeMoniker": "D:0:0:{A2FE74E1-B743-11D0-AE1A-00A0C90FFFC3}|\u003CMiscFiles\u003E|solutionrelative:src\\components\\UserMenu.jsx||{14D17961-FE51-464D-9111-C4AF11D7D99A}"
+    },
+    {
+      "AbsoluteMoniker": "D:0:0:{A2FE74E1-B743-11D0-AE1A-00A0C90FFFC3}|\u003CMiscFiles\u003E|C:\\Users\\naren\\Desktop\\barman-storereact\\src\\pages\\OrderDetails.jsx||{14D17961-FE51-464D-9111-C4AF11D7D99A}",
+      "RelativeMoniker": "D:0:0:{A2FE74E1-B743-11D0-AE1A-00A0C90FFFC3}|\u003CMiscFiles\u003E|solutionrelative:src\\pages\\OrderDetails.jsx||{14D17961-FE51-464D-9111-C4AF11D7D99A}"
+    },
+    {
+      "AbsoluteMoniker": "D:0:0:{A2FE74E1-B743-11D0-AE1A-00A0C90FFFC3}|\u003CMiscFiles\u003E|C:\\Users\\naren\\Desktop\\barman-storereact\\src\\services\\api.js||{14D17961-FE51-464D-9111-C4AF11D7D99A}",
+      "RelativeMoniker": "D:0:0:{A2FE74E1-B743-11D0-AE1A-00A0C90FFFC3}|\u003CMiscFiles\u003E|solutionrelative:src\\services\\api.js||{14D17961-FE51-464D-9111-C4AF11D7D99A}"
+    },
+    {
+      "AbsoluteMoniker": "D:0:0:{A2FE74E1-B743-11D0-AE1A-00A0C90FFFC3}|\u003CMiscFiles\u003E|C:\\Users\\naren\\Desktop\\barman-storereact\\AUDIT_REPORT.md||{EFC0BB08-EA7D-40C6-A696-C870411A895B}",
+      "RelativeMoniker": "D:0:0:{A2FE74E1-B743-11D0-AE1A-00A0C90FFFC3}|\u003CMiscFiles\u003E|solutionrelative:AUDIT_REPORT.md||{EFC0BB08-EA7D-40C6-A696-C870411A895B}"
+    },
+    {
+      "AbsoluteMoniker": "D:0:0:{A2FE74E1-B743-11D0-AE1A-00A0C90FFFC3}|\u003CMiscFiles\u003E|C:\\Users\\naren\\Desktop\\barman-storereact\\src\\utils\\formatters.js||{14D17961-FE51-464D-9111-C4AF11D7D99A}",
+      "RelativeMoniker": "D:0:0:{A2FE74E1-B743-11D0-AE1A-00A0C90FFFC3}|\u003CMiscFiles\u003E|solutionrelative:src\\utils\\formatters.js||{14D17961-FE51-464D-9111-C4AF11D7D99A}"
+    },
+    {
+      "AbsoluteMoniker": "D:0:0:{A2FE74E1-B743-11D0-AE1A-00A0C90FFFC3}|\u003CMiscFiles\u003E|C:\\Users\\naren\\Desktop\\barman-storereact\\src\\components\\ErrorBoundary.jsx||{14D17961-FE51-464D-9111-C4AF11D7D99A}",
+      "RelativeMoniker": "D:0:0:{A2FE74E1-B743-11D0-AE1A-00A0C90FFFC3}|\u003CMiscFiles\u003E|solutionrelative:src\\components\\ErrorBoundary.jsx||{14D17961-FE51-464D-9111-C4AF11D7D99A}"
+    },
+    {
+      "AbsoluteMoniker": "D:0:0:{A2FE74E1-B743-11D0-AE1A-00A0C90FFFC3}|\u003CMiscFiles\u003E|C:\\Users\\naren\\Desktop\\barman-storereact\\CREDIT_HISTORY_AUTO_UPDATE.md||{EFC0BB08-EA7D-40C6-A696-C870411A895B}",
+      "RelativeMoniker": "D:0:0:{A2FE74E1-B743-11D0-AE1A-00A0C90FFFC3}|\u003CMiscFiles\u003E|solutionrelative:CREDIT_HISTORY_AUTO_UPDATE.md||{EFC0BB08-EA7D-40C6-A696-C870411A895B}"
+    },
+    {
+      "AbsoluteMoniker": "D:0:0:{A2FE74E1-B743-11D0-AE1A-00A0C90FFFC3}|\u003CMiscFiles\u003E|C:\\Users\\naren\\Desktop\\barman-storereact\\IMPLEMENTATION_SUMMARY.md||{EFC0BB08-EA7D-40C6-A696-C870411A895B}",
+      "RelativeMoniker": "D:0:0:{A2FE74E1-B743-11D0-AE1A-00A0C90FFFC3}|\u003CMiscFiles\u003E|solutionrelative:IMPLEMENTATION_SUMMARY.md||{EFC0BB08-EA7D-40C6-A696-C870411A895B}"
+    },
+    {
+      "AbsoluteMoniker": "D:0:0:{A2FE74E1-B743-11D0-AE1A-00A0C90FFFC3}|\u003CMiscFiles\u003E|C:\\Users\\naren\\Desktop\\barman-storereact\\VERIFICATION_CHECKLIST.md||{EFC0BB08-EA7D-40C6-A696-C870411A895B}",
+      "RelativeMoniker": "D:0:0:{A2FE74E1-B743-11D0-AE1A-00A0C90FFFC3}|\u003CMiscFiles\u003E|solutionrelative:VERIFICATION_CHECKLIST.md||{EFC0BB08-EA7D-40C6-A696-C870411A895B}"
+    },
+    {
+      "AbsoluteMoniker": "D:0:0:{A2FE74E1-B743-11D0-AE1A-00A0C90FFFC3}|\u003CMiscFiles\u003E|C:\\Users\\naren\\Desktop\\barman-storereact\\VISUAL_EXAMPLES.md||{EFC0BB08-EA7D-40C6-A696-C870411A895B}",
+      "RelativeMoniker": "D:0:0:{A2FE74E1-B743-11D0-AE1A-00A0C90FFFC3}|\u003CMiscFiles\u003E|solutionrelative:VISUAL_EXAMPLES.md||{EFC0BB08-EA7D-40C6-A696-C870411A895B}"
+    },
+    {
+      "AbsoluteMoniker": "D:0:0:{A2FE74E1-B743-11D0-AE1A-00A0C90FFFC3}|\u003CMiscFiles\u003E|C:\\Users\\naren\\Desktop\\barman-storereact\\QUICK_REFERENCE.md||{EFC0BB08-EA7D-40C6-A696-C870411A895B}",
+      "RelativeMoniker": "D:0:0:{A2FE74E1-B743-11D0-AE1A-00A0C90FFFC3}|\u003CMiscFiles\u003E|solutionrelative:QUICK_REFERENCE.md||{EFC0BB08-EA7D-40C6-A696-C870411A895B}"
+    },
+    {
+      "AbsoluteMoniker": "D:0:0:{A2FE74E1-B743-11D0-AE1A-00A0C90FFFC3}|\u003CMiscFiles\u003E|C:\\Users\\naren\\Desktop\\barman-storereact\\QUICK_REFERENCE_GUIDE.md||{EFC0BB08-EA7D-40C6-A696-C870411A895B}",
+      "RelativeMoniker": "D:0:0:{A2FE74E1-B743-11D0-AE1A-00A0C90FFFC3}|\u003CMiscFiles\u003E|solutionrelative:QUICK_REFERENCE_GUIDE.md||{EFC0BB08-EA7D-40C6-A696-C870411A895B}"
+    },
+    {
+      "AbsoluteMoniker": "D:0:0:{A2FE74E1-B743-11D0-AE1A-00A0C90FFFC3}|\u003CMiscFiles\u003E|C:\\Users\\naren\\Desktop\\barman-storereact\\IMPLEMENTATION_COMPLETE.md||{EFC0BB08-EA7D-40C6-A696-C870411A895B}",
+      "RelativeMoniker": "D:0:0:{A2FE74E1-B743-11D0-AE1A-00A0C90FFFC3}|\u003CMiscFiles\u003E|solutionrelative:IMPLEMENTATION_COMPLETE.md||{EFC0BB08-EA7D-40C6-A696-C870411A895B}"
+    },
+    {
+      "AbsoluteMoniker": "D:0:0:{A2FE74E1-B743-11D0-AE1A-00A0C90FFFC3}|\u003CMiscFiles\u003E|C:\\Users\\naren\\Desktop\\barman-storereact\\FINAL_SUMMARY.md||{EFC0BB08-EA7D-40C6-A696-C870411A895B}",
+      "RelativeMoniker": "D:0:0:{A2FE74E1-B743-11D0-AE1A-00A0C90FFFC3}|\u003CMiscFiles\u003E|solutionrelative:FINAL_SUMMARY.md||{EFC0BB08-EA7D-40C6-A696-C870411A895B}"
+    },
+    {
+      "AbsoluteMoniker": "D:0:0:{A2FE74E1-B743-11D0-AE1A-00A0C90FFFC3}|\u003CMiscFiles\u003E|C:\\Users\\naren\\Desktop\\barman-storereact\\ARCHITECTURE_DIAGRAMS.md||{EFC0BB08-EA7D-40C6-A696-C870411A895B}",
+      "RelativeMoniker": "D:0:0:{A2FE74E1-B743-11D0-AE1A-00A0C90FFFC3}|\u003CMiscFiles\u003E|solutionrelative:ARCHITECTURE_DIAGRAMS.md||{EFC0BB08-EA7D-40C6-A696-C870411A895B}"
+    },
+    {
+      "AbsoluteMoniker": "D:0:0:{A2FE74E1-B743-11D0-AE1A-00A0C90FFFC3}|\u003CMiscFiles\u003E|C:\\Users\\naren\\Desktop\\barman-storereact\\README_IMPLEMENTATION.md||{EFC0BB08-EA7D-40C6-A696-C870411A895B}",
+      "RelativeMoniker": "D:0:0:{A2FE74E1-B743-11D0-AE1A-00A0C90FFFC3}|\u003CMiscFiles\u003E|solutionrelative:README_IMPLEMENTATION.md||{EFC0BB08-EA7D-40C6-A696-C870411A895B}"
+    },
+    {
+      "AbsoluteMoniker": "D:0:0:{A2FE74E1-B743-11D0-AE1A-00A0C90FFFC3}|\u003CMiscFiles\u003E|C:\\Users\\naren\\Desktop\\barman-storereact\\DEPLOYMENT_CHECKLIST.md||{EFC0BB08-EA7D-40C6-A696-C870411A895B}",
+      "RelativeMoniker": "D:0:0:{A2FE74E1-B743-11D0-AE1A-00A0C90FFFC3}|\u003CMiscFiles\u003E|solutionrelative:DEPLOYMENT_CHECKLIST.md||{EFC0BB08-EA7D-40C6-A696-C870411A895B}"
+    },
+    {
+      "AbsoluteMoniker": "D:0:0:{A2FE74E1-B743-11D0-AE1A-00A0C90FFFC3}|\u003CMiscFiles\u003E|C:\\Users\\naren\\Desktop\\barman-storereact\\STATUS_COMPLETE.md||{EFC0BB08-EA7D-40C6-A696-C870411A895B}",
+      "RelativeMoniker": "D:0:0:{A2FE74E1-B743-11D0-AE1A-00A0C90FFFC3}|\u003CMiscFiles\u003E|solutionrelative:STATUS_COMPLETE.md||{EFC0BB08-EA7D-40C6-A696-C870411A895B}"
+    },
+    {
+      "AbsoluteMoniker": "D:0:0:{A2FE74E1-B743-11D0-AE1A-00A0C90FFFC3}|\u003CMiscFiles\u003E|C:\\Users\\naren\\Desktop\\barman-storereact\\FINAL_REPORT.md||{EFC0BB08-EA7D-40C6-A696-C870411A895B}",
+      "RelativeMoniker": "D:0:0:{A2FE74E1-B743-11D0-AE1A-00A0C90FFFC3}|\u003CMiscFiles\u003E|solutionrelative:FINAL_REPORT.md||{EFC0BB08-EA7D-40C6-A696-C870411A895B}"
+    },
+    {
+      "AbsoluteMoniker": "D:0:0:{A2FE74E1-B743-11D0-AE1A-00A0C90FFFC3}|\u003CMiscFiles\u003E|C:\\Users\\naren\\Desktop\\barman-storereact\\DOCUMENTATION_INDEX.md||{EFC0BB08-EA7D-40C6-A696-C870411A895B}",
+      "RelativeMoniker": "D:0:0:{A2FE74E1-B743-11D0-AE1A-00A0C90FFFC3}|\u003CMiscFiles\u003E|solutionrelative:DOCUMENTATION_INDEX.md||{EFC0BB08-EA7D-40C6-A696-C870411A895B}"
+    }
+  ],
+  "DocumentGroupContainers": [
+    {
+      "Orientation": 0,
+      "VerticalTabListWidth": 256,
+      "DocumentGroups": [
+        {
+          "DockedWidth": 200,
+          "SelectedChildIndex": 4,
+          "Children": [
+            {
+              "$type": "Bookmark",
+              "Name": "ST:0:0:{1c4feeaa-4718-4aa9-859d-94ce25d182ba}"
+            },
+            {
+              "$type": "Document",
+              "DocumentIndex": 23,
+              "Title": "VERIFICATION_CHECKLIST.md",
+              "DocumentMoniker": "C:\\Users\\naren\\Desktop\\barman-storereact\\VERIFICATION_CHECKLIST.md",
+              "RelativeDocumentMoniker": "VERIFICATION_CHECKLIST.md",
+              "ToolTip": "C:\\Users\\naren\\Desktop\\barman-storereact\\VERIFICATION_CHECKLIST.md",
+              "RelativeToolTip": "VERIFICATION_CHECKLIST.md",
+              "ViewState": "AgIAAAAAAAAAAAAAAAAAAPkAAAAAAAAAAAAAAA==",
+              "Icon": "ae27a6b0-e345-4288-96df-5eaf394ee369.001818|",
+              "WhenOpened": "2026-02-14T08:51:37.659Z",
+              "EditorCaption": ""
+            },
+            {
+              "$type": "Document",
+              "DocumentIndex": 22,
+              "Title": "IMPLEMENTATION_SUMMARY.md",
+              "DocumentMoniker": "C:\\Users\\naren\\Desktop\\barman-storereact\\IMPLEMENTATION_SUMMARY.md",
+              "RelativeDocumentMoniker": "IMPLEMENTATION_SUMMARY.md",
+              "ToolTip": "C:\\Users\\naren\\Desktop\\barman-storereact\\IMPLEMENTATION_SUMMARY.md",
+              "RelativeToolTip": "IMPLEMENTATION_SUMMARY.md",
+              "ViewState": "AgIAAAAAAAAAAAAAAAAAAI0AAAAAAAAAAAAAAA==",
+              "Icon": "ae27a6b0-e345-4288-96df-5eaf394ee369.001818|",
+              "WhenOpened": "2026-02-14T08:51:03.486Z",
+              "EditorCaption": ""
+            },
+            {
+              "$type": "Document",
+              "DocumentIndex": 21,
+              "Title": "CREDIT_HISTORY_AUTO_UPDATE.md",
+              "DocumentMoniker": "C:\\Users\\naren\\Desktop\\barman-storereact\\CREDIT_HISTORY_AUTO_UPDATE.md",
+              "RelativeDocumentMoniker": "CREDIT_HISTORY_AUTO_UPDATE.md",
+              "ToolTip": "C:\\Users\\naren\\Desktop\\barman-storereact\\CREDIT_HISTORY_AUTO_UPDATE.md",
+              "RelativeToolTip": "CREDIT_HISTORY_AUTO_UPDATE.md",
+              "ViewState": "AgIAAAAAAAAAAAAAAAAAAMQAAAAAAAAAAAAAAA==",
+              "Icon": "ae27a6b0-e345-4288-96df-5eaf394ee369.001818|",
+              "WhenOpened": "2026-02-14T08:50:49.627Z",
+              "EditorCaption": ""
+            },
+            {
+              "$type": "Document",
+              "DocumentIndex": 0,
+              "Title": "CLEANUP_STEPS.md",
+              "DocumentMoniker": "C:\\Users\\naren\\Desktop\\barman-storereact\\CLEANUP_STEPS.md",
+              "RelativeDocumentMoniker": "CLEANUP_STEPS.md",
+              "ToolTip": "C:\\Users\\naren\\Desktop\\barman-storereact\\CLEANUP_STEPS.md",
+              "RelativeToolTip": "CLEANUP_STEPS.md",
+              "ViewState": "AgIAAFoAAAAAAAAAAAAAAIcAAAAAAAAAAAAAAA==",
+              "Icon": "ae27a6b0-e345-4288-96df-5eaf394ee369.001818|",
+              "WhenOpened": "2026-02-14T04:15:38.783Z",
+              "EditorCaption": ""
+            },
+            {
+              "$type": "Document",
+              "DocumentIndex": 34,
+              "Title": "DOCUMENTATION_INDEX.md",
+              "DocumentMoniker": "C:\\Users\\naren\\Desktop\\barman-storereact\\DOCUMENTATION_INDEX.md",
+              "RelativeDocumentMoniker": "DOCUMENTATION_INDEX.md",
+              "ToolTip": "C:\\Users\\naren\\Desktop\\barman-storereact\\DOCUMENTATION_INDEX.md",
+              "RelativeToolTip": "DOCUMENTATION_INDEX.md",
+              "ViewState": "AgIAAAAAAAAAAAAAAAAAAJABAAAAAAAAAAAAAA==",
+              "Icon": "ae27a6b0-e345-4288-96df-5eaf394ee369.001818|",
+              "WhenOpened": "2026-02-14T09:02:25.501Z",
+              "EditorCaption": ""
+            },
+            {
+              "$type": "Document",
+              "DocumentIndex": 33,
+              "Title": "FINAL_REPORT.md",
+              "DocumentMoniker": "C:\\Users\\naren\\Desktop\\barman-storereact\\FINAL_REPORT.md",
+              "RelativeDocumentMoniker": "FINAL_REPORT.md",
+              "ToolTip": "C:\\Users\\naren\\Desktop\\barman-storereact\\FINAL_REPORT.md",
+              "RelativeToolTip": "FINAL_REPORT.md",
+              "ViewState": "AgIAAAAAAAAAAAAAAAAAAIwBAAAAAAAAAAAAAA==",
+              "Icon": "ae27a6b0-e345-4288-96df-5eaf394ee369.001818|",
+              "WhenOpened": "2026-02-14T09:02:00.053Z",
+              "EditorCaption": ""
+            },
+            {
+              "$type": "Document",
+              "DocumentIndex": 32,
+              "Title": "STATUS_COMPLETE.md",
+              "DocumentMoniker": "C:\\Users\\naren\\Desktop\\barman-storereact\\STATUS_COMPLETE.md",
+              "RelativeDocumentMoniker": "STATUS_COMPLETE.md",
+              "ToolTip": "C:\\Users\\naren\\Desktop\\barman-storereact\\STATUS_COMPLETE.md",
+              "RelativeToolTip": "STATUS_COMPLETE.md",
+              "ViewState": "AgIAAAAAAAAAAAAAAAAAAFQBAAAAAAAAAAAAAA==",
+              "Icon": "ae27a6b0-e345-4288-96df-5eaf394ee369.001818|",
+              "WhenOpened": "2026-02-14T09:01:25.753Z",
+              "EditorCaption": ""
+            },
+            {
+              "$type": "Document",
+              "DocumentIndex": 31,
+              "Title": "DEPLOYMENT_CHECKLIST.md",
+              "DocumentMoniker": "C:\\Users\\naren\\Desktop\\barman-storereact\\DEPLOYMENT_CHECKLIST.md",
+              "RelativeDocumentMoniker": "DEPLOYMENT_CHECKLIST.md",
+              "ToolTip": "C:\\Users\\naren\\Desktop\\barman-storereact\\DEPLOYMENT_CHECKLIST.md",
+              "RelativeToolTip": "DEPLOYMENT_CHECKLIST.md",
+              "ViewState": "AgIAAAAAAAAAAAAAAAAAAFYBAAAAAAAAAAAAAA==",
+              "Icon": "ae27a6b0-e345-4288-96df-5eaf394ee369.001818|",
+              "WhenOpened": "2026-02-14T09:00:59.853Z",
+              "EditorCaption": ""
+            },
+            {
+              "$type": "Document",
+              "DocumentIndex": 30,
+              "Title": "README_IMPLEMENTATION.md",
+              "DocumentMoniker": "C:\\Users\\naren\\Desktop\\barman-storereact\\README_IMPLEMENTATION.md",
+              "RelativeDocumentMoniker": "README_IMPLEMENTATION.md",
+              "ToolTip": "C:\\Users\\naren\\Desktop\\barman-storereact\\README_IMPLEMENTATION.md",
+              "RelativeToolTip": "README_IMPLEMENTATION.md",
+              "ViewState": "AgIAAAAAAAAAAAAAAAAAAGEBAAAAAAAAAAAAAA==",
+              "Icon": "ae27a6b0-e345-4288-96df-5eaf394ee369.001818|",
+              "WhenOpened": "2026-02-14T08:59:22.639Z",
+              "EditorCaption": ""
+            },
+            {
+              "$type": "Document",
+              "DocumentIndex": 29,
+              "Title": "ARCHITECTURE_DIAGRAMS.md",
+              "DocumentMoniker": "C:\\Users\\naren\\Desktop\\barman-storereact\\ARCHITECTURE_DIAGRAMS.md",
+              "RelativeDocumentMoniker": "ARCHITECTURE_DIAGRAMS.md",
+              "ToolTip": "C:\\Users\\naren\\Desktop\\barman-storereact\\ARCHITECTURE_DIAGRAMS.md",
+              "RelativeToolTip": "ARCHITECTURE_DIAGRAMS.md",
+              "ViewState": "AgIAAAAAAAAAAAAAAAAAAOUBAAAAAAAAAAAAAA==",
+              "Icon": "ae27a6b0-e345-4288-96df-5eaf394ee369.001818|",
+              "WhenOpened": "2026-02-14T08:58:52.658Z",
+              "EditorCaption": ""
+            },
+            {
+              "$type": "Document",
+              "DocumentIndex": 28,
+              "Title": "FINAL_SUMMARY.md",
+              "DocumentMoniker": "C:\\Users\\naren\\Desktop\\barman-storereact\\FINAL_SUMMARY.md",
+              "RelativeDocumentMoniker": "FINAL_SUMMARY.md",
+              "ToolTip": "C:\\Users\\naren\\Desktop\\barman-storereact\\FINAL_SUMMARY.md",
+              "RelativeToolTip": "FINAL_SUMMARY.md",
+              "ViewState": "AgIAAAAAAAAAAAAAAAAAAI8BAAAAAAAAAAAAAA==",
+              "Icon": "ae27a6b0-e345-4288-96df-5eaf394ee369.001818|",
+              "WhenOpened": "2026-02-14T08:58:17.514Z",
+              "EditorCaption": ""
+            },
+            {
+              "$type": "Document",
+              "DocumentIndex": 27,
+              "Title": "IMPLEMENTATION_COMPLETE.md",
+              "DocumentMoniker": "C:\\Users\\naren\\Desktop\\barman-storereact\\IMPLEMENTATION_COMPLETE.md",
+              "RelativeDocumentMoniker": "IMPLEMENTATION_COMPLETE.md",
+              "ToolTip": "C:\\Users\\naren\\Desktop\\barman-storereact\\IMPLEMENTATION_COMPLETE.md",
+              "RelativeToolTip": "IMPLEMENTATION_COMPLETE.md",
+              "ViewState": "AgIAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA==",
+              "Icon": "ae27a6b0-e345-4288-96df-5eaf394ee369.001818|",
+              "WhenOpened": "2026-02-14T08:57:46.522Z",
+              "EditorCaption": ""
+            },
+            {
+              "$type": "Document",
+              "DocumentIndex": 26,
+              "Title": "QUICK_REFERENCE_GUIDE.md",
+              "DocumentMoniker": "C:\\Users\\naren\\Desktop\\barman-storereact\\QUICK_REFERENCE_GUIDE.md",
+              "RelativeDocumentMoniker": "QUICK_REFERENCE_GUIDE.md",
+              "ToolTip": "C:\\Users\\naren\\Desktop\\barman-storereact\\QUICK_REFERENCE_GUIDE.md",
+              "RelativeToolTip": "QUICK_REFERENCE_GUIDE.md",
+              "ViewState": "AgIAAAAAAAAAAAAAAAAAACMBAAAAAAAAAAAAAA==",
+              "Icon": "ae27a6b0-e345-4288-96df-5eaf394ee369.001818|",
+              "WhenOpened": "2026-02-14T08:52:54.472Z",
+              "EditorCaption": ""
+            },
+            {
+              "$type": "Document",
+              "DocumentIndex": 25,
+              "Title": "QUICK_REFERENCE.md",
+              "DocumentMoniker": "C:\\Users\\naren\\Desktop\\barman-storereact\\QUICK_REFERENCE.md",
+              "RelativeDocumentMoniker": "QUICK_REFERENCE.md",
+              "ToolTip": "C:\\Users\\naren\\Desktop\\barman-storereact\\QUICK_REFERENCE.md",
+              "RelativeToolTip": "QUICK_REFERENCE.md",
+              "ViewState": "AgIAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA==",
+              "Icon": "ae27a6b0-e345-4288-96df-5eaf394ee369.001818|",
+              "WhenOpened": "2026-02-14T08:52:28.176Z",
+              "EditorCaption": ""
+            },
+            {
+              "$type": "Document",
+              "DocumentIndex": 24,
+              "Title": "VISUAL_EXAMPLES.md",
+              "DocumentMoniker": "C:\\Users\\naren\\Desktop\\barman-storereact\\VISUAL_EXAMPLES.md",
+              "RelativeDocumentMoniker": "VISUAL_EXAMPLES.md",
+              "ToolTip": "C:\\Users\\naren\\Desktop\\barman-storereact\\VISUAL_EXAMPLES.md",
+              "RelativeToolTip": "VISUAL_EXAMPLES.md",
+              "ViewState": "AgIAAAAAAAAAAAAAAAAAAJYBAAAAAAAAAAAAAA==",
+              "Icon": "ae27a6b0-e345-4288-96df-5eaf394ee369.001818|",
+              "WhenOpened": "2026-02-14T08:52:06.357Z",
+              "EditorCaption": ""
+            },
+            {
+              "$type": "Document",
+              "DocumentIndex": 19,
+              "Title": "formatters.js",
+              "DocumentMoniker": "C:\\Users\\naren\\Desktop\\barman-storereact\\src\\utils\\formatters.js",
+              "RelativeDocumentMoniker": "src\\utils\\formatters.js",
+              "ToolTip": "C:\\Users\\naren\\Desktop\\barman-storereact\\src\\utils\\formatters.js",
+              "RelativeToolTip": "src\\utils\\formatters.js",
+              "ViewState": "AgIAAAAAAAAAAAAAAAAAABYAAAAAAAAAAAAAAA==",
+              "Icon": "ae27a6b0-e345-4288-96df-5eaf394ee369.001646|",
+              "WhenOpened": "2026-02-14T04:19:45.863Z"
+            },
+            {
+              "$type": "Document",
+              "DocumentIndex": 20,
+              "Title": "ErrorBoundary.jsx",
+              "DocumentMoniker": "C:\\Users\\naren\\Desktop\\barman-storereact\\src\\components\\ErrorBoundary.jsx",
+              "RelativeDocumentMoniker": "src\\components\\ErrorBoundary.jsx",
+              "ToolTip": "C:\\Users\\naren\\Desktop\\barman-storereact\\src\\components\\ErrorBoundary.jsx",
+              "RelativeToolTip": "src\\components\\ErrorBoundary.jsx",
+              "ViewState": "AgIAAAAAAAAAAAAAAAAAAEEAAAAAAAAAAAAAAA==",
+              "Icon": "ae27a6b0-e345-4288-96df-5eaf394ee369.003663|",
+              "WhenOpened": "2026-02-14T04:19:58.433Z"
+            },
+            {
+              "$type": "Document",
+              "DocumentIndex": 18,
+              "Title": "AUDIT_REPORT.md",
+              "DocumentMoniker": "C:\\Users\\naren\\Desktop\\barman-storereact\\AUDIT_REPORT.md",
+              "RelativeDocumentMoniker": "AUDIT_REPORT.md",
+              "ToolTip": "C:\\Users\\naren\\Desktop\\barman-storereact\\AUDIT_REPORT.md",
+              "RelativeToolTip": "AUDIT_REPORT.md",
+              "ViewState": "AgIAAAAAAAAAAAAAAAAAAOkAAAAAAAAAAAAAAA==",
+              "Icon": "ae27a6b0-e345-4288-96df-5eaf394ee369.001818|",
+              "WhenOpened": "2026-02-14T04:15:23.127Z"
+            },
+            {
+              "$type": "Document",
+              "DocumentIndex": 15,
+              "Title": "UserMenu.jsx",
+              "DocumentMoniker": "C:\\Users\\naren\\Desktop\\barman-storereact\\src\\components\\UserMenu.jsx",
+              "RelativeDocumentMoniker": "src\\components\\UserMenu.jsx",
+              "ToolTip": "C:\\Users\\naren\\Desktop\\barman-storereact\\src\\components\\UserMenu.jsx",
+              "RelativeToolTip": "src\\components\\UserMenu.jsx",
+              "ViewState": "AgIAAFAAAAAAAAAAAIBJwAAAAAAAAAAAAAAAAA==",
+              "Icon": "ae27a6b0-e345-4288-96df-5eaf394ee369.003663|",
+              "WhenOpened": "2026-02-14T03:29:03.135Z"
+            },
+            {
+              "$type": "Document",
+              "DocumentIndex": 14,
+              "Title": "App.jsx",
+              "DocumentMoniker": "C:\\Users\\naren\\Desktop\\barman-storereact\\src\\App.jsx",
+              "RelativeDocumentMoniker": "src\\App.jsx",
+              "ToolTip": "C:\\Users\\naren\\Desktop\\barman-storereact\\src\\App.jsx",
+              "RelativeToolTip": "src\\App.jsx",
+              "ViewState": "AgIAACkAAAAAAAAAAIBJwAAAAAAAAAAAAAAAAA==",
+              "Icon": "ae27a6b0-e345-4288-96df-5eaf394ee369.003663|",
+              "WhenOpened": "2026-02-14T03:28:48.434Z"
+            },
+            {
+              "$type": "Document",
+              "DocumentIndex": 13,
+              "Title": "MyOrders.jsx",
+              "DocumentMoniker": "C:\\Users\\naren\\Desktop\\barman-storereact\\src\\pages\\MyOrders.jsx",
+              "RelativeDocumentMoniker": "src\\pages\\MyOrders.jsx",
+              "ToolTip": "C:\\Users\\naren\\Desktop\\barman-storereact\\src\\pages\\MyOrders.jsx",
+              "RelativeToolTip": "src\\pages\\MyOrders.jsx",
+              "ViewState": "AgIAAAAAAAAAAAAAAAAAAEcAAAAAAAAAAAAAAA==",
+              "Icon": "ae27a6b0-e345-4288-96df-5eaf394ee369.003663|",
+              "WhenOpened": "2026-02-14T03:28:37.552Z"
+            },
+            {
+              "$type": "Document",
+              "DocumentIndex": 1,
+              "Title": "Admin.jsx",
+              "DocumentMoniker": "C:\\Users\\naren\\Desktop\\barman-storereact\\src\\pages\\Admin.jsx",
+              "RelativeDocumentMoniker": "src\\pages\\Admin.jsx",
+              "ToolTip": "C:\\Users\\naren\\Desktop\\barman-storereact\\src\\pages\\Admin.jsx",
+              "RelativeToolTip": "src\\pages\\Admin.jsx",
+              "ViewState": "AgIAACoAAAAAAAAAAAAhwHoAAAAFAAAAAAAAAA==",
+              "Icon": "ae27a6b0-e345-4288-96df-5eaf394ee369.003663|",
+              "WhenOpened": "2026-02-13T13:46:48.047Z"
+            },
+            {
+              "$type": "Document",
+              "DocumentIndex": 12,
+              "Title": "PasswordResetRequests.jsx",
+              "DocumentMoniker": "C:\\Users\\naren\\Desktop\\barman-storereact\\src\\pages\\PasswordResetRequests.jsx",
+              "RelativeDocumentMoniker": "src\\pages\\PasswordResetRequests.jsx",
+              "ToolTip": "C:\\Users\\naren\\Desktop\\barman-storereact\\src\\pages\\PasswordResetRequests.jsx",
+              "RelativeToolTip": "src\\pages\\PasswordResetRequests.jsx",
+              "ViewState": "AgIAAHUAAAAAAAAAAIBJwAAAAAAAAAAAAAAAAA==",
+              "Icon": "ae27a6b0-e345-4288-96df-5eaf394ee369.003663|",
+              "WhenOpened": "2026-02-14T03:05:04.61Z"
+            },
+            {
+              "$type": "Document",
+              "DocumentIndex": 16,
+              "Title": "OrderDetails.jsx",
+              "DocumentMoniker": "C:\\Users\\naren\\Desktop\\barman-storereact\\src\\pages\\OrderDetails.jsx",
+              "RelativeDocumentMoniker": "src\\pages\\OrderDetails.jsx",
+              "ToolTip": "C:\\Users\\naren\\Desktop\\barman-storereact\\src\\pages\\OrderDetails.jsx",
+              "RelativeToolTip": "src\\pages\\OrderDetails.jsx",
+              "ViewState": "AgIAAAEAAAAAAAAAAIBJwIAAAAAAAAAAAAAAAA==",
+              "Icon": "ae27a6b0-e345-4288-96df-5eaf394ee369.003663|",
+              "WhenOpened": "2026-02-14T03:37:32.59Z",
+              "EditorCaption": ""
+            },
+            {
+              "$type": "Document",
+              "DocumentIndex": 17,
+              "Title": "api.js",
+              "DocumentMoniker": "C:\\Users\\naren\\Desktop\\barman-storereact\\src\\services\\api.js",
+              "RelativeDocumentMoniker": "src\\services\\api.js",
+              "ToolTip": "C:\\Users\\naren\\Desktop\\barman-storereact\\src\\services\\api.js",
+              "RelativeToolTip": "src\\services\\api.js",
+              "ViewState": "AgIAALkAAAAAAAAAAEBVwAAAAAAAAAAAAAAAAA==",
+              "Icon": "ae27a6b0-e345-4288-96df-5eaf394ee369.001646|",
+              "WhenOpened": "2026-02-14T03:59:48.344Z",
+              "EditorCaption": ""
+            },
+            {
+              "$type": "Document",
+              "DocumentIndex": 10,
+              "Title": "index.js",
+              "DocumentMoniker": "C:\\Users\\naren\\Desktop\\barman-storereact\\server\\index.js",
+              "RelativeDocumentMoniker": "server\\index.js",
+              "ToolTip": "C:\\Users\\naren\\Desktop\\barman-storereact\\server\\index.js",
+              "RelativeToolTip": "server\\index.js",
+              "ViewState": "AgIAAJ0EAAAAAAAAAIBJwAAAAAAAAAAAAAAAAA==",
+              "Icon": "ae27a6b0-e345-4288-96df-5eaf394ee369.001646|",
+              "WhenOpened": "2026-02-13T13:50:02.231Z",
+              "EditorCaption": ""
+            },
+            {
+              "$type": "Document",
+              "DocumentIndex": 9,
+              "Title": "BillsViewer.css",
+              "DocumentMoniker": "C:\\Users\\naren\\Desktop\\barman-storereact\\src\\pages\\BillsViewer.css",
+              "RelativeDocumentMoniker": "src\\pages\\BillsViewer.css",
+              "ToolTip": "C:\\Users\\naren\\Desktop\\barman-storereact\\src\\pages\\BillsViewer.css",
+              "RelativeToolTip": "src\\pages\\BillsViewer.css",
+              "ViewState": "AgIAAAAAAAAAAAAAAAAAALkBAAAAAAAAAAAAAA==",
+              "Icon": "ae27a6b0-e345-4288-96df-5eaf394ee369.003000|",
+              "WhenOpened": "2026-02-13T13:44:38.487Z"
+            },
+            {
+              "$type": "Document",
+              "DocumentIndex": 8,
+              "Title": "BillsViewer.jsx",
+              "DocumentMoniker": "C:\\Users\\naren\\Desktop\\barman-storereact\\src\\pages\\BillsViewer.jsx",
+              "RelativeDocumentMoniker": "src\\pages\\BillsViewer.jsx",
+              "ToolTip": "C:\\Users\\naren\\Desktop\\barman-storereact\\src\\pages\\BillsViewer.jsx",
+              "RelativeToolTip": "src\\pages\\BillsViewer.jsx",
+              "ViewState": "AgIAAAAAAAAAAAAAAAAAAA4BAAAAAAAAAAAAAA==",
+              "Icon": "ae27a6b0-e345-4288-96df-5eaf394ee369.003663|",
+              "WhenOpened": "2026-02-13T13:44:16.463Z"
+            },
+            {
+              "$type": "Document",
+              "DocumentIndex": 7,
+              "Title": "BillingTab.jsx",
+              "DocumentMoniker": "C:\\Users\\naren\\Desktop\\barman-storereact\\src\\pages\\BillingTab.jsx",
+              "RelativeDocumentMoniker": "src\\pages\\BillingTab.jsx",
+              "ToolTip": "C:\\Users\\naren\\Desktop\\barman-storereact\\src\\pages\\BillingTab.jsx",
+              "RelativeToolTip": "src\\pages\\BillingTab.jsx",
+              "ViewState": "AgIAAIoBAAAAAAAAAIBZwAAAAAAAAAAAAAAAAA==",
+              "Icon": "ae27a6b0-e345-4288-96df-5eaf394ee369.003663|",
+              "WhenOpened": "2026-02-13T13:33:17.455Z"
+            },
+            {
+              "$type": "Document",
+              "DocumentIndex": 2,
+              "Title": "Admin.css",
+              "DocumentMoniker": "C:\\Users\\naren\\Desktop\\barman-storereact\\src\\pages\\Admin.css",
+              "RelativeDocumentMoniker": "src\\pages\\Admin.css",
+              "ToolTip": "C:\\Users\\naren\\Desktop\\barman-storereact\\src\\pages\\Admin.css",
+              "RelativeToolTip": "src\\pages\\Admin.css",
+              "ViewState": "AgIAAAAAAAAAAAAAAAAAAAwAAAARAAAAAAAAAA==",
+              "Icon": "ae27a6b0-e345-4288-96df-5eaf394ee369.003000|",
+              "WhenOpened": "2026-02-13T13:20:33.561Z"
+            },
+            {
+              "$type": "Document",
+              "DocumentIndex": 11,
+              "Title": "MOBILE_NAVIGATION_GUIDE.md",
+              "DocumentMoniker": "C:\\Users\\naren\\Desktop\\barman-storereact\\MOBILE_NAVIGATION_GUIDE.md",
+              "RelativeDocumentMoniker": "MOBILE_NAVIGATION_GUIDE.md",
+              "ToolTip": "C:\\Users\\naren\\Desktop\\barman-storereact\\MOBILE_NAVIGATION_GUIDE.md",
+              "RelativeToolTip": "MOBILE_NAVIGATION_GUIDE.md",
+              "ViewState": "AgIAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA==",
+              "Icon": "ae27a6b0-e345-4288-96df-5eaf394ee369.001818|",
+              "WhenOpened": "2026-02-13T13:50:02.341Z"
+            },
+            {
+              "$type": "Document",
+              "DocumentIndex": 5,
+              "Title": "Products.css",
+              "DocumentMoniker": "C:\\Users\\naren\\Desktop\\barman-storereact\\src\\pages\\Products.css",
+              "RelativeDocumentMoniker": "src\\pages\\Products.css",
+              "ToolTip": "C:\\Users\\naren\\Desktop\\barman-storereact\\src\\pages\\Products.css",
+              "RelativeToolTip": "src\\pages\\Products.css",
+              "ViewState": "AgIAAC4AAAAAAAAAAABBwAAAAAAAAAAAAAAAAA==",
+              "Icon": "ae27a6b0-e345-4288-96df-5eaf394ee369.003000|",
+              "WhenOpened": "2026-02-13T12:30:47.699Z"
+            },
+            {
+              "$type": "Document",
+              "DocumentIndex": 4,
+              "Title": "Home.css",
+              "DocumentMoniker": "C:\\Users\\naren\\Desktop\\barman-storereact\\src\\pages\\Home.css",
+              "RelativeDocumentMoniker": "src\\pages\\Home.css",
+              "ToolTip": "C:\\Users\\naren\\Desktop\\barman-storereact\\src\\pages\\Home.css",
+              "RelativeToolTip": "src\\pages\\Home.css",
+              "ViewState": "AgIAACsAAAAAAAAAAABBwAAAAAAAAAAAAAAAAA==",
+              "Icon": "ae27a6b0-e345-4288-96df-5eaf394ee369.003000|",
+              "WhenOpened": "2026-02-13T12:24:30.804Z"
+            },
+            {
+              "$type": "Document",
+              "DocumentIndex": 3,
+              "Title": "package.json",
+              "DocumentMoniker": "C:\\Users\\naren\\Desktop\\barman-storereact\\package.json",
+              "RelativeDocumentMoniker": "package.json",
+              "ToolTip": "C:\\Users\\naren\\Desktop\\barman-storereact\\package.json",
+              "RelativeToolTip": "package.json",
+              "ViewState": "AgIAAAoAAAAAAAAAAABBwAAAAAAAAAAAAAAAAA==",
+              "Icon": "ae27a6b0-e345-4288-96df-5eaf394ee369.001642|",
+              "WhenOpened": "2026-02-13T12:14:48.208Z"
+            },
+            {
+              "$type": "Document",
+              "DocumentIndex": 6,
+              "Title": "App.css",
+              "DocumentMoniker": "C:\\Users\\naren\\Desktop\\barman-storereact\\src\\App.css",
+              "RelativeDocumentMoniker": "src\\App.css",
+              "ToolTip": "C:\\Users\\naren\\Desktop\\barman-storereact\\src\\App.css",
+              "RelativeToolTip": "src\\App.css",
+              "ViewState": "AgIAAM4AAAAAAAAAAIBJwAAAAAAAAAAAAAAAAA==",
+              "Icon": "ae27a6b0-e345-4288-96df-5eaf394ee369.003000|",
+              "WhenOpened": "2026-02-13T12:31:47.951Z"
+            },
+            {
+              "$type": "Bookmark",
+              "Name": "ST:0:0:{cce594b6-0c39-4442-ba28-10c64ac7e89f}"
+            },
+            {
+              "$type": "Bookmark",
+              "Name": "ST:0:0:{aa2115a1-9712-457b-9047-dbb71ca2cdd2}"
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}
