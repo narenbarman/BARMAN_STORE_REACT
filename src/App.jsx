@@ -1,26 +1,27 @@
 import { BrowserRouter, HashRouter, Routes, Route, Link } from 'react-router-dom';
 import { ShoppingCart, Menu, X, Package, ClipboardList, Home as HomeIcon, Store } from 'lucide-react';
-import { useState, useEffect } from 'react';
-import Home from './pages/Home';
-import Products from './pages/Products';
-import Cart from './pages/Cart';
-import Checkout from './pages/Checkout';
-import Login from './pages/login';
-import ChangePassword from './pages/ChangePassword';
-import Admin from './pages/Admin';
-import CreditHistory from './pages/CreditHistory';
-import OrderHistory from './pages/OrderHistory';
-import OrderTracking from './pages/OrderTracking';
-import MyOrders from './pages/MyOrders';
-import OrderDetails from './pages/OrderDetails';
-import Profile from './pages/Profile';
-import Billing from './pages/Billing';
+import { useState, useEffect, lazy, Suspense } from 'react';
 import UserMenu from './components/UserMenu';
 import ErrorBoundary from './components/ErrorBoundary';
 import './index.css';
 import './App.css';
 import * as info from './pages/info.js';
 import logoImage from '../logo.png';
+
+const Home = lazy(() => import('./pages/Home'));
+const Products = lazy(() => import('./pages/Products'));
+const Cart = lazy(() => import('./pages/Cart'));
+const Checkout = lazy(() => import('./pages/Checkout'));
+const Login = lazy(() => import('./pages/login'));
+const ChangePassword = lazy(() => import('./pages/ChangePassword'));
+const Admin = lazy(() => import('./pages/Admin'));
+const CreditHistory = lazy(() => import('./pages/CreditHistory'));
+const OrderHistory = lazy(() => import('./pages/OrderHistory'));
+const OrderTracking = lazy(() => import('./pages/OrderTracking'));
+const MyOrders = lazy(() => import('./pages/MyOrders'));
+const OrderDetails = lazy(() => import('./pages/OrderDetails'));
+const Profile = lazy(() => import('./pages/Profile'));
+const Billing = lazy(() => import('./pages/Billing'));
 
 
 // React Router v7 future flags to opt-in early and suppress warnings
@@ -123,24 +124,26 @@ function App() {
 
         {/* Main Content */}
         <main className="main-content">
-          <Routes>
-            <Route path="/" element={<Home />} />
-            <Route path="/products" element={<Products setCartCount={setCartCount} />} />
-            <Route path="/cart" element={<Cart cartCount={cartCount} setCartCount={setCartCount} />} />
-            <Route path="/checkout" element={<Checkout />} />
-            <Route path="/login" element={<Login setUser={setUser} />} />
-            <Route path="/change-password" element={<ChangePassword />} />
-            <Route path="/admin" element={<Admin user={user} />} />
-            <Route path="/admin/users/:userId/credit" element={<CreditHistory user={user} />} />
-            <Route path="/order-history" element={<OrderHistory />} />
-            <Route path="/my-orders" element={<MyOrders />} />
-            <Route path="/orders/:id" element={<OrderDetails />} />
-            <Route path="/order-tracking" element={<OrderTracking />} />
-            <Route path="/order-tracking/:orderId" element={<OrderTracking />} />
-            <Route path="/profile" element={<Profile />} />
-            <Route path="/billing" element={<Billing />} />
-            <Route path="/billing/:billNumber" element={<Billing />} />
-          </Routes>
+          <Suspense fallback={<div style={{ padding: '24px' }}>Loading...</div>}>
+            <Routes>
+              <Route path="/" element={<Home />} />
+              <Route path="/products" element={<Products setCartCount={setCartCount} />} />
+              <Route path="/cart" element={<Cart cartCount={cartCount} setCartCount={setCartCount} />} />
+              <Route path="/checkout" element={<Checkout />} />
+              <Route path="/login" element={<Login setUser={setUser} />} />
+              <Route path="/change-password" element={<ChangePassword />} />
+              <Route path="/admin" element={<Admin user={user} />} />
+              <Route path="/admin/users/:userId/credit" element={<CreditHistory user={user} />} />
+              <Route path="/order-history" element={<OrderHistory />} />
+              <Route path="/my-orders" element={<MyOrders />} />
+              <Route path="/orders/:id" element={<OrderDetails />} />
+              <Route path="/order-tracking" element={<OrderTracking />} />
+              <Route path="/order-tracking/:orderId" element={<OrderTracking />} />
+              <Route path="/profile" element={<Profile />} />
+              <Route path="/billing" element={<Billing />} />
+              <Route path="/billing/:billNumber" element={<Billing />} />
+            </Routes>
+          </Suspense>
         </main>
 
         {/* Footer */}
