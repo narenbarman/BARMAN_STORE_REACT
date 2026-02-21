@@ -134,6 +134,7 @@ function App() {
               <Route path="/change-password" element={<ChangePassword />} />
               <Route path="/admin" element={<Admin user={user} />} />
               <Route path="/admin/users/:userId/credit" element={<CreditHistory user={user} />} />
+              <Route path="/my-credit" element={<CreditHistory user={user} />} />
               <Route path="/order-history" element={<OrderHistory />} />
               <Route path="/my-orders" element={<MyOrders />} />
               <Route path="/orders/:id" element={<OrderDetails />} />

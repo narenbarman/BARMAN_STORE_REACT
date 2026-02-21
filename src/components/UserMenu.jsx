@@ -1,6 +1,6 @@
 import { useState, useRef, useEffect } from 'react';
 import { Link, useNavigate, useLocation } from 'react-router-dom';
-import { User, Shield, LogOut, ChevronDown, Settings, X, ShoppingCart } from 'lucide-react';
+import { User, Shield, LogOut, ChevronDown, Settings, X, ShoppingCart, CreditCard } from 'lucide-react';
 import './UserMenu.css';
 
 function UserMenu({ user, setUser }) {
@@ -131,6 +131,13 @@ function UserMenu({ user, setUser }) {
                     <ShoppingCart size={18} />
                     <span>My Orders</span>
                   </Link>
+
+                  {user.role === 'customer' && (
+                    <Link to="/my-credit" className="dropdown-item" onClick={() => setMenuOpen(false)}>
+                      <CreditCard size={18} />
+                      <span>My Credit History</span>
+                    </Link>
+                  )}
 
                   <div className="dropdown-divider"></div>
 

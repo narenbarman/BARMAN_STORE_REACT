@@ -345,6 +345,9 @@ function Profile() {
           <button className="action-btn" onClick={() => navigate('/change-password')}>
             Change Password
           </button>
+          <button className="action-btn" onClick={() => navigate('/my-credit')}>
+            View Credit History
+          </button>
         </div>
       </div>
     </div>

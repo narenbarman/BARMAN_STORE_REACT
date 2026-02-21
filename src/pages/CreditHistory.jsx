@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef } from 'react';
+import { useState, useEffect, useRef, useMemo } from 'react';
 import { useParams, useNavigate, Link, useLocation } from 'react-router-dom';
 import { ArrowLeft, Plus, DollarSign, CreditCard, RefreshCw, Printer, Upload, FileText, Eye, Download, MessageCircle } from 'lucide-react';
 import { creditApi, usersApi } from '../services/api';
@@ -107,6 +107,16 @@ function CreditHistory({ user }) {
   const { userId } = useParams();
   const navigate = useNavigate();
   const location = useLocation();
+  const authUser = useMemo(() => {
+    if (user) return user;
+    try {
+      return JSON.parse(localStorage.getItem('user') || 'null');
+    } catch (_) {
+      return null;
+    }
+  }, [user]);
+  const isAdminView = authUser?.role === 'admin';
+  const effectiveUserId = isAdminView ? userId : (authUser?.id || userId);
   const [creditHistory, setCreditHistory] = useState([]);
   const [balance, setBalance] = useState(0);
   const [customer, setCustomer] = useState(null);
@@ -135,20 +145,25 @@ function CreditHistory({ user }) {
   const [entryShareText, setEntryShareText] = useState('');
 
   useEffect(() => {
-    if (user && user.role !== 'admin') {
-      navigate('/');
+    if (!authUser) {
+      navigate('/login');
       return;
     }
-    fetchCreditData();
-  }, [user, userId, navigate]);
+    if (!isAdminView && userId && Number(userId) !== Number(authUser.id)) {
+      navigate('/my-credit');
+      return;
+    }
+    if (!effectiveUserId) return;
+    fetchCreditData(effectiveUserId);
+  }, [authUser, isAdminView, userId, effectiveUserId, navigate]);
 
-  const fetchCreditData = async () => {
+  const fetchCreditData = async (targetUserId = effectiveUserId) => {
     try {
       setLoading(true);
       const [historyData, balanceData, customerData] = await Promise.all([
-        creditApi.getHistory(userId),
-        creditApi.getBalance(userId),
-        usersApi.getById(userId)
+        creditApi.getHistory(targetUserId),
+        creditApi.getBalance(targetUserId),
+        usersApi.getById(targetUserId)
       ]);
       setCreditHistory(historyData);
       setBalance(balanceData.balance);
@@ -228,10 +243,10 @@ function CreditHistory({ user }) {
         reference: String(newTransaction.reference || '').trim(),
         transactionDate: newTransaction.transactionDate || getTodayDateInputValue()
       };
-      const result = await creditApi.addTransaction(userId, {
+      const result = await creditApi.addTransaction(effectiveUserId, {
         ...newTransaction,
         amount: parseFloat(newTransaction.amount),
-        created_by: user?.id
+        created_by: authUser?.id
       });
       setSuccess('Transaction added successfully');
       setEntryShareText('');
@@ -244,7 +259,7 @@ function CreditHistory({ user }) {
         imagePath: ''
       });
       setShowAddModal(false);
-      const refreshed = await fetchCreditData();
+      const refreshed = await fetchCreditData(effectiveUserId);
       let updatedBalance = Number(refreshed?.balance);
       if (!Number.isFinite(updatedBalance)) {
         const delta = txSnapshot.type === 'payment' ? -txSnapshot.amount : txSnapshot.amount;
@@ -772,15 +787,17 @@ function CreditHistory({ user }) {
     if (returnTab) return `/admin?tab=${encodeURIComponent(returnTab)}`;
     return '/admin';
   };
+  const backHref = isAdminView ? getBackToAdminUrl() : '/profile';
+  const backLabel = isAdminView ? 'Back to Admin' : 'Back to Profile';
 
   return (
     <div className="credit-history-page">
       <div className="page-header">
-        <Link to={getBackToAdminUrl()} className="back-link">
-          <ArrowLeft size={20} /> Back to Admin
+        <Link to={backHref} className="back-link">
+          <ArrowLeft size={20} /> {backLabel}
         </Link>
         <div className="header-content">
-          <h1>Credit History</h1>
+          <h1>{isAdminView ? 'Credit History' : 'My Credit History'}</h1>
           {customer && <p className="customer-name">{customer.name}</p>}
         </div>
         <div className="balance-card">
@@ -794,20 +811,19 @@ function CreditHistory({ user }) {
       {error && <div className="error-message">{error}</div>}
       {success && <div className="success-message">{success}</div>}
 
-      <div className="actions-bar">
-        <button className="admin-btn primary" onClick={() => setShowAddModal(true)}>
-          <Plus size={20} /> Add Transaction
-        </button>
-
-        {/* New: Date range controls and generate report */}
-        
-      </div>
+      {isAdminView && (
+        <div className="actions-bar">
+          <button className="admin-btn primary" onClick={() => setShowAddModal(true)}>
+            <Plus size={20} /> Add Transaction
+          </button>
+        </div>
+      )}
 
       <div className="credit-table-container">
         {creditHistory.length === 0 ? (
           <div className="empty-state">
-            <p>No credit history found for this customer.</p>
-            <p>Click "Add Transaction" to record a transaction.</p>
+            <p>No credit history found{isAdminView ? ' for this customer.' : '.'}</p>
+            {isAdminView && <p>Click "Add Transaction" to record a transaction.</p>}
           </div>
         ) : (
           <table className="credit-table">
@@ -827,7 +843,7 @@ function CreditHistory({ user }) {
 	                const descriptionWithRef = transaction.reference 
 	                  ? `${transaction.description || ''} (${transaction.reference})`.trim()
 	                  : transaction.description || '-';
-                  const canShareTransaction = isTransactionWithinFiveDays(transaction);
+                  const canShareTransaction = isAdminView && isTransactionWithinFiveDays(transaction);
 	                return (
 	                <tr key={transaction.id}>
                   <td>{formatTransactionDate(transaction, { long: true })}</td>
@@ -876,19 +892,21 @@ function CreditHistory({ user }) {
             </tbody>
           </table>
               )}
-         <div className="report-controls">
-            <label> From:<input type="date" value={fromDate} onChange={(e) => setFromDate(e.target.value)} />
-            </label>
-            <label> To:<input type="date" value={toDate} onChange={(e) => setToDate(e.target.value)} />
-            </label>
-            <button className="admin-btn" onClick={handleGenerateReport} title="Generate credit report for date range">
-            Generate Report
-            </button>
-         </div>
+         {isAdminView && (
+           <div className="report-controls">
+              <label> From:<input type="date" value={fromDate} onChange={(e) => setFromDate(e.target.value)} />
+              </label>
+              <label> To:<input type="date" value={toDate} onChange={(e) => setToDate(e.target.value)} />
+              </label>
+              <button className="admin-btn" onClick={handleGenerateReport} title="Generate credit report for date range">
+              Generate Report
+              </button>
+           </div>
+         )}
       </div>
 
       {/* Report preview / share box */}
-      {showReport && (
+      {isAdminView && showReport && (
         <div className="report-box">
           <div className="report-header">
             <strong>Credit Report {customer?.name ? `- ${customer.name}` : ''}</strong>
@@ -903,7 +921,7 @@ function CreditHistory({ user }) {
         </div>
       )}
 
-      {entryShareText && (
+      {isAdminView && entryShareText && (
         <div className="report-box">
           <div className="report-header">
             <strong>Manual Entry Message</strong>
@@ -918,7 +936,7 @@ function CreditHistory({ user }) {
       )}
 
       {/* Add Transaction Modal */}
-      {showAddModal && (
+      {isAdminView && showAddModal && (
         <div className="modal-overlay" onClick={() => setShowAddModal(false)}>
           <div className="modal-content fade-in-up" onClick={(e) => e.stopPropagation()}>
             <div className="modal-header">
