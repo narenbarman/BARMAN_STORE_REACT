@@ -1,0 +1,1 @@
+import{c}from"./index-DzGHLpa5.js";const r=c("Truck",[["path",{d:"M10 17h4V5H2v12h3",key:"1jq12e"}],["path",{d:"M20 17h2v-3.34a4 4 0 0 0-1.17-2.83L19 9h-5",key:"1xb3ft"}],["path",{d:"M14 17h1",key:"nufu4t"}],["circle",{cx:"7.5",cy:"17.5",r:"2.5",key:"a7aife"}],["circle",{cx:"17.5",cy:"17.5",r:"2.5",key:"1mdrzq"}]]);export{r as T};
