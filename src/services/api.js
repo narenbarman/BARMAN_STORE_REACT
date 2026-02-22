@@ -5,9 +5,17 @@ const isGitHubPagesRuntime = () =>
   typeof window !== 'undefined' && /\.github\.io$/i.test(window.location.hostname);
 
 const isNgrokUrl = (value) => /\.ngrok-free\.(app|dev)(\/|$)/i.test(String(value || ''));
+const isLocalhostRuntime = () => {
+  if (typeof window === 'undefined') return false;
+  const host = String(window.location.hostname || '').toLowerCase();
+  return host === 'localhost' || host === '127.0.0.1';
+};
 
 const getApiUrl = () => {
   const fromEnv = String(import.meta.env.VITE_API_BASE_URL || '').trim();
+  if (isLocalhostRuntime() && isNgrokUrl(fromEnv)) {
+    return 'http://localhost:5000';
+  }
   if (!fromEnv && isGitHubPagesRuntime()) {
     throw new Error('Missing VITE_API_BASE_URL for GitHub Pages runtime. Configure VITE_API_BASE_URL in deployment environment.');
   }
@@ -45,9 +53,7 @@ export const resolveMediaSourceForDisplay = async (value) => {
   }
 
   try {
-    const response = await fetch(directUrl, {
-      headers: { 'ngrok-skip-browser-warning': 'true' },
-    });
+    const response = await fetch(directUrl);
     if (!response.ok) return { src: directUrl, revoke: false };
     const contentType = String(response.headers.get('content-type') || '').toLowerCase();
     if (!contentType.startsWith('image/')) return { src: directUrl, revoke: false };
@@ -83,10 +89,6 @@ export const apiFetch = async (endpoint, options = {}) => {
     },
     ...options,
   };
-
-  if (baseUrl && isNgrokUrl(baseUrl)) {
-    config.headers['ngrok-skip-browser-warning'] = 'true';
-  }
 
   if (config.body && typeof config.body === 'object' && !isFormData) {
     config.body = JSON.stringify(config.body);

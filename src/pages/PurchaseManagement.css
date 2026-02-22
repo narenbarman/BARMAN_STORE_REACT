@@ -335,6 +335,14 @@
 .purchase-management .action-btn.edit:hover {
   background: #ddd6fe;
 }
+.purchase-management .action-btn.correction {
+  background: #fef3c7;
+  color: #92400e;
+}
+
+.purchase-management .action-btn.correction:hover {
+  background: #fde68a;
+}
 
 /* Order Detail Modal */
 .purchase-management .order-detail-body {
@@ -500,6 +508,11 @@
   max-width: 800px;
 }
 
+.purchase-management .modal-content.po-form-modal {
+  max-width: 980px;
+  position: relative;
+}
+
 .purchase-management .modal-content.po-detail-modal {
   max-width: 980px;
 }
@@ -541,8 +554,76 @@
   padding: 24px;
 }
 
+.purchase-management .po-entry-form {
+  display: flex;
+  flex-direction: column;
+  gap: 18px;
+}
+
+.purchase-management .po-entry-mode-tabs {
+  display: inline-flex;
+  align-self: flex-start;
+  border: 1px solid #d1d5db;
+  border-radius: 10px;
+  overflow: hidden;
+  background: #ffffff;
+}
+
+.purchase-management .po-entry-mode-tabs button {
+  border: none;
+  background: transparent;
+  color: #374151;
+  padding: 8px 14px;
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.purchase-management .po-entry-mode-tabs button.active {
+  background: #111827;
+  color: #ffffff;
+}
+
 .purchase-management .form-section {
   margin-bottom: 24px;
+}
+
+.purchase-management .po-form-section {
+  margin-bottom: 0;
+  background: #ffffff;
+  border: 1px solid #e5e7eb;
+  border-radius: 12px;
+  padding: 16px;
+}
+
+.purchase-management .po-form-header {
+  background: linear-gradient(180deg, #f8fafc 0%, #ffffff 100%);
+}
+
+.purchase-management .po-info-row {
+  grid-template-columns: 1fr 1fr;
+}
+
+.purchase-management .po-note-group {
+  grid-column: 1 / -1;
+}
+
+.purchase-management .po-products-section {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+.purchase-management .po-products-actions {
+  display: flex;
+  justify-content: flex-end;
+  margin-top: 2px;
+}
+
+.purchase-management .po-form-footer {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
 }
 
 .purchase-management .form-section h3 {
@@ -631,6 +712,13 @@
   gap: 12px;
 }
 
+.purchase-management .field-hint {
+  display: block;
+  margin-top: 4px;
+  color: #6b7280;
+  font-size: 12px;
+}
+
 .purchase-management .quick-entry-table {
   border: 1px solid #e5e7eb;
   border-radius: 10px;
@@ -685,16 +773,75 @@
 }
 
 .purchase-management .order-item-row {
-  grid-template-columns: repeat(5, minmax(120px, 1fr));
+  grid-template-columns: minmax(420px, 2fr) minmax(220px, 1fr) minmax(320px, 1.2fr) auto;
+  align-items: stretch;
 }
 
 .purchase-management .order-item-row .item-field.product {
-  grid-column: span 2;
+  grid-column: auto;
 }
 
 .purchase-management .order-item-row .remove-item-btn {
   justify-self: end;
-  align-self: center;
+  align-self: start;
+}
+
+.purchase-management .po-item-main {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 10px;
+  align-items: end;
+}
+
+.purchase-management .po-item-main .item-field.product {
+  grid-column: span 2;
+}
+
+.purchase-management .po-entry-form.quick-mode .po-item-main {
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+}
+
+.purchase-management .po-entry-form.quick-mode .po-item-main .item-field.product {
+  grid-column: span 2;
+}
+
+.purchase-management .po-item-discount {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 10px;
+  align-items: end;
+  background: #f9fafb;
+  border: 1px solid #e5e7eb;
+  border-radius: 8px;
+  padding: 10px;
+}
+
+.purchase-management .po-item-amounts {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 10px;
+  align-items: end;
+  background: #f9fafb;
+  border: 1px solid #e5e7eb;
+  border-radius: 8px;
+  padding: 10px;
+}
+
+.purchase-management .po-item-amounts .item-field span {
+  font-weight: 600;
+  color: #111827;
+}
+
+.purchase-management .po-remove-btn {
+  margin-top: 22px;
+}
+
+.purchase-management .po-item-row {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  align-items: stretch;
+  grid-template-columns: none;
 }
 
 .purchase-management .item-field {
@@ -775,6 +922,11 @@
   font-weight: 700;
 }
 
+.purchase-management .po-form-footer .order-summary {
+  margin: 0;
+  max-width: 100%;
+}
+
 .purchase-management .modal-actions {
   display: flex;
   justify-content: flex-end;
@@ -784,6 +936,36 @@
   position: sticky;
   bottom: 0;
   background: white;
+  border-radius: 0 0 12px 12px;
+}
+
+.purchase-management .po-entry-form .modal-actions {
+  position: static;
+  border-top: 0;
+  padding-top: 0;
+  border-radius: 0;
+}
+
+.purchase-management .po-modal-resize-handle {
+  position: absolute;
+  right: 8px;
+  bottom: 8px;
+  width: 16px;
+  height: 16px;
+  border: none;
+  background: linear-gradient(135deg, transparent 45%, #9ca3af 46%, #9ca3af 56%, transparent 57%);
+  cursor: nwse-resize;
+  opacity: 0.8;
+  padding: 0;
+}
+
+.purchase-management .po-modal-resize-handle:hover {
+  opacity: 1;
+}
+
+body.po-modal-resizing {
+  user-select: none;
+  cursor: nwse-resize;
 }
 
 .purchase-receive-sheet .mobile-receive-form {
@@ -898,19 +1080,42 @@
   }
 
   .purchase-management .order-item-row {
-    grid-template-columns: repeat(2, minmax(0, 1fr));
+    grid-template-columns: 1fr;
   }
 
   .purchase-management .order-item-row .item-field.product {
     grid-column: 1 / -1;
   }
 
-  .purchase-management .order-item-row .remove-item-btn {
+  .purchase-management .po-item-main {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+
+  .purchase-management .po-item-main .item-field.product {
+    grid-column: 1 / -1;
+  }
+
+  .purchase-management .po-item-discount,
+  .purchase-management .po-item-amounts {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+
+  .purchase-management .po-item-amounts .item-field.total {
+    grid-column: 1 / -1;
+  }
+
+  .purchase-management .order-item-row .remove-item-btn,
+  .purchase-management .po-remove-btn {
     justify-self: start;
+    margin-top: 0;
   }
 
   .purchase-management .form-row {
     grid-template-columns: 1fr;
+  }
+
+  .purchase-management .po-info-row {
+    grid-template-columns: 1fr 1fr;
   }
 
   .purchase-management .po-invoice-preview {
@@ -939,6 +1144,65 @@
 @media (max-width: 768px) {
   .purchase-management {
     padding: 16px;
+  }
+
+  .purchase-management .modal-content.po-form-modal {
+    max-width: 100%;
+  }
+
+  .purchase-management .po-modal-resize-handle {
+    display: none;
+  }
+
+  .purchase-management .po-entry-form {
+    gap: 14px;
+  }
+
+  .purchase-management .po-entry-mode-tabs {
+    width: 100%;
+  }
+
+  .purchase-management .po-entry-mode-tabs button {
+    flex: 1;
+    text-align: center;
+  }
+
+  .purchase-management .po-form-section {
+    padding: 12px;
+  }
+
+  .purchase-management .po-item-main,
+  .purchase-management .po-item-discount,
+  .purchase-management .po-item-amounts {
+    grid-template-columns: 1fr;
+  }
+
+  .purchase-management .po-products-actions {
+    justify-content: stretch;
+  }
+
+  .purchase-management .po-products-actions .add-item-btn {
+    width: 100%;
+    justify-content: center;
+  }
+
+  .purchase-management .po-info-row {
+    grid-template-columns: 1fr;
+  }
+
+  .purchase-management .po-item-amounts .item-field.total {
+    grid-column: auto;
+  }
+
+  .purchase-management .po-entry-form .modal-actions {
+    justify-content: stretch;
+    gap: 10px;
+    flex-direction: column-reverse;
+  }
+
+  .purchase-management .po-entry-form .modal-actions .cancel-btn,
+  .purchase-management .po-entry-form .modal-actions .submit-btn {
+    width: 100%;
   }
 
   .purchase-management .filters-bar {

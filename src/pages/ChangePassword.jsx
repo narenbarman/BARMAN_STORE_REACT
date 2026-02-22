@@ -19,6 +19,16 @@ const validateEmail = (email) => {
   const re = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
   return re.test(email);
 };
+const validateStrongPassword = (password) => {
+  const value = String(password || '');
+  return (
+    value.length >= 10 &&
+    /[a-z]/.test(value) &&
+    /[A-Z]/.test(value) &&
+    /[0-9]/.test(value) &&
+    /[^A-Za-z0-9]/.test(value)
+  );
+};
 
 function ChangePassword() {
   const [identifierType, setIdentifierType] = useState('email'); // 'email' or 'phone'
@@ -56,8 +66,8 @@ function ChangePassword() {
       return;
     }
 
-    if (newPassword.length < 6) {
-      setError('Password must be at least 6 characters');
+    if (!validateStrongPassword(newPassword)) {
+      setError('Password must be at least 10 characters and include uppercase, lowercase, number, and special character');
       setLoading(false);
       return;
     }

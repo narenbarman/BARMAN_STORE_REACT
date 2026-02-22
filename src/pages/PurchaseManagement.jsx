@@ -1,4 +1,4 @@
-import { useState, useEffect, useMemo } from 'react';
+import { useState, useEffect, useMemo, useRef } from 'react';
 import { Plus, Edit, Trash2, X, Search, Package, Truck, RotateCcw, Eye, Check, Clock, ArrowUpDown, Printer } from 'lucide-react';
 import { purchaseOrdersApi, distributorsApi, productsApi, purchaseReturnsApi, stockLedgerApi, distributorLedgerApi } from '../services/api';
 import { printHtmlDocument, escapeHtml } from '../utils/printService';
@@ -12,6 +12,7 @@ import './PurchaseManagement.css';
 function PurchaseManagement({ user }) {
   const isMobile = useIsMobile();
   const LOCAL_LEDGER_KEY = 'purchase_distributor_ledger_local_entries';
+  const PO_MODAL_SIZE_KEY = 'po_entry_modal_size_v1';
   const getDefaultQuickOrderFormData = () => ({
     distributor_id: '',
     distributor_name: '',
@@ -29,8 +30,76 @@ function PurchaseManagement({ user }) {
     reference: '',
     description: ''
   });
+  const getDefaultPoCorrectionFormData = () => ({
+    type: 'payment',
+    amount: '',
+    payment_mode: 'cash',
+    transaction_date: getTodayDate(),
+    reference: '',
+    reason: ''
+  });
 
   const getRecordDate = (entry) => getLedgerEntryTimestamp(entry, ['transaction_date', 'created_at', 'date']);
+  const getRecordDateKey = (entry) => {
+    if (entry?.transaction_date) return String(entry.transaction_date);
+    if (entry?.created_at) return String(entry.created_at);
+    if (entry?.date) return String(entry.date);
+    return '';
+  };
+  const getNumericValue = (value) => {
+    const num = Number(value);
+    return Number.isFinite(num) ? num : null;
+  };
+  const normalizeTextKey = (value) => String(value || '').trim().toLowerCase();
+  const getEntryTypeKey = (entry) => String(entry?.type || entry?.transaction_type || '').trim().toLowerCase();
+  const isCreditLikeEntry = (entry) => {
+    const typeKey = getEntryTypeKey(entry);
+    return typeKey === 'credit' || typeKey === 'given';
+  };
+  const getPurchaseOrderIdentityKey = (entry) => {
+    if (!entry || !isCreditLikeEntry(entry)) return null;
+    const distributorKey = getLedgerDistributorKey(entry);
+    const sourceKey = normalizeTextKey(entry?.source);
+    const sourceId = entry?.source_id ?? entry?.sourceId;
+    if (sourceKey === 'purchase_order' && sourceId !== undefined && sourceId !== null && String(sourceId).trim() !== '') {
+      return `${distributorKey}|poid:${String(sourceId).trim()}`;
+    }
+
+    const referenceKey = normalizeTextKey(entry?.reference || entry?.po_number);
+    const descriptionKey = normalizeTextKey(entry?.description);
+    if (referenceKey && descriptionKey.includes('purchase order')) {
+      return `${distributorKey}|poref:${referenceKey}`;
+    }
+    return null;
+  };
+  const getLedgerAmountKey = (entry) => toNumber(entry?.amount).toFixed(2);
+  const getEntryDisplayBalance = (entry) => {
+    const apiBalance = getNumericValue(entry?.balance);
+    if (apiBalance !== null) return apiBalance;
+    return getNumericValue(entry?.computed_balance);
+  };
+  const getEntrySourceKey = (entry) => {
+    const source = entry?.source ? String(entry.source) : '';
+    const sourceId = entry?.source_id ?? entry?.sourceId;
+    if (!source || sourceId === undefined || sourceId === null || sourceId === '') return null;
+    return `${getLedgerDistributorKey(entry)}|${source}|${String(sourceId)}`;
+  };
+  const getEntryDedupKey = (entry) => {
+    const poIdentityKey = getPurchaseOrderIdentityKey(entry);
+    if (poIdentityKey) return `po:${poIdentityKey}`;
+
+    const sourceKey = getEntrySourceKey(entry);
+    if (sourceKey) return `src:${sourceKey}`;
+
+    const distributorKey = getLedgerDistributorKey(entry);
+    const type = String(entry?.type || entry?.transaction_type || '').toLowerCase();
+    const reference = normalizeTextKey(entry?.reference || entry?.po_number);
+    const amount = getLedgerAmountKey(entry);
+    const dateKey = getRecordDateKey(entry);
+    if (reference || dateKey) return `fallback:${distributorKey}|${type}|${reference}|${amount}|${dateKey}`;
+    if (entry?.id !== undefined && entry?.id !== null && String(entry.id) !== '') return `id:${String(entry.id)}`;
+    return null;
+  };
   const getLedgerDistributorKey = (entry) => {
     if (entry?.distributor_id !== undefined && entry?.distributor_id !== null) return String(entry.distributor_id);
     if (entry?.distributor_name) return `name:${String(entry.distributor_name).toLowerCase()}`;
@@ -93,7 +162,7 @@ function PurchaseManagement({ user }) {
   };
 
   const getDerivedLedgerFromOrders = (orders, selectedDistributorId) => {
-    const validStatuses = new Set(['confirmed', 'shipped', 'received']);
+    const validStatuses = new Set(['confirmed']);
     const derived = (orders || [])
       .filter(order => validStatuses.has(String(order.status || '').toLowerCase()))
       .map(order => ({
@@ -108,6 +177,8 @@ function PurchaseManagement({ user }) {
       bill_number: order.bill_number || order.invoice_number || null,
       description: `Purchase Order ${order.po_number || ''}`.trim(),
       transaction_date: order.created_at || order.order_date || order.expected_delivery || getTodayDate(),
+      source: 'purchase_order',
+      source_id: order.id,
       mode: 'automatic'
     }));
 
@@ -117,16 +188,42 @@ function PurchaseManagement({ user }) {
 
   const mergeLedgerRecords = (apiRecords, localRecords, derivedRecords) => {
     const baseRecords = Array.isArray(apiRecords) ? apiRecords : [];
-    const merged = baseRecords.length > 0
-      ? [...baseRecords, ...localRecords]
-      : [...localRecords, ...derivedRecords];
+    const local = Array.isArray(localRecords) ? localRecords : [];
+    const derived = Array.isArray(derivedRecords) ? derivedRecords : [];
+    const existingSourceKeys = new Set(
+      [...baseRecords, ...local]
+        .map(entry => getEntrySourceKey(entry))
+        .filter(Boolean)
+    );
+    const missingDerived = derived.filter(entry => {
+      const poIdentityKey = getPurchaseOrderIdentityKey(entry);
+      if (poIdentityKey) {
+        const duplicatePoEntry = [...baseRecords, ...local].some(existingEntry => {
+          const existingPoIdentityKey = getPurchaseOrderIdentityKey(existingEntry);
+          if (existingPoIdentityKey && existingPoIdentityKey === poIdentityKey) return true;
+
+          if (!isCreditLikeEntry(existingEntry)) return false;
+          const sameDistributor = getLedgerDistributorKey(existingEntry) === getLedgerDistributorKey(entry);
+          if (!sameDistributor) return false;
+
+          const sameReference = normalizeTextKey(existingEntry?.reference || existingEntry?.po_number) === normalizeTextKey(entry?.reference || entry?.po_number);
+          const sameAmount = getLedgerAmountKey(existingEntry) === getLedgerAmountKey(entry);
+          return sameReference && sameAmount;
+        });
+        if (duplicatePoEntry) return false;
+      }
+
+      const sourceKey = getEntrySourceKey(entry);
+      return sourceKey ? !existingSourceKeys.has(sourceKey) : true;
+    });
+    const merged = [...baseRecords, ...local, ...missingDerived];
 
     const deduped = [];
     const seen = new Set();
     for (const entry of merged) {
-      const key = entry.id || `${entry.distributor_id || ''}-${entry.reference || ''}-${entry.amount || ''}-${getRecordDate(entry)}`;
-      if (seen.has(key)) continue;
-      seen.add(key);
+      const key = getEntryDedupKey(entry);
+      if (key && seen.has(key)) continue;
+      if (key) seen.add(key);
       deduped.push(entry);
     }
 
@@ -134,12 +231,19 @@ function PurchaseManagement({ user }) {
     const chronological = [...deduped].sort((a, b) => getRecordDate(a) - getRecordDate(b));
     const withBalances = chronological.map(entry => {
       const distributorKey = getLedgerDistributorKey(entry);
-      const prevBalance = runningBalanceByDistributor[distributorKey] || 0;
-      const nextBalance = prevBalance + getSignedLedgerAmount(entry);
-      runningBalanceByDistributor[distributorKey] = nextBalance;
+      const explicitBalance = getNumericValue(entry?.balance);
+      if (explicitBalance !== null) {
+        runningBalanceByDistributor[distributorKey] = explicitBalance;
+      } else if (runningBalanceByDistributor[distributorKey] !== undefined) {
+        runningBalanceByDistributor[distributorKey] += getSignedLedgerAmount(entry);
+      } else if (baseRecords.length === 0) {
+        runningBalanceByDistributor[distributorKey] = getSignedLedgerAmount(entry);
+      }
+
+      const nextBalance = runningBalanceByDistributor[distributorKey];
       return {
         ...entry,
-        computed_balance: nextBalance
+        computed_balance: nextBalance === undefined ? null : nextBalance
       };
     });
 
@@ -151,7 +255,10 @@ function PurchaseManagement({ user }) {
     for (const entry of records || []) {
       const key = getLedgerDistributorKey(entry);
       if (balancesByDistributor[key] === undefined) {
-        balancesByDistributor[key] = toNumber(entry.computed_balance ?? entry.balance);
+        const displayBalance = getEntryDisplayBalance(entry);
+        if (displayBalance !== null) {
+          balancesByDistributor[key] = displayBalance;
+        }
       }
     }
 
@@ -246,15 +353,43 @@ function PurchaseManagement({ user }) {
   const [showReceiveModal, setShowReceiveModal] = useState(false);
   const [showReturnForm, setShowReturnForm] = useState(false);
   const [showLedgerForm, setShowLedgerForm] = useState(false);
+  const [showPoCorrectionForm, setShowPoCorrectionForm] = useState(false);
   const [selectedOrder, setSelectedOrder] = useState(null);
   const [selectedReturn, setSelectedReturn] = useState(null);
+  const [selectedCorrectionOrder, setSelectedCorrectionOrder] = useState(null);
   const [ledgerRecords, setLedgerRecords] = useState([]);
   const [ledgerLoading, setLedgerLoading] = useState(false);
   const [ledgerFormData, setLedgerFormData] = useState(getDefaultLedgerFormData());
+  const [poCorrectionFormData, setPoCorrectionFormData] = useState(getDefaultPoCorrectionFormData());
+  const [poCorrectionContext, setPoCorrectionContext] = useState({
+    expectedAmount: 0,
+    currentImpact: 0,
+    delta: 0,
+    linkedEntries: 0
+  });
+  const [poCorrectionSubmitting, setPoCorrectionSubmitting] = useState(false);
   const [showOrderDetail, setShowOrderDetail] = useState(false);
   const [orderDetail, setOrderDetail] = useState(null);
   const [orderDetailLoading, setOrderDetailLoading] = useState(false);
   const [editingOrderId, setEditingOrderId] = useState(null);
+  const [orderEntryMode, setOrderEntryMode] = useState('detailed');
+  const [poModalSize, setPoModalSize] = useState(() => {
+    try {
+      const parsed = JSON.parse(localStorage.getItem(PO_MODAL_SIZE_KEY) || '{}');
+      const width = toNumber(parsed.width);
+      const height = toNumber(parsed.height);
+      return {
+        width: width > 0 ? width : 980,
+        height: height > 0 ? height : 760,
+      };
+    } catch (_) {
+      return { width: 980, height: 760 };
+    }
+  });
+  const [isResizingPoModal, setIsResizingPoModal] = useState(false);
+  const poModalRef = useRef(null);
+  const poModalResizeRef = useRef(null);
+  const poModalSizeRef = useRef(poModalSize);
 
   // Order form data
   const [orderFormData, setOrderFormData] = useState({
@@ -288,6 +423,50 @@ function PurchaseManagement({ user }) {
   useEffect(() => {
     fetchOrders();
   }, [filters]);
+
+  useEffect(() => {
+    poModalSizeRef.current = poModalSize;
+  }, [poModalSize]);
+
+  useEffect(() => {
+    if (!isResizingPoModal) return undefined;
+
+    const handleMouseMove = (event) => {
+      const state = poModalResizeRef.current;
+      if (!state) return;
+
+      const nextWidth = state.startWidth + (event.clientX - state.startX);
+      const nextHeight = state.startHeight + (event.clientY - state.startY);
+      const minWidth = 760;
+      const maxWidth = Math.max(minWidth, Math.floor(window.innerWidth * 0.95));
+      const minHeight = 520;
+      const maxHeight = Math.max(minHeight, Math.floor(window.innerHeight * 0.9));
+
+      setPoModalSize({
+        width: Math.min(maxWidth, Math.max(minWidth, nextWidth)),
+        height: Math.min(maxHeight, Math.max(minHeight, nextHeight)),
+      });
+    };
+
+    const stopResizing = () => {
+      setIsResizingPoModal(false);
+      poModalResizeRef.current = null;
+      document.body.classList.remove('po-modal-resizing');
+      try {
+        localStorage.setItem(PO_MODAL_SIZE_KEY, JSON.stringify(poModalSizeRef.current));
+      } catch (_) {
+        // ignore storage errors
+      }
+    };
+
+    window.addEventListener('mousemove', handleMouseMove);
+    window.addEventListener('mouseup', stopResizing);
+
+    return () => {
+      window.removeEventListener('mousemove', handleMouseMove);
+      window.removeEventListener('mouseup', stopResizing);
+    };
+  }, [isResizingPoModal]);
 
   useEffect(() => {
     if (activeSubTab === 'orders') {
@@ -346,13 +525,34 @@ function PurchaseManagement({ user }) {
   };
 
   const resolveProductByInput = (value) => {
-    const query = String(value || '').trim().toLowerCase();
+    const normalizeProductQuery = (rawValue) => String(rawValue || '')
+      .replace(/^\[(recent|all)\]\s*/i, '')
+      .trim();
+    const query = normalizeProductQuery(value).toLowerCase();
     if (!query) return null;
+    const formatProductSearchLabel = (product) => {
+      if (!product) return '';
+      const name = String(product.name || '').trim();
+      const sku = String(product.sku || '').trim();
+      return sku ? `${name} (${sku})` : name;
+    };
     return products.find(p =>
       String(p.id) === query ||
       String(p.name || '').trim().toLowerCase() === query ||
-      String(p.sku || '').trim().toLowerCase() === query
+      String(p.sku || '').trim().toLowerCase() === query ||
+      formatProductSearchLabel(p).toLowerCase() === query
     ) || null;
+  };
+
+  const getProductSearchLabel = (product) => {
+    if (!product) return '';
+    const name = String(product.name || '').trim();
+    const sku = String(product.sku || '').trim();
+    return sku ? `${name} (${sku})` : name;
+  };
+  const getProductSearchOptionLabel = (product, scope = 'all') => {
+    const base = getProductSearchLabel(product);
+    return scope === 'recent' ? `[Recent] ${base}` : `[All] ${base}`;
   };
 
   const getDistributorProductOptions = (distributorId) => {
@@ -500,7 +700,7 @@ function PurchaseManagement({ user }) {
       if (product) {
         const baseRate = toNumber(product.price);
         items[index].product_name = product.name;
-        items[index].product_query = product.name;
+        items[index].product_query = getProductSearchLabel(product);
         items[index].unit_price = baseRate;
         items[index].rate = baseRate;
         items[index].uom = product.uom || 'pcs';
@@ -580,6 +780,7 @@ function PurchaseManagement({ user }) {
   const resetOrderForm = () => {
     setOrderFormData({ distributor_id: '', distributor_name: '', expected_delivery: '', notes: '', items: [] });
     setEditingOrderId(null);
+    setOrderEntryMode('detailed');
   };
 
   const openCreateOrderForm = () => {
@@ -591,6 +792,21 @@ function PurchaseManagement({ user }) {
   const closeOrderForm = () => {
     setShowOrderForm(false);
     resetOrderForm();
+  };
+
+  const handlePoModalResizeStart = (event) => {
+    if (isMobile) return;
+    if (!poModalRef.current) return;
+    event.preventDefault();
+    const rect = poModalRef.current.getBoundingClientRect();
+    poModalResizeRef.current = {
+      startX: event.clientX,
+      startY: event.clientY,
+      startWidth: rect.width,
+      startHeight: rect.height,
+    };
+    document.body.classList.add('po-modal-resizing');
+    setIsResizingPoModal(true);
   };
 
   const handleOrderSubmit = async (e) => {
@@ -728,7 +944,7 @@ function PurchaseManagement({ user }) {
       const product = products.find(p => String(p.id) === selectedProductId);
       if (product) {
         items[index].product_name = product.name;
-        items[index].product_query = product.name;
+        items[index].product_query = getProductSearchLabel(product);
         items[index].uom = product.uom || 'pcs';
       } else {
         items[index].product_query = '';
@@ -1194,6 +1410,133 @@ function PurchaseManagement({ user }) {
   const getLedgerBillNumber = (entry) => {
     return entry?.bill_number || entry?.linked_bill_number || entry?.po_bill_number || entry?.invoice_number || entry?.po_invoice_number || '-';
   };
+  const getLedgerRowsFromResponse = (response) => {
+    if (Array.isArray(response)) return response;
+    return response?.rows || response?.data || response?.transactions || [];
+  };
+  const getPoLinkedLedgerRows = (rows, order) => {
+    if (!order) return [];
+
+    const orderId = String(order.id || '').trim();
+    const poNumberKey = normalizeTextKey(order.po_number);
+
+    return (rows || []).filter((entry) => {
+      const source = normalizeTextKey(entry?.source);
+      const sourceId = entry?.source_id ?? entry?.sourceId;
+      if (
+        (source === 'purchase_order' || source === 'po_correction') &&
+        sourceId !== undefined &&
+        sourceId !== null &&
+        String(sourceId).trim() === orderId
+      ) {
+        return true;
+      }
+
+      const referenceKey = normalizeTextKey(entry?.reference || entry?.po_number);
+      if (!poNumberKey || !referenceKey || referenceKey !== poNumberKey) return false;
+      const descriptionKey = normalizeTextKey(entry?.description);
+      return (
+        descriptionKey.includes('purchase order') ||
+        descriptionKey.includes('po correction') ||
+        descriptionKey.includes('ledger correction')
+      );
+    });
+  };
+  const getPoLedgerImpact = (rows, order) => {
+    return getPoLinkedLedgerRows(rows, order).reduce((sum, entry) => sum + getSignedLedgerAmount(entry), 0);
+  };
+  const closePoCorrectionForm = () => {
+    setShowPoCorrectionForm(false);
+    setSelectedCorrectionOrder(null);
+    setPoCorrectionFormData(getDefaultPoCorrectionFormData());
+    setPoCorrectionContext({
+      expectedAmount: 0,
+      currentImpact: 0,
+      delta: 0,
+      linkedEntries: 0
+    });
+    setPoCorrectionSubmitting(false);
+  };
+  const handleOpenPoCorrectionForm = async (order) => {
+    if (!order || !order.distributor_id) {
+      setError('Cannot open correction form. Invalid purchase order/distributor.');
+      return;
+    }
+
+    try {
+      setError('');
+      setPoCorrectionSubmitting(true);
+
+      const response = await distributorLedgerApi.getByDistributor(order.distributor_id, { limit: 500 });
+      const rows = getLedgerRowsFromResponse(response);
+      const linkedRows = getPoLinkedLedgerRows(rows, order);
+      const expectedAmount = calculateOrderBalanceAmount(order);
+      const currentImpact = getPoLedgerImpact(rows, order);
+      const delta = Number((expectedAmount - currentImpact).toFixed(2));
+      const suggestedType = delta < 0 ? 'payment' : 'credit';
+      const suggestedAmount = Math.abs(delta);
+
+      setSelectedCorrectionOrder(order);
+      setPoCorrectionContext({
+        expectedAmount,
+        currentImpact,
+        delta,
+        linkedEntries: linkedRows.length
+      });
+      setPoCorrectionFormData({
+        ...getDefaultPoCorrectionFormData(),
+        type: suggestedType,
+        amount: suggestedAmount > 0 ? suggestedAmount.toFixed(2) : '',
+        reference: order.po_number || '',
+      });
+      setShowPoCorrectionForm(true);
+    } catch (err) {
+      setError(err?.message || 'Failed to load PO ledger impact for correction');
+    } finally {
+      setPoCorrectionSubmitting(false);
+    }
+  };
+  const handlePoCorrectionSubmit = async (e) => {
+    e.preventDefault();
+    if (!selectedCorrectionOrder) return;
+
+    const amount = toNumber(poCorrectionFormData.amount);
+    const reason = String(poCorrectionFormData.reason || '').trim();
+    if (amount <= 0) {
+      setError('Correction amount must be greater than 0');
+      return;
+    }
+    if (!reason) {
+      setError('Correction reason is required');
+      return;
+    }
+
+    try {
+      setError('');
+      setPoCorrectionSubmitting(true);
+
+      await distributorLedgerApi.addTransaction(selectedCorrectionOrder.distributor_id, {
+        type: poCorrectionFormData.type,
+        transaction_type: poCorrectionFormData.type,
+        amount: Number(amount.toFixed(2)),
+        payment_mode: poCorrectionFormData.payment_mode,
+        reference: poCorrectionFormData.reference || selectedCorrectionOrder.po_number || '',
+        description: `PO correction for ${selectedCorrectionOrder.po_number || selectedCorrectionOrder.id}: ${reason}`,
+        transactionDate: poCorrectionFormData.transaction_date,
+        source: 'po_correction',
+        source_id: selectedCorrectionOrder.id,
+        mode: 'manual',
+        created_by: user?.id
+      });
+
+      closePoCorrectionForm();
+      fetchDistributorLedger();
+    } catch (err) {
+      setError(err?.message || 'Failed to post PO correction');
+    } finally {
+      setPoCorrectionSubmitting(false);
+    }
+  };
 
   const handleOpenLedgerForm = () => {
     setLedgerFormData({
@@ -1337,9 +1680,6 @@ function PurchaseManagement({ user }) {
               <button className="admin-btn secondary" onClick={handleReturnFormOpen}>
                 <RotateCcw size={18} /> Return / Exchange
               </button>
-              <button className="admin-btn secondary" onClick={() => setShowQuickOrderForm(true)}>
-                <Plus size={18} /> Quick Entry
-              </button>
               <button className="admin-btn primary" onClick={openCreateOrderForm}>
                 <Plus size={18} /> New Order
               </button>
@@ -1391,15 +1731,25 @@ function PurchaseManagement({ user }) {
                              </button>*/}
                            </>
                          )}
-                         {order.status === 'shipped' && (
-                           <button className="action-btn receive" title="Receive" onClick={() => handleReceiveClick(order)}>
-                             <Package size={16} />
-                           </button>
-                         )}
-                         {order.status === 'pending' && (
-                           <button className="action-btn delete" title="Delete" onClick={() => handleDeleteOrder(order.id)}>
-                             <Trash2 size={16} />
-                           </button>
+                        {order.status === 'shipped' && (
+                          <button className="action-btn receive" title="Receive" onClick={() => handleReceiveClick(order)}>
+                            <Package size={16} />
+                          </button>
+                        )}
+                        {order.status === 'confirmed' && (
+                          <button
+                            className="action-btn correction"
+                            title="Correct Ledger Impact"
+                            onClick={() => handleOpenPoCorrectionForm(order)}
+                            disabled={poCorrectionSubmitting}
+                          >
+                            <ArrowUpDown size={16} />
+                          </button>
+                        )}
+                        {order.status === 'pending' && (
+                          <button className="action-btn delete" title="Delete" onClick={() => handleDeleteOrder(order.id)}>
+                            <Trash2 size={16} />
+                          </button>
                         )}
                       </td>
                     </tr>
@@ -1450,7 +1800,7 @@ function PurchaseManagement({ user }) {
                       <td>{getDistributorName(entry)}</td>
                       <td>{getLedgerTypeLabel(entry)}</td>
                       <td>{formatCurrency(toNumber(entry.amount))}</td>
-                      <td>{formatCurrency(toNumber(entry.computed_balance ?? entry.balance))}</td>
+                      <td>{getEntryDisplayBalance(entry) === null ? '-' : formatCurrency(getEntryDisplayBalance(entry))}</td>
                       <td>{entry.payment_mode || entry.method || '-'}</td>
                       <td>{entry.reference || entry.po_number || '-'}</td>
                       <td>{getLedgerBillNumber(entry)}</td>
@@ -1524,16 +1874,21 @@ function PurchaseManagement({ user }) {
       {/* Quick Entry Modal */}
       {showQuickOrderForm && (
         <div className="modal-overlay" onClick={closeQuickOrderForm}>
-          <div className="modal-content large" onClick={e => e.stopPropagation()}>
+          <div
+            ref={poModalRef}
+            className="modal-content large po-form-modal"
+            onClick={e => e.stopPropagation()}
+            style={isMobile ? undefined : { width: `${poModalSize.width}px`, height: `${poModalSize.height}px` }}
+          >
             <div className="modal-header">
               <h2>Quick Purchase Entry</h2>
               <button className="close-btn" onClick={closeQuickOrderForm}>
                 <X size={24} />
               </button>
             </div>
-            <form onSubmit={handleQuickOrderSubmit}>
-              <div className="form-section">
-                <div className="form-row">
+            <form onSubmit={handleQuickOrderSubmit} className="po-entry-form">
+              <div className="form-section po-form-section po-form-header">
+                <div className="form-row po-info-row">
                   <div className="form-group">
                     <label>Distributor *</label>
                     <input
@@ -1570,7 +1925,7 @@ function PurchaseManagement({ user }) {
                 </div>
               </div>
 
-              <div className="form-section">
+              <div className="form-section po-form-section">
                 <div className="section-header">
                   <h3>Items (Product + Qty)</h3>
                   <button type="button" className="add-item-btn" onClick={handleQuickOrderItemAdd}>
@@ -1595,28 +1950,21 @@ function PurchaseManagement({ user }) {
                       ) : quickOrderFormData.items.map((item, index) => (
                         <tr key={index}>
                           <td>
-                            <select
-                              value={item.product_id || ''}
-                              onChange={e => handleQuickOrderItemChange(index, 'product_id', e.target.value)}
-                            >
-                              <option value="">Select product</option>
-                              {quickOrderProductOptions.prioritized.length > 0 && (
-                                <optgroup label="Previously ordered from this distributor">
-                                  {quickOrderProductOptions.prioritized.map((p) => (
-                                    <option key={`quick-priority-${p.id}`} value={String(p.id)}>
-                                      {p.name}{p.sku ? ` (${p.sku})` : ''}
-                                    </option>
-                                  ))}
-                                </optgroup>
-                              )}
-                              <optgroup label="All products">
-                                {quickOrderProductOptions.all.map((p) => (
-                                  <option key={`quick-all-${p.id}`} value={String(p.id)}>
-                                    {p.name}{p.sku ? ` (${p.sku})` : ''}
-                                  </option>
-                                ))}
-                              </optgroup>
-                            </select>
+                            <input
+                              type="text"
+                              list={`quick-po-product-list-${index}`}
+                              value={item.product_query || ''}
+                              onChange={e => handleQuickOrderProductInputChange(index, e.target.value)}
+                              placeholder="Type product name / SKU"
+                            />
+                            <datalist id={`quick-po-product-list-${index}`}>
+                              {quickOrderProductOptions.prioritized.map((p) => (
+                                <option key={`quick-recent-${index}-${p.id}`} value={getProductSearchOptionLabel(p, 'recent')} />
+                              ))}
+                              {quickOrderProductOptions.all.map((p) => (
+                                <option key={`quick-all-${index}-${p.id}`} value={getProductSearchOptionLabel(p, 'all')} />
+                              ))}
+                            </datalist>
                           </td>
                           <td>
                             <input
@@ -1650,6 +1998,15 @@ function PurchaseManagement({ user }) {
                 </button>
               </div>
             </form>
+            {!isMobile && (
+              <button
+                type="button"
+                className="po-modal-resize-handle"
+                onMouseDown={handlePoModalResizeStart}
+                aria-label="Resize purchase order form"
+                title="Drag to resize"
+              />
+            )}
           </div>
         </div>
       )}
@@ -1657,16 +2014,36 @@ function PurchaseManagement({ user }) {
       {/* New Order Modal */}
       {showOrderForm && (
         <div className="modal-overlay" onClick={closeOrderForm}>
-          <div className="modal-content large" onClick={e => e.stopPropagation()}>
+          <div className="modal-content large po-form-modal" onClick={e => e.stopPropagation()}>
             <div className="modal-header">
               <h2>{editingOrderId ? 'Edit Purchase Order' : 'Create Purchase Order'}</h2>
               <button className="close-btn" onClick={closeOrderForm}>
                 <X size={24} />
               </button>
             </div>
-            <form onSubmit={handleOrderSubmit}>
-              <div className="form-section">
-                <div className="form-row">
+            <form onSubmit={handleOrderSubmit} className={`po-entry-form ${orderEntryMode === 'quick' ? 'quick-mode' : ''}`}>
+              <div className="po-entry-mode-tabs" role="tablist" aria-label="Purchase entry mode">
+                <button
+                  type="button"
+                  className={orderEntryMode === 'detailed' ? 'active' : ''}
+                  onClick={() => setOrderEntryMode('detailed')}
+                  role="tab"
+                  aria-selected={orderEntryMode === 'detailed'}
+                >
+                  Detailed Entry
+                </button>
+                <button
+                  type="button"
+                  className={orderEntryMode === 'quick' ? 'active' : ''}
+                  onClick={() => setOrderEntryMode('quick')}
+                  role="tab"
+                  aria-selected={orderEntryMode === 'quick'}
+                >
+                  Quick Entry
+                </button>
+              </div>
+              <div className="form-section po-form-section po-form-header">
+                <div className="form-row po-info-row">
                   <div className="form-group">
                     <label>Distributor *</label>
                     <input
@@ -1692,125 +2069,134 @@ function PurchaseManagement({ user }) {
                     />
                   </div>
                 </div>
-                <div className="form-group">
+                <div className="form-row po-info-row">
+                  <div className="form-group po-note-group">
                   <label>Notes</label>
                   <textarea
                     value={orderFormData.notes}
                     onChange={e => setOrderFormData(prev => ({ ...prev, notes: e.target.value }))}
                     rows="2"
                   />
+                  </div>
                 </div>
               </div>
 
-              <div className="form-section">
+              <div className="form-section po-form-section po-products-section">
                 <div className="section-header">
                   <h3>Order Items</h3>
-                  <button type="button" className="add-item-btn" onClick={handleOrderItemAdd}>
-                    <Plus size={16} /> Add Item
-                  </button>
                 </div>
-                <small className="field-help">
-                  Product dropdown is grouped as previously ordered items for selected distributor, then all products.
-                </small>
                 <div className="items-list">
                   {orderFormData.items.map((item, index) => {
                     const line = calculateOrderItem(item);
+                    const netCostPerItem = line.quantity > 0 ? (line.totalAmount / line.quantity) : 0;
                     return (
-                      <div key={index} className="item-row order-item-row">
-                        <div className="item-field product">
-                          <label>Product</label>
-                          <select
-                            value={item.product_id || ''}
-                            onChange={e => handleOrderItemChange(index, 'product_id', e.target.value)}
-                          >
-                            <option value="">Select product</option>
-                            {orderProductOptions.prioritized.length > 0 && (
-                              <optgroup label="Previously ordered from this distributor">
-                                {orderProductOptions.prioritized.map((p) => (
-                                  <option key={`order-priority-${p.id}`} value={String(p.id)}>
-                                    {p.name}{p.sku ? ` (${p.sku})` : ''}
-                                  </option>
-                                ))}
-                              </optgroup>
-                            )}
-                            <optgroup label="All products">
-                              {orderProductOptions.all.map((p) => (
-                                <option key={`order-all-${p.id}`} value={String(p.id)}>
-                                  {p.name}{p.sku ? ` (${p.sku})` : ''}
-                                </option>
+                      <div key={index} className="item-row order-item-row po-item-row">
+                        <div className="po-item-main">
+                          <div className="item-field product">
+                            <label>Product</label>
+                            <input
+                              type="text"
+                              list={`po-product-list-${index}`}
+                              value={item.product_query || ''}
+                              onChange={e => handleOrderProductInputChange(index, e.target.value)}
+                              placeholder="Type product name / SKU"
+                            />
+                            <datalist id={`po-product-list-${index}`}>
+                              {orderProductOptions.prioritized.map((p) => (
+                                <option key={`order-recent-${index}-${p.id}`} value={getProductSearchOptionLabel(p, 'recent')} />
                               ))}
-                            </optgroup>
-                          </select>
-                          {item.last_purchase_hint && (
-                            <small style={{ display: 'block', marginTop: 4, color: '#666' }}>{item.last_purchase_hint}</small>
+                              {orderProductOptions.all.map((p) => (
+                                <option key={`order-all-${index}-${p.id}`} value={getProductSearchOptionLabel(p, 'all')} />
+                              ))}
+                            </datalist>
+                            {item.last_purchase_hint && (
+                              <small className="field-hint">{item.last_purchase_hint}</small>
+                            )}
+                          </div>
+                          <div className="item-field qty">
+                            <label>Qty</label>
+                            <input
+                              type="number"
+                              min="1"
+                              value={item.quantity}
+                              onChange={e => handleOrderItemChange(index, 'quantity', toNumber(e.target.value))}
+                            />
+                          </div>
+                          <div className="item-field uom">
+                            <label>UOM</label>
+                            <input type="text" value={item.uom} readOnly />
+                          </div>
+                          {orderEntryMode !== 'quick' && (
+                            <>
+                              <div className="item-field price">
+                                <label>Rate</label>
+                                <input
+                                  type="number"
+                                  step="0.01"
+                                  min="0"
+                                  value={item.rate ?? item.unit_price}
+                                  onChange={e => handleOrderItemChange(index, 'rate', toNumber(e.target.value))}
+                                />
+                              </div>
+                              <div className="item-field gst">
+                                <label>GST %</label>
+                                <input
+                                  type="number"
+                                  step="0.01"
+                                  min="0"
+                                  value={item.gst_rate ?? 0}
+                                  onChange={e => handleOrderItemChange(index, 'gst_rate', toNumber(e.target.value))}
+                                />
+                              </div>
+                            </>
                           )}
                         </div>
-                        <div className="item-field qty">
-                          <label>Qty</label>
-                          <input
-                            type="number"
-                            min="1"
-                            value={item.quantity}
-                            onChange={e => handleOrderItemChange(index, 'quantity', toNumber(e.target.value))}
-                          />
+
+                        {orderEntryMode !== 'quick' && (
+                          <div className="po-item-discount">
+                            <div className="item-field discount-type">
+                              <label>Discount Type</label>
+                              <select
+                                value={item.discount_type || 'percent'}
+                                onChange={e => handleOrderItemChange(index, 'discount_type', e.target.value)}
+                              >
+                                <option value="percent">%</option>
+                                <option value="fixed">Fixed</option>
+                              </select>
+                            </div>
+                            <div className="item-field discount-value">
+                              <label>Discount</label>
+                              <input
+                                type="number"
+                                step="0.01"
+                                min="0"
+                                value={item.discount_value ?? 0}
+                                onChange={e => handleOrderItemChange(index, 'discount_value', toNumber(e.target.value))}
+                              />
+                            </div>
+                          </div>
+                        )}
+
+                        <div className="po-item-amounts">
+                          <div className="item-field cost-per-item">
+                            <label>Cost Per Item (After Discount + Tax)</label>
+                            <span>{formatCurrency(netCostPerItem)}</span>
+                          </div>
+                          <div className="item-field taxable">
+                            <label>Taxable Value</label>
+                            <span>{formatCurrency(line.taxableValue)}</span>
+                          </div>
+                          <div className="item-field tax">
+                            <label>Tax</label>
+                            <span>{formatCurrency(line.taxAmount)}</span>
+                          </div>
+                          <div className="item-field total">
+                            <label>Total Amount</label>
+                            <span>{formatCurrency(line.totalAmount)}</span>
+                          </div>
                         </div>
-                        <div className="item-field uom">
-                          <label>UOM</label>
-                          <input type="text" value={item.uom} readOnly />
-                        </div>
-                        <div className="item-field price">
-                          <label>Rate</label>
-                          <input
-                            type="number"
-                            step="0.01"
-                            min="0"
-                            value={item.rate ?? item.unit_price}
-                            onChange={e => handleOrderItemChange(index, 'rate', toNumber(e.target.value))}
-                          />
-                        </div>
-                        <div className="item-field gst">
-                          <label>GST %</label>
-                          <input
-                            type="number"
-                            step="0.01"
-                            min="0"
-                            value={item.gst_rate ?? 0}
-                            onChange={e => handleOrderItemChange(index, 'gst_rate', toNumber(e.target.value))}
-                          />
-                        </div>
-                        <div className="item-field discount-type">
-                          <label>Discount Type</label>
-                          <select
-                            value={item.discount_type || 'percent'}
-                            onChange={e => handleOrderItemChange(index, 'discount_type', e.target.value)}
-                          >
-                            <option value="percent">%</option>
-                            <option value="fixed">Fixed</option>
-                          </select>
-                        </div>
-                        <div className="item-field discount-value">
-                          <label>Discount</label>
-                          <input
-                            type="number"
-                            step="0.01"
-                            min="0"
-                            value={item.discount_value ?? 0}
-                            onChange={e => handleOrderItemChange(index, 'discount_value', toNumber(e.target.value))}
-                          />
-                        </div>
-                        <div className="item-field taxable">
-                          <label>Taxable Value</label>
-                          <span>{formatCurrency(line.taxableValue)}</span>
-                        </div>
-                        <div className="item-field tax">
-                          <label>Tax</label>
-                          <span>{formatCurrency(line.taxAmount)}</span>
-                        </div>
-                        <div className="item-field total">
-                          <label>Total Amount</label>
-                          <span>{formatCurrency(line.totalAmount)}</span>
-                        </div>
-                        <button type="button" className="remove-item-btn" onClick={() => handleOrderItemRemove(index)}>
+
+                        <button type="button" className="remove-item-btn po-remove-btn" onClick={() => handleOrderItemRemove(index)}>
                           <X size={16} />
                         </button>
                       </div>
@@ -1820,39 +2206,36 @@ function PurchaseManagement({ user }) {
                     <p className="no-items">No items added. Click "Add Item" to add products.</p>
                   )}
                 </div>
-                {orderFormData.items.length > 0 && (
-                  <div className="order-summary">
-                    <div className="summary-row">
-                      <span>Gross Amount</span>
-                      <strong>{formatCurrency(orderTotals.grossAmount)}</strong>
-                    </div>
-                    <div className="summary-row">
-                      <span>Discount</span>
-                      <strong>{formatCurrency(orderTotals.discountAmount)}</strong>
-                    </div>
-                    <div className="summary-row">
-                      <span>Taxable Value</span>
-                      <strong>{formatCurrency(orderTotals.taxableValue)}</strong>
-                    </div>
-                    <div className="summary-row">
-                      <span>Tax</span>
-                      <strong>{formatCurrency(orderTotals.taxAmount)}</strong>
-                    </div>
-                    <div className="summary-row grand-total">
-                      <span>Total Amount</span>
-                      <strong>{formatCurrency(orderTotals.totalAmount)}</strong>
-                    </div>
-                  </div>
-                )}
+                <div className="po-products-actions">
+                  <button type="button" className="add-item-btn" onClick={handleOrderItemAdd}>
+                    <Plus size={16} /> Add Item
+                  </button>
+                </div>
               </div>
 
-              <div className="modal-actions">
-                <button type="button" className="cancel-btn" onClick={closeOrderForm}>
-                  Cancel
-                </button>
-                <button type="submit" className="submit-btn">
-                  {editingOrderId ? 'Update Order' : 'Create Order'}
-                </button>
+              <div className="form-section po-form-section po-form-footer">
+                <div className="order-summary">
+                  <div className="summary-row">
+                    <span>Total Taxable Value</span>
+                    <strong>{formatCurrency(orderTotals.taxableValue)}</strong>
+                  </div>
+                  <div className="summary-row">
+                    <span>Total Tax</span>
+                    <strong>{formatCurrency(orderTotals.taxAmount)}</strong>
+                  </div>
+                  <div className="summary-row grand-total">
+                    <span>Total Amount</span>
+                    <strong>{formatCurrency(orderTotals.totalAmount)}</strong>
+                  </div>
+                </div>
+                <div className="modal-actions">
+                  <button type="button" className="cancel-btn" onClick={closeOrderForm}>
+                    Cancel
+                  </button>
+                  <button type="submit" className="submit-btn">
+                    {editingOrderId ? 'Update Order' : 'Create Order'}
+                  </button>
+                </div>
               </div>
             </form>
           </div>
@@ -2236,6 +2619,127 @@ function PurchaseManagement({ user }) {
                 </button>
                 <button type="submit" className="submit-btn">
                   Save Entry
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {/* PO Ledger Correction Modal */}
+      {showPoCorrectionForm && selectedCorrectionOrder && (
+        <div className="modal-overlay" onClick={closePoCorrectionForm}>
+          <div className="modal-content" onClick={e => e.stopPropagation()}>
+            <div className="modal-header">
+              <h2>Correct PO Ledger Impact</h2>
+              <button className="close-btn" onClick={closePoCorrectionForm}>
+                <X size={24} />
+              </button>
+            </div>
+            <form onSubmit={handlePoCorrectionSubmit}>
+              <div className="form-row">
+                <div className="form-group">
+                  <label>PO Number</label>
+                  <input type="text" value={selectedCorrectionOrder.po_number || '-'} readOnly />
+                </div>
+                <div className="form-group">
+                  <label>Distributor</label>
+                  <input type="text" value={selectedCorrectionOrder.distributor_name || getDistributorName(selectedCorrectionOrder)} readOnly />
+                </div>
+              </div>
+              <div className="form-row">
+                <div className="form-group">
+                  <label>Expected PO Impact</label>
+                  <input type="text" value={formatCurrency(poCorrectionContext.expectedAmount)} readOnly />
+                </div>
+                <div className="form-group">
+                  <label>Current Ledger Impact</label>
+                  <input type="text" value={formatCurrency(poCorrectionContext.currentImpact)} readOnly />
+                </div>
+              </div>
+              <div className="form-row">
+                <div className="form-group">
+                  <label>Adjustment Needed (Delta)</label>
+                  <input type="text" value={formatCurrency(poCorrectionContext.delta)} readOnly />
+                </div>
+                <div className="form-group">
+                  <label>Linked Entries</label>
+                  <input type="text" value={String(poCorrectionContext.linkedEntries)} readOnly />
+                </div>
+              </div>
+              <div className="form-row">
+                <div className="form-group">
+                  <label>Correction Type *</label>
+                  <select
+                    value={poCorrectionFormData.type}
+                    onChange={(e) => setPoCorrectionFormData((prev) => ({ ...prev, type: e.target.value }))}
+                  >
+                    <option value="payment">Payment (Reduce due)</option>
+                    <option value="credit">Credit (Increase due)</option>
+                  </select>
+                </div>
+                <div className="form-group">
+                  <label>Amount *</label>
+                  <input
+                    type="number"
+                    step="0.01"
+                    min="0"
+                    value={poCorrectionFormData.amount}
+                    onChange={(e) => setPoCorrectionFormData((prev) => ({ ...prev, amount: e.target.value }))}
+                    required
+                  />
+                </div>
+              </div>
+              <div className="form-row">
+                <div className="form-group">
+                  <label>Mode</label>
+                  <select
+                    value={poCorrectionFormData.payment_mode}
+                    onChange={(e) => setPoCorrectionFormData((prev) => ({ ...prev, payment_mode: e.target.value }))}
+                  >
+                    <option value="cash">Cash</option>
+                    <option value="bank">Bank Transfer</option>
+                    <option value="upi">UPI</option>
+                    <option value="cheque">Cheque</option>
+                    <option value="credit">Credit</option>
+                  </select>
+                </div>
+                <div className="form-group">
+                  <label>Date</label>
+                  <input
+                    type="date"
+                    value={poCorrectionFormData.transaction_date}
+                    onChange={(e) => setPoCorrectionFormData((prev) => ({ ...prev, transaction_date: e.target.value }))}
+                  />
+                </div>
+              </div>
+              <div className="form-row">
+                <div className="form-group">
+                  <label>Reference</label>
+                  <input
+                    type="text"
+                    value={poCorrectionFormData.reference}
+                    onChange={(e) => setPoCorrectionFormData((prev) => ({ ...prev, reference: e.target.value }))}
+                    placeholder="PO number or correction reference"
+                  />
+                </div>
+              </div>
+              <div className="form-group">
+                <label>Correction Reason *</label>
+                <textarea
+                  rows="3"
+                  value={poCorrectionFormData.reason}
+                  onChange={(e) => setPoCorrectionFormData((prev) => ({ ...prev, reason: e.target.value }))}
+                  placeholder="Explain why this correction is needed"
+                  required
+                />
+              </div>
+              <div className="modal-actions">
+                <button type="button" className="cancel-btn" onClick={closePoCorrectionForm} disabled={poCorrectionSubmitting}>
+                  Cancel
+                </button>
+                <button type="submit" className="submit-btn" disabled={poCorrectionSubmitting}>
+                  {poCorrectionSubmitting ? 'Posting...' : 'Post Correction'}
                 </button>
               </div>
             </form>

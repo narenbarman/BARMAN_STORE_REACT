@@ -74,7 +74,9 @@ function Login({ setUser }) {
       setUser({ ...data.user, token: data.token });
 
       // Redirect based on role
-      if (data.user.role === 'admin') {
+      if (data.user.must_change_password) {
+        navigate('/change-password');
+      } else if (data.user.role === 'admin') {
         navigate('/admin');
       } else {
         navigate('/');
@@ -283,13 +285,6 @@ function Login({ setUser }) {
             )}
           </p>
         </div>
-
-        {!isRegistering && (
-          <div className="demo-credentials">
-            <p><strong>Demo Credentials:</strong></p>
-            <p>Admin: admin@admin.com / admin123</p>
-          </div>
-        )}
       </div>
     </div>
   );

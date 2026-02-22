@@ -74,10 +74,9 @@ function UserEditModal({ user, onClose, onSave, isCreate = false }) {
 
     try {
       if (isCreate) {
-        // Create mode: use default password and role
+        // Create mode: backend will generate a temporary strong password if password is omitted.
         await usersApi.create({
           ...formData,
-          password: '123',
           role: 'customer'
         });
         setSuccess('Customer created successfully');

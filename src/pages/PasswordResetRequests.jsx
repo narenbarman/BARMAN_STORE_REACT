@@ -1,6 +1,17 @@
 import { useEffect, useState } from 'react';
 import { adminApi } from '../services/api';
 
+const isStrongPassword = (password) => {
+  const value = String(password || '');
+  return (
+    value.length >= 10 &&
+    /[a-z]/.test(value) &&
+    /[A-Z]/.test(value) &&
+    /[0-9]/.test(value) &&
+    /[^A-Za-z0-9]/.test(value)
+  );
+};
+
 function PasswordResetRequests() {
   const [requests, setRequests] = useState([]);
   const [error, setError] = useState('');
@@ -29,6 +40,11 @@ function PasswordResetRequests() {
       setError('');
       const inputs = formInputs[id] || {};
       const payload = { status };
+      if (status === 'approved' && !isStrongPassword(inputs.new_password || '')) {
+        setError('Approved reset requires a strong password (10+ chars with upper/lower/number/special).');
+        setProcessingId(null);
+        return;
+      }
       if (inputs.admin_note) payload.admin_note = inputs.admin_note;
       if (status === 'approved' && inputs.new_password) payload.new_password = inputs.new_password;
 
@@ -82,7 +98,7 @@ function PasswordResetRequests() {
                     <div style={{ display: 'flex', flexDirection: 'column', gap: '0.5rem' }}>
                       <input
                         type="password"
-                        placeholder="Set new password (optional, defaults to '1234')"
+                        placeholder="Set new strong password (required)"
                         value={(formInputs[r.id] && formInputs[r.id].new_password) || ''}
                         onChange={(e) => updateInput(r.id, 'new_password', e.target.value)}
                         style={{ padding: '6px 8px', borderRadius: 6, border: '1px solid var(--color-border)' }}
@@ -127,4 +143,3 @@ function PasswordResetRequests() {
 }
 
 export default PasswordResetRequests;
-

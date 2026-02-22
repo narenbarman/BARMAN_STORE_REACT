@@ -15,17 +15,51 @@ const UPLOADS_DIR = process.env.UPLOADS_DIR || path.join(__dirname, 'uploads');
 const PROFILE_UPLOAD_DIR = path.join(UPLOADS_DIR, 'profiles');
 let db = new Database(DB_PATH);
 
-// Restrict CORS when FRONTEND_ORIGIN is provided.
-// In production, default to no cross-origin access unless explicitly allowed.
-const corsOptions = {};
-if (process.env.FRONTEND_ORIGIN) {
-  // support comma-separated origins
-  const origins = process.env.FRONTEND_ORIGIN.split(',').map((o) => o.trim()).filter(Boolean);
-  corsOptions.origin = origins.length === 1 ? origins[0] : origins;
-} else if (process.env.NODE_ENV === 'production') {
-  corsOptions.origin = false;
-}
-app.use(cors(Object.keys(corsOptions).length ? corsOptions : undefined));
+const normalizeOrigin = (value) => {
+  const raw = String(value || '').trim();
+  if (!raw) return '';
+  try {
+    const parsed = new URL(raw);
+    const protocol = parsed.protocol.toLowerCase();
+    const hostname = parsed.hostname.toLowerCase();
+    const isDefaultHttpPort = protocol === 'http:' && parsed.port === '80';
+    const isDefaultHttpsPort = protocol === 'https:' && parsed.port === '443';
+    const port = (isDefaultHttpPort || isDefaultHttpsPort || !parsed.port) ? '' : `:${parsed.port}`;
+    return `${protocol}//${hostname}${port}`;
+  } catch (_) {
+    return raw.replace(/\/+$/, '').toLowerCase();
+  }
+};
+
+const envAllowedOrigins = String(process.env.FRONTEND_ORIGIN || '')
+  .split(',')
+  .map((origin) => normalizeOrigin(origin))
+  .filter(Boolean);
+
+const defaultAllowedOrigins = [
+  'http://localhost',
+  'http://127.0.0.1',
+  'https://narenbarman.github.io',
+];
+
+const allowedOrigins = new Set(
+  (envAllowedOrigins.length ? envAllowedOrigins : defaultAllowedOrigins).map((origin) => normalizeOrigin(origin)),
+);
+
+const corsOptions = {
+  origin(origin, callback) {
+    if (!origin) return callback(null, true);
+    const normalized = normalizeOrigin(origin);
+    if (allowedOrigins.has(normalized)) return callback(null, true);
+    return callback(new Error(`CORS blocked for origin: ${origin}`));
+  },
+  methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
+  allowedHeaders: ['Content-Type', 'Authorization', 'ngrok-skip-browser-warning'],
+  optionsSuccessStatus: 204,
+};
+
+app.use(cors(corsOptions));
+app.options('*', cors(corsOptions));
 app.use(express.json({ limit: '5mb' }));
 if (!fs.existsSync(UPLOADS_DIR)) fs.mkdirSync(UPLOADS_DIR, { recursive: true });
 if (!fs.existsSync(PROFILE_UPLOAD_DIR)) fs.mkdirSync(PROFILE_UPLOAD_DIR, { recursive: true });
@@ -75,6 +109,52 @@ const normalizeEmail = (email) => {
   const v = String(email || '').trim().toLowerCase();
   return v || null;
 };
+const PASSWORD_POLICY_MESSAGE = 'Password must be at least 10 characters and include uppercase, lowercase, number, and special character.';
+const isStrongPassword = (password) => {
+  const value = String(password || '');
+  if (value.length < 10) return false;
+  if (!/[a-z]/.test(value)) return false;
+  if (!/[A-Z]/.test(value)) return false;
+  if (!/[0-9]/.test(value)) return false;
+  if (!/[^A-Za-z0-9]/.test(value)) return false;
+  return true;
+};
+const generateTemporaryPassword = (length = 14) => {
+  const chars = 'ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz23456789!@#$%^&*';
+  let candidate = '';
+  while (!isStrongPassword(candidate)) {
+    candidate = '';
+    for (let i = 0; i < length; i += 1) {
+      candidate += chars[Math.floor(Math.random() * chars.length)];
+    }
+  }
+  return candidate;
+};
+
+const createRateLimiter = ({ windowMs, max, keyFn }) => {
+  const hits = new Map();
+  return (req, res, next) => {
+    const now = Date.now();
+    const key = keyFn(req);
+    const current = hits.get(key);
+    if (!current || now > current.resetAt) {
+      hits.set(key, { count: 1, resetAt: now + windowMs });
+      return next();
+    }
+    if (current.count >= max) {
+      const retryAfterSec = Math.max(1, Math.ceil((current.resetAt - now) / 1000));
+      res.set('Retry-After', String(retryAfterSec));
+      return res.status(429).json({ error: 'Too many requests. Please try again later.' });
+    }
+    current.count += 1;
+    return next();
+  };
+};
+const authIpLimiter = createRateLimiter({
+  windowMs: 15 * 60 * 1000,
+  max: 20,
+  keyFn: (req) => `ip:${req.ip || req.connection?.remoteAddress || 'unknown'}`
+});
 
 const PROFILE_IMAGE_ALLOWED_MIME = new Set(['image/jpeg', 'image/png', 'image/webp']);
 const PROFILE_IMAGE_MAX_BYTES = 2 * 1024 * 1024;
@@ -112,7 +192,7 @@ const deleteManagedProfileImage = (profileImage) => {
 const AUTH_TOKEN_SECRET = process.env.AUTH_TOKEN_SECRET || 'barman-store-local-secret';
 const TOKEN_TTL_MS = Number(process.env.AUTH_TOKEN_TTL_MS || 7 * 24 * 60 * 60 * 1000);
 if (process.env.NODE_ENV === 'production' && !process.env.AUTH_TOKEN_SECRET) {
-  console.warn('AUTH_TOKEN_SECRET is not set in production; using insecure fallback secret.');
+  throw new Error('AUTH_TOKEN_SECRET must be set in production');
 }
 const base64UrlEncode = (value) => Buffer.from(value).toString('base64url');
 const base64UrlDecode = (value) => Buffer.from(value, 'base64url').toString('utf8');
@@ -896,6 +976,7 @@ const initDB = () => {
       address TEXT,
       profile_image TEXT,
       password_hash TEXT NOT NULL,
+      must_change_password INTEGER DEFAULT 0,
       created_at DATETIME DEFAULT CURRENT_TIMESTAMP
     );
 
@@ -1191,6 +1272,7 @@ const initDB = () => {
   alterTableSafe(`ALTER TABLE users ADD COLUMN address TEXT`);
   alterTableSafe(`ALTER TABLE users ADD COLUMN profile_image TEXT`);
   alterTableSafe(`ALTER TABLE users ADD COLUMN password_hash TEXT`);
+  alterTableSafe(`ALTER TABLE users ADD COLUMN must_change_password INTEGER DEFAULT 0`);
   alterTableSafe(`ALTER TABLE users ADD COLUMN credit_limit REAL DEFAULT 0`);
   alterTableSafe(`ALTER TABLE credit_history ADD COLUMN transaction_date DATE`);
   alterTableSafe(`ALTER TABLE credit_history ADD COLUMN created_by INTEGER`);
@@ -1259,20 +1341,18 @@ app.post('/api/notify-order/:orderId', (req, res) => {
     // ignore when legacy password column does not exist
   }
 
-  const admin = dbGet(`SELECT id FROM users WHERE email = ?`, ['admin@admin.com']);
-  if (!admin) {
-    dbRun(
-      `INSERT INTO users (role, name, email, phone, address, password_hash) VALUES (?, ?, ?, ?, ?, ?)`,
-      ['admin', 'Administrator', 'admin@admin.com', null, null, hashPassword('admin123')]
-    );
-  } else {
-    const adminUser = dbGet(`SELECT id, password_hash FROM users WHERE email = ?`, ['admin@admin.com']);
-    if (!adminUser?.password_hash) {
-      dbRun(`UPDATE users SET password_hash = ?, role = ? WHERE id = ?`, [
-        hashPassword('admin123'),
-        'admin',
-        adminUser.id,
-      ]);
+  const adminCount = dbGet(`SELECT COUNT(*) AS count FROM users WHERE role = 'admin'`)?.count || 0;
+  if (adminCount === 0) {
+    const bootstrapAdminEmail = normalizeEmail(process.env.BOOTSTRAP_ADMIN_EMAIL);
+    const bootstrapAdminPassword = String(process.env.BOOTSTRAP_ADMIN_PASSWORD || '');
+    if (bootstrapAdminEmail && isStrongPassword(bootstrapAdminPassword)) {
+      dbRun(
+        `INSERT INTO users (role, name, email, phone, address, password_hash, must_change_password) VALUES (?, ?, ?, ?, ?, ?, ?)`,
+        ['admin', 'Administrator', bootstrapAdminEmail, null, null, hashPassword(bootstrapAdminPassword), 0]
+      );
+      console.warn('Bootstrap admin account created from environment configuration.');
+    } else {
+      console.warn('No admin user exists. Set BOOTSTRAP_ADMIN_EMAIL and BOOTSTRAP_ADMIN_PASSWORD to create the initial admin account.');
     }
   }
 
@@ -1319,6 +1399,7 @@ const sanitizeUser = (row) => {
     phone: row.phone,
     address: row.address,
     profile_image: row.profile_image || null,
+    must_change_password: Number(row.must_change_password || 0) === 1,
     created_at: row.created_at,
   };
 };
@@ -1357,12 +1438,12 @@ const logStockLedger = ({
   );
 };
 
-app.post('/api/auth/login', (req, res) => {
+app.post('/api/auth/login', authIpLimiter, (req, res) => {
   try {
     const { email, phone, password } = req.body || {};
     let user = null;
     if (email) {
-      user = dbGet(`SELECT * FROM users WHERE email = ?`, [String(email).trim()]);
+      user = dbGet(`SELECT * FROM users WHERE email = ?`, [normalizeEmail(email)]);
     } else if (phone) {
       const normalizedPhone = normalizePhone(phone);
       user = dbGet(`SELECT * FROM users WHERE phone = ?`, [normalizedPhone]);
@@ -1384,18 +1465,19 @@ app.post('/api/auth/login', (req, res) => {
   }
 });
 
-app.post('/api/auth/register', (req, res) => {
+app.post('/api/auth/register', authIpLimiter, (req, res) => {
   try {
     const { email, phone, password, name, address } = req.body || {};
+    const normalizedEmail = normalizeEmail(email);
     const normalizedPhone = normalizePhone(phone);
-    if (!email && !normalizedPhone) {
+    if (!normalizedEmail && !normalizedPhone) {
       return res.status(400).json({ error: 'Email or phone number is required' });
     }
-    if (!password || String(password).length < 4) {
-      return res.status(400).json({ error: 'Password must be at least 4 characters' });
+    if (!isStrongPassword(password)) {
+      return res.status(400).json({ error: PASSWORD_POLICY_MESSAGE });
     }
 
-    if (email && dbGet(`SELECT id FROM users WHERE email = ?`, [String(email).trim()])) {
+    if (normalizedEmail && dbGet(`SELECT id FROM users WHERE email = ?`, [normalizedEmail])) {
       return res.status(400).json({ error: 'Email already registered' });
     }
     if (normalizedPhone && dbGet(`SELECT id FROM users WHERE phone = ?`, [normalizedPhone])) {
@@ -1403,8 +1485,8 @@ app.post('/api/auth/register', (req, res) => {
     }
 
     const result = dbRun(
-      `INSERT INTO users (role, name, email, phone, address, password_hash) VALUES (?, ?, ?, ?, ?, ?)`,
-      ['customer', name || 'Customer', email ? String(email).trim() : null, normalizedPhone, address || null, hashPassword(password)]
+      `INSERT INTO users (role, name, email, phone, address, password_hash, must_change_password) VALUES (?, ?, ?, ?, ?, ?, ?)`,
+      ['customer', name || 'Customer', normalizedEmail, normalizedPhone, address || null, hashPassword(password), 0]
     );
     const user = dbGet(`SELECT * FROM users WHERE id = ?`, [result.lastInsertRowid]);
     return res.status(201).json({ success: true, user: sanitizeUser(user), token: generateToken(user) });
@@ -1413,47 +1495,50 @@ app.post('/api/auth/register', (req, res) => {
   }
 });
 
-app.post('/api/auth/change-password', (req, res) => {
+app.post('/api/auth/change-password', authIpLimiter, (req, res) => {
   try {
     const { email, phone, currentPassword, newPassword } = req.body || {};
     let user = null;
     if (email) {
-      user = dbGet(`SELECT * FROM users WHERE email = ?`, [String(email).trim()]);
+      user = dbGet(`SELECT * FROM users WHERE email = ?`, [normalizeEmail(email)]);
     } else if (phone) {
       user = dbGet(`SELECT * FROM users WHERE phone = ?`, [normalizePhone(phone)]);
     }
     if (!user) return res.status(404).json({ error: 'User not found' });
     const passwordOk = verifyPassword(currentPassword, user);
     if (!passwordOk) return res.status(401).json({ error: 'Current password is incorrect' });
-    if (!newPassword || String(newPassword).length < 4) {
-      return res.status(400).json({ error: 'New password must be at least 4 characters' });
+    if (!isStrongPassword(newPassword)) {
+      return res.status(400).json({ error: PASSWORD_POLICY_MESSAGE });
     }
-    dbRun(`UPDATE users SET password_hash = ? WHERE id = ?`, [hashPassword(newPassword), user.id]);
+    dbRun(`UPDATE users SET password_hash = ?, must_change_password = 0 WHERE id = ?`, [hashPassword(newPassword), user.id]);
     return res.json({ success: true, message: 'Password changed successfully' });
   } catch (error) {
     return res.status(500).json({ error: error.message });
   }
 });
 
-app.post('/api/auth/request-password-reset', (req, res) => {
+app.post('/api/auth/request-password-reset', authIpLimiter, (req, res) => {
   try {
     const { email, phone, reason } = req.body || {};
+    const normalizedEmail = normalizeEmail(email);
+    const normalizedPhone = normalizePhone(phone);
+    if (!normalizedEmail && !normalizedPhone) {
+      return res.status(400).json({ error: 'Email or phone number is required' });
+    }
     let user = null;
-    if (email) {
-      user = dbGet(`SELECT id, email, phone FROM users WHERE email = ?`, [String(email).trim()]);
-    } else if (phone) {
-      user = dbGet(`SELECT id, email, phone FROM users WHERE phone = ?`, [normalizePhone(phone)]);
+    if (normalizedEmail) {
+      user = dbGet(`SELECT id, email, phone FROM users WHERE email = ?`, [normalizedEmail]);
+    } else if (normalizedPhone) {
+      user = dbGet(`SELECT id, email, phone FROM users WHERE phone = ?`, [normalizedPhone]);
     }
-    if (!user) {
-      return res.status(404).json({ error: 'User not found' });
+    if (user) {
+      dbRun(
+        `INSERT INTO password_reset_requests (user_id, email, phone, reason, status) VALUES (?, ?, ?, ?, 'pending')`,
+        [user.id, user.email || null, user.phone || null, reason || null]
+      );
     }
-    const result = dbRun(
-      `INSERT INTO password_reset_requests (user_id, email, phone, reason, status) VALUES (?, ?, ?, ?, 'pending')`,
-      [user.id, user.email || null, user.phone || null, reason || null]
-    );
     return res.status(201).json({
       success: true,
-      request_id: result.lastInsertRowid,
       message: 'Password reset request submitted to admin',
     });
   } catch (error) {
@@ -1485,8 +1570,10 @@ app.put('/api/admin/password-reset-requests/:id', requireAdmin, (req, res) => {
     if (!request) return res.status(404).json({ error: 'Request not found' });
     const normalizedStatus = String(status).toLowerCase();
     if (normalizedStatus === 'approved' && request.user_id) {
-      const nextPassword = new_password && String(new_password).length >= 4 ? String(new_password) : '1234';
-      dbRun(`UPDATE users SET password_hash = ? WHERE id = ?`, [hashPassword(nextPassword), request.user_id]);
+      if (!isStrongPassword(new_password)) {
+        return res.status(400).json({ error: PASSWORD_POLICY_MESSAGE });
+      }
+      dbRun(`UPDATE users SET password_hash = ?, must_change_password = 1 WHERE id = ?`, [hashPassword(new_password), request.user_id]);
     }
     dbRun(
       `UPDATE password_reset_requests SET status = ?, admin_note = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?`,
@@ -1597,23 +1684,33 @@ app.get('/api/users/:id', requireAuth, (req, res) => {
 app.post('/api/users', requireAdmin, (req, res) => {
   try {
     const { name, email, phone, address, password, role } = req.body || {};
+    const normalizedEmail = normalizeEmail(email);
     const normalizedPhone = normalizePhone(phone);
     if (!name || String(name).trim().length < 2) {
       return res.status(400).json({ error: 'Name must be at least 2 characters' });
     }
-    if (!email && !normalizedPhone) {
+    if (!normalizedEmail && !normalizedPhone) {
       return res.status(400).json({ error: 'Email or phone number is required' });
     }
-    if (email && dbGet(`SELECT id FROM users WHERE email = ?`, [String(email).trim()])) {
+    if (normalizedEmail && dbGet(`SELECT id FROM users WHERE email = ?`, [normalizedEmail])) {
       return res.status(400).json({ error: 'Email already registered' });
     }
     if (normalizedPhone && dbGet(`SELECT id FROM users WHERE phone = ?`, [normalizedPhone])) {
       return res.status(400).json({ error: 'Phone number already registered' });
     }
     const userRole = role === 'admin' ? 'admin' : 'customer';
+    const providedPassword = String(password || '');
+    if (providedPassword && !isStrongPassword(providedPassword)) {
+      return res.status(400).json({ error: PASSWORD_POLICY_MESSAGE });
+    }
+    if (userRole === 'admin' && !isStrongPassword(providedPassword)) {
+      return res.status(400).json({ error: 'Admin password is required and must be strong.' });
+    }
+    const nextPassword = providedPassword || generateTemporaryPassword();
+    const mustChangePassword = providedPassword ? 0 : 1;
     const result = dbRun(
-      `INSERT INTO users (role, name, email, phone, address, password_hash) VALUES (?, ?, ?, ?, ?, ?)`,
-      [userRole, String(name).trim(), email ? String(email).trim() : null, normalizedPhone, address || null, hashPassword(password || '123')]
+      `INSERT INTO users (role, name, email, phone, address, password_hash, must_change_password) VALUES (?, ?, ?, ?, ?, ?, ?)`,
+      [userRole, String(name).trim(), normalizedEmail, normalizedPhone, address || null, hashPassword(nextPassword), mustChangePassword]
     );
     const user = sanitizeUser(dbGet(`SELECT * FROM users WHERE id = ?`, [result.lastInsertRowid]));
     return res.status(201).json({ success: true, user, message: 'User created successfully' });
@@ -1636,7 +1733,7 @@ app.put('/api/users/:id', requireAuth, (req, res) => {
     const current = dbGet(`SELECT * FROM users WHERE id = ?`, [req.params.id]);
     if (!current) return res.status(404).json({ error: 'User not found' });
     const normalizedPhone = phone !== undefined ? normalizePhone(phone) : current.phone;
-    const emailValue = email !== undefined ? (email ? String(email).trim() : null) : current.email;
+    const emailValue = email !== undefined ? normalizeEmail(email) : current.email;
     if (emailValue) {
       const existing = dbGet(`SELECT id FROM users WHERE email = ? AND id != ?`, [emailValue, req.params.id]);
       if (existing) return res.status(400).json({ error: 'Email already in use' });
@@ -3947,6 +4044,5 @@ app.get('/', (_, res) => {
 
 app.listen(PORT, '0.0.0.0', () => {
   console.log(`BARMAN STORE API running on http://localhost:${PORT}`);
-  console.log('Admin login: admin@admin.com / admin123');
 });
 
