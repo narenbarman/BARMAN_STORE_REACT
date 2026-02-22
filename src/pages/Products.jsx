@@ -1,7 +1,7 @@
 import { useState, useEffect, useMemo } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import { Plus, Filter, Search, SlidersHorizontal } from 'lucide-react';
-import { productsApi, categoriesApi } from '../services/api';
+import { productsApi, categoriesApi, resolveMediaSourceForDisplay } from '../services/api';
 import { getProductImageSrc, getProductFallbackImage } from '../utils/productImage';
 import { formatCurrency, getSignedCurrencyClassName } from '../utils/formatters';
 import useIsMobile from '../hooks/useIsMobile';
@@ -29,6 +29,52 @@ const getVariationLabel = (variation, index) => {
   if (sku) return sku;
   return `Option ${index + 1}`;
 };
+
+function SafeProductImage({ src, alt, className, fallbackProduct, ...rest }) {
+  const [resolvedSrc, setResolvedSrc] = useState(() => src || getProductFallbackImage(fallbackProduct));
+
+  useEffect(() => {
+    let mounted = true;
+    let objectUrlToRevoke = '';
+
+    const load = async () => {
+      if (!src) {
+        if (mounted) setResolvedSrc(getProductFallbackImage(fallbackProduct));
+        return;
+      }
+      try {
+        const resolved = await resolveMediaSourceForDisplay(src);
+        if (!mounted) {
+          if (resolved.revoke && resolved.src) URL.revokeObjectURL(resolved.src);
+          return;
+        }
+        if (resolved.revoke && resolved.src) objectUrlToRevoke = resolved.src;
+        setResolvedSrc(resolved.src || getProductFallbackImage(fallbackProduct));
+      } catch (_) {
+        if (mounted) setResolvedSrc(getProductFallbackImage(fallbackProduct));
+      }
+    };
+
+    load();
+    return () => {
+      mounted = false;
+      if (objectUrlToRevoke) URL.revokeObjectURL(objectUrlToRevoke);
+    };
+  }, [src, fallbackProduct]);
+
+  return (
+    <img
+      src={resolvedSrc}
+      alt={alt}
+      className={className}
+      {...rest}
+      onError={(event) => {
+        event.currentTarget.onerror = null;
+        event.currentTarget.src = getProductFallbackImage(fallbackProduct);
+      }}
+    />
+  );
+}
 
 function ProductDetailView({
   family,
@@ -63,14 +109,11 @@ function ProductDetailView({
     <div className="product-detail-view" onClick={(event) => event.stopPropagation()} role="presentation">
       {showImage && (
         <div className="detail-mobile-image-wrap">
-          <img
+          <SafeProductImage
             src={selectedVariation.image}
             alt={family.name}
             className="detail-mobile-image"
-            onError={(event) => {
-              event.currentTarget.onerror = null;
-              event.currentTarget.src = getProductFallbackImage(selectedVariation.raw);
-            }}
+            fallbackProduct={selectedVariation.raw}
           />
         </div>
       )}
@@ -608,14 +651,11 @@ function Products({ setCartCount }) {
               tabIndex={0}
             >
               <div className="product-image">
-                <img
+                <SafeProductImage
                   src={selectedVariation.image}
                   alt={family.name}
                   loading="lazy"
-                  onError={(event) => {
-                    event.currentTarget.onerror = null;
-                    event.currentTarget.src = getProductFallbackImage(selectedVariation.raw);
-                  }}
+                  fallbackProduct={selectedVariation.raw}
                 />
                 <div className="price-corner-tag">
                   {family.variations.length > 1 ? `From ${formatCurrency(Number(family.minPrice || 0))}` : formatCurrency(Number(selectedVariation.price || 0))}

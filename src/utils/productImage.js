@@ -1,3 +1,5 @@
+import { resolveMediaUrl } from '../services/api';
+
 const THEMES = [
   { label: 'RICE', colorA: '#f59e0b', colorB: '#d97706', keywords: ['rice', 'atta', 'flour', 'grain', 'wheat'] },
   { label: 'OIL', colorA: '#22c55e', colorB: '#16a34a', keywords: ['oil', 'mustard', 'sunflower', 'ghee', 'butter'] },
@@ -68,8 +70,7 @@ export const getProductFallbackImage = (product) => buildSvgDataUri(product);
 export const getProductImageSrc = (productOrSrc) => {
   const imageValue = typeof productOrSrc === 'string' ? productOrSrc : productOrSrc?.image;
   const safe = sanitizeImageSrc(imageValue);
-  if (safe) return safe;
+  if (safe) return resolveMediaUrl(safe);
   const product = typeof productOrSrc === 'string' ? { name: '', category: '' } : (productOrSrc || {});
   return getProductFallbackImage(product);
 };
-

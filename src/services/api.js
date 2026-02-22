@@ -25,7 +25,23 @@ const getApiUrl = () => {
 export const resolveMediaUrl = (value) => {
   const raw = String(value || '').trim();
   if (!raw) return '';
-  if (/^https?:\/\//i.test(raw) || raw.startsWith('data:')) return raw;
+  if (raw.startsWith('data:')) return raw;
+  if (/^https?:\/\//i.test(raw)) {
+    const baseUrl = getApiUrl();
+    const shouldProxy = !!baseUrl && isGitHubPagesRuntime();
+    if (!shouldProxy) return raw;
+    try {
+      const mediaOrigin = new URL(raw).origin;
+      if (mediaOrigin === new URL(baseUrl).origin) return raw;
+    } catch (_) {
+      // fallback to proxy for malformed-but-http-like values
+    }
+    const proxied = `${baseUrl}/api/media/proxy?url=${encodeURIComponent(raw)}`;
+    if (isNgrokUrl(baseUrl)) {
+      return `${proxied}&ngrok-skip-browser-warning=true`;
+    }
+    return proxied;
+  }
   if (raw.startsWith('/')) {
     const baseUrl = getApiUrl();
     if (raw.startsWith('/uploads/')) {
@@ -53,7 +69,11 @@ export const resolveMediaSourceForDisplay = async (value) => {
   }
 
   try {
-    const response = await fetch(directUrl);
+    const headers = {};
+    if (isNgrokUrl(directUrl)) {
+      headers['ngrok-skip-browser-warning'] = 'true';
+    }
+    const response = await fetch(directUrl, { headers });
     if (!response.ok) return { src: directUrl, revoke: false };
     const contentType = String(response.headers.get('content-type') || '').toLowerCase();
     if (!contentType.startsWith('image/')) return { src: directUrl, revoke: false };
