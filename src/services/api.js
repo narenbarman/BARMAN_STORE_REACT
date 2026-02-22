@@ -90,6 +90,10 @@ export const apiFetch = async (endpoint, options = {}) => {
     ...options,
   };
 
+  if (isNgrokUrl(baseUrl)) {
+    config.headers['ngrok-skip-browser-warning'] = 'true';
+  }
+
   if (config.body && typeof config.body === 'object' && !isFormData) {
     config.body = JSON.stringify(config.body);
     if (!config.headers['Content-Type'] && !config.headers['content-type']) {

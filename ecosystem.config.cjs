@@ -17,5 +17,16 @@ module.exports = {
         FRONTEND_ORIGIN: 'http://127.0.0.1,http://localhost,http://192.168.29.18,https://narenbarman.github.io',
       },
     },
+    {
+      name: 'barman-ngrok',
+      script: 'ngrok',
+      args: ['http', '5000', '--url', 'https://techiest-really-delicia.ngrok-free.dev'],
+      cwd: __dirname,
+      interpreter: 'none',
+      instances: 1,
+      exec_mode: 'fork',
+      autorestart: true,
+      watch: false,
+    },
   ],
 };
