@@ -274,6 +274,38 @@ const hashOpaqueToken = (value) =>
 const generateEmailVerificationToken = () => crypto.randomBytes(24).toString('hex');
 const hashVerificationToken = (token) =>
   crypto.createHash('sha256').update(String(token || '')).digest('hex');
+const VISITOR_ONLINE_WINDOW_MINUTES = Math.max(1, Number(process.env.VISITOR_ONLINE_WINDOW_MINUTES || 2));
+const generateVisitorSessionId = () => {
+  if (typeof crypto.randomUUID === 'function') return crypto.randomUUID();
+  return crypto.randomBytes(16).toString('hex');
+};
+const normalizeVisitorSessionId = (value) => {
+  const raw = String(value || '').trim();
+  if (!raw) return '';
+  return raw.replace(/[^a-zA-Z0-9_-]/g, '').slice(0, 80);
+};
+const sanitizeTrackedPath = (value) => {
+  const raw = String(value || '').trim();
+  if (!raw) return '/';
+  return raw.slice(0, 255);
+};
+const sanitizeShortText = (value, max = 500) => {
+  const raw = String(value || '').trim();
+  if (!raw) return null;
+  return raw.slice(0, max);
+};
+const getRequestIp = (req) => {
+  const forwarded = String(req.headers['x-forwarded-for'] || '')
+    .split(',')
+    .map((part) => part.trim())
+    .find(Boolean);
+  return forwarded || req.ip || req.connection?.remoteAddress || '';
+};
+const hashVisitorIp = (req) => {
+  const ip = String(getRequestIp(req) || '').trim();
+  if (!ip) return null;
+  return crypto.createHash('sha256').update(ip).digest('hex');
+};
 const createEmailVerificationRecord = ({ userId, email }) => {
   const token = generateEmailVerificationToken();
   const tokenHash = hashVerificationToken(token);
@@ -1894,6 +1926,25 @@ const initDB = () => {
       created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
       expires_at DATETIME
     );
+
+    CREATE TABLE IF NOT EXISTS visitor_sessions (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      session_id TEXT UNIQUE NOT NULL,
+      user_id INTEGER,
+      started_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+      last_seen_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+      ended_at DATETIME,
+      last_path TEXT,
+      referrer TEXT,
+      user_agent TEXT,
+      ip_hash TEXT
+    );
+  `);
+
+  db.exec(`
+    CREATE INDEX IF NOT EXISTS idx_visitor_sessions_started_at ON visitor_sessions(started_at);
+    CREATE INDEX IF NOT EXISTS idx_visitor_sessions_last_seen_at ON visitor_sessions(last_seen_at);
+    CREATE INDEX IF NOT EXISTS idx_visitor_sessions_user_id ON visitor_sessions(user_id);
   `);
 
   alterTableSafe(`ALTER TABLE products ADD COLUMN brand TEXT`);
@@ -2699,6 +2750,125 @@ app.get('/api/auth/reset-mode', (_, res) => {
     email_delivery_mode: EMAIL_DELIVERY_MODE,
     email_provider_ready: Boolean(emailVerificationProvider?.isReady),
   });
+});
+
+app.post('/api/analytics/session/start', (req, res) => {
+  try {
+    let sessionId = normalizeVisitorSessionId(req.body?.session_id || req.body?.sessionId);
+    if (!sessionId) sessionId = generateVisitorSessionId();
+    const trackedPath = sanitizeTrackedPath(req.body?.path || req.body?.pathname || '/');
+    const referrer = sanitizeShortText(req.body?.referrer || req.headers.referer, 500);
+    const userAgent = sanitizeShortText(req.headers['user-agent'], 500);
+    const ipHash = hashVisitorIp(req);
+    const authUser = getAuthUserFromRequest(req);
+    const authUserId = Number(authUser?.id || 0) || null;
+
+    dbRun(
+      `INSERT INTO visitor_sessions (session_id, user_id, started_at, last_seen_at, last_path, referrer, user_agent, ip_hash)
+       VALUES (?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP, ?, ?, ?, ?)
+       ON CONFLICT(session_id) DO UPDATE SET
+         last_seen_at = CURRENT_TIMESTAMP,
+         last_path = excluded.last_path,
+         user_id = COALESCE(visitor_sessions.user_id, excluded.user_id),
+         referrer = COALESCE(visitor_sessions.referrer, excluded.referrer),
+         user_agent = COALESCE(visitor_sessions.user_agent, excluded.user_agent),
+         ip_hash = COALESCE(visitor_sessions.ip_hash, excluded.ip_hash),
+         ended_at = NULL`,
+      [sessionId, authUserId, trackedPath, referrer, userAgent, ipHash]
+    );
+
+    return res.status(201).json({ success: true, session_id: sessionId });
+  } catch (error) {
+    return res.status(500).json({ error: error.message || 'Failed to start visitor session' });
+  }
+});
+
+app.post('/api/analytics/session/heartbeat', (req, res) => {
+  try {
+    let sessionId = normalizeVisitorSessionId(req.body?.session_id || req.body?.sessionId);
+    if (!sessionId) {
+      return res.status(400).json({ error: 'session_id is required' });
+    }
+    const trackedPath = sanitizeTrackedPath(req.body?.path || req.body?.pathname || '/');
+    const referrer = sanitizeShortText(req.body?.referrer || req.headers.referer, 500);
+    const userAgent = sanitizeShortText(req.headers['user-agent'], 500);
+    const ipHash = hashVisitorIp(req);
+    const authUser = getAuthUserFromRequest(req);
+    const authUserId = Number(authUser?.id || 0) || null;
+
+    dbRun(
+      `INSERT INTO visitor_sessions (session_id, user_id, started_at, last_seen_at, last_path, referrer, user_agent, ip_hash)
+       VALUES (?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP, ?, ?, ?, ?)
+       ON CONFLICT(session_id) DO UPDATE SET
+         last_seen_at = CURRENT_TIMESTAMP,
+         last_path = excluded.last_path,
+         user_id = COALESCE(visitor_sessions.user_id, excluded.user_id),
+         referrer = COALESCE(visitor_sessions.referrer, excluded.referrer),
+         user_agent = COALESCE(visitor_sessions.user_agent, excluded.user_agent),
+         ip_hash = COALESCE(visitor_sessions.ip_hash, excluded.ip_hash),
+         ended_at = NULL`,
+      [sessionId, authUserId, trackedPath, referrer, userAgent, ipHash]
+    );
+
+    return res.json({ success: true });
+  } catch (error) {
+    return res.status(500).json({ error: error.message || 'Failed to track visitor heartbeat' });
+  }
+});
+
+app.get('/api/admin/analytics/summary', requireAdmin, (_, res) => {
+  try {
+    const windowModifier = `-${VISITOR_ONLINE_WINDOW_MINUTES} minutes`;
+    const onlineVisitors = Number(
+      dbGet(
+        `SELECT COUNT(DISTINCT session_id) AS count
+         FROM visitor_sessions
+         WHERE datetime(last_seen_at) >= datetime('now', ?)`,
+        [windowModifier]
+      )?.count || 0
+    );
+    const onlineLoggedInUsers = Number(
+      dbGet(
+        `SELECT COUNT(DISTINCT user_id) AS count
+         FROM visitor_sessions
+         WHERE user_id IS NOT NULL
+           AND datetime(last_seen_at) >= datetime('now', ?)`,
+        [windowModifier]
+      )?.count || 0
+    );
+    const uniqueSessionsToday = Number(
+      dbGet(
+        `SELECT COUNT(DISTINCT session_id) AS count
+         FROM visitor_sessions
+         WHERE date(started_at, 'localtime') = date('now', 'localtime')`
+      )?.count || 0
+    );
+    const uniqueSessionsMonth = Number(
+      dbGet(
+        `SELECT COUNT(DISTINCT session_id) AS count
+         FROM visitor_sessions
+         WHERE strftime('%Y-%m', started_at, 'localtime') = strftime('%Y-%m', 'now', 'localtime')`
+      )?.count || 0
+    );
+    const uniqueSessionsYear = Number(
+      dbGet(
+        `SELECT COUNT(DISTINCT session_id) AS count
+         FROM visitor_sessions
+         WHERE strftime('%Y', started_at, 'localtime') = strftime('%Y', 'now', 'localtime')`
+      )?.count || 0
+    );
+
+    return res.json({
+      online_visitors: onlineVisitors,
+      online_logged_in_users: onlineLoggedInUsers,
+      unique_sessions_today: uniqueSessionsToday,
+      unique_sessions_month: uniqueSessionsMonth,
+      unique_sessions_year: uniqueSessionsYear,
+      online_window_minutes: VISITOR_ONLINE_WINDOW_MINUTES,
+    });
+  } catch (error) {
+    return res.status(500).json({ error: error.message || 'Failed to load analytics summary' });
+  }
 });
 
 app.post('/api/admin/notifications/email/prepare', requireAdmin, async (req, res) => {

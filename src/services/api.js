@@ -218,6 +218,19 @@ export const authApi = {
     }),
 };
 
+export const analyticsApi = {
+  startSession: (payload) =>
+    apiFetch('/api/analytics/session/start', {
+      method: 'POST',
+      body: payload,
+    }),
+  heartbeat: (payload) =>
+    apiFetch('/api/analytics/session/heartbeat', {
+      method: 'POST',
+      body: payload,
+    }),
+};
+
 // Products API
 export const productsApi = {
   getAll: (params = {}) => {
@@ -534,6 +547,7 @@ export const offersApi = {
 };
 
 export const adminApi = {
+  getAnalyticsSummary: () => apiFetch('/api/admin/analytics/summary'),
   getPasswordResetRequests: () => apiFetch('/api/admin/password-reset-requests'),
   updatePasswordResetRequest: (id, payload) =>
     apiFetch(`/api/admin/password-reset-requests/${id}`, {

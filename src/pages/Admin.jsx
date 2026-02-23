@@ -1,6 +1,6 @@
 import { useState, useEffect, useRef, useMemo } from 'react';
 import { Link, useNavigate, useSearchParams } from 'react-router-dom';
-import { Package, ShoppingCart, Users, TrendingUp, LogOut, Plus, Edit, Trash2, X, FolderOpen, CreditCard, FileText, Truck, ShoppingBag, History, BarChart2, Gift, KeyRound, Eye, Menu, Upload, Download, CheckCircle2, Clock } from 'lucide-react';
+import { Package, ShoppingCart, Users, TrendingUp, LogOut, Plus, Edit, Trash2, X, FolderOpen, CreditCard, FileText, Truck, ShoppingBag, History, BarChart2, Gift, KeyRound, Eye, Menu, Upload, Download, CheckCircle2 } from 'lucide-react';
 import { statsApi, productsApi, ordersApi, usersApi, adminApi, resolveMediaUrl } from '../services/api';
 import { getProductImageSrc, getProductFallbackImage } from '../utils/productImage';
 import { formatCurrency, getSignedCurrencyClassName } from '../utils/formatters';
@@ -54,6 +54,13 @@ function Admin({ user }) {
     return allowedTabs.has(tab) ? tab : 'dashboard';
   });
   const [stats, setStats] = useState({ totalOrders: 0, totalRevenue: 0, pendingOrders: 0 });
+  const [visitorStats, setVisitorStats] = useState({
+    onlineVisitors: 0,
+    onlineLoggedInUsers: 0,
+    uniqueSessionsToday: 0,
+    uniqueSessionsMonth: 0,
+    uniqueSessionsYear: 0,
+  });
   const [products, setProducts] = useState([]);
   const [orders, setOrders] = useState([]);
   const [users, setUsers] = useState([]);
@@ -157,17 +164,25 @@ function Admin({ user }) {
   });
 
   const refreshAdminData = async () => {
-    const [statsData, productsData, ordersData, usersData] = await Promise.all([
+    const [statsData, productsData, ordersData, usersData, analyticsData] = await Promise.all([
       statsApi.orders(),
       productsApi.getAll({ include_inactive: true }),
       ordersApi.getAll(),
-      usersApi.getAll()
+      usersApi.getAll(),
+      adminApi.getAnalyticsSummary(),
     ]);
 
     setStats(statsData);
     setProducts(productsData);
     setOrders(ordersData);
     setUsers(usersData);
+    setVisitorStats({
+      onlineVisitors: asNumber(analyticsData?.online_visitors, 0),
+      onlineLoggedInUsers: asNumber(analyticsData?.online_logged_in_users, 0),
+      uniqueSessionsToday: asNumber(analyticsData?.unique_sessions_today, 0),
+      uniqueSessionsMonth: asNumber(analyticsData?.unique_sessions_month, 0),
+      uniqueSessionsYear: asNumber(analyticsData?.unique_sessions_year, 0),
+    });
   };
 
   const openApproveModal = async (orderId) => {
@@ -1221,40 +1236,66 @@ function Admin({ user }) {
         {activeTab === 'dashboard' && (
           <div className="dashboard">
             <h1>Dashboard</h1>
-            <div className="stats-grid">
-              <div className="stat-card">
-                <ShoppingCart size={40} />
-                <div>
-                  <h3>{stats.totalOrders}</h3>
-                  <p>Total Orders</p>
+            <div className="stats-grid grouped-stats-grid">
+              <div className="stat-group-card">
+                <div className="stat-group-head">
+                  <ShoppingCart size={28} />
+                  <div>
+                    <p className="stat-group-kicker">Sales Snapshot</p>
+                    <h3>{formatCurrencyColored(stats.totalRevenue)}</h3>
+                    <p className="stat-group-main-label">Total Revenue</p>
+                  </div>
+                </div>
+                <div className="stat-group-metrics">
+                  <div className="stat-group-metric"><span>Total Orders</span><strong>{asNumber(stats.totalOrders, 0)}</strong></div>
+                  <div className="stat-group-metric"><span>Pending Orders</span><strong>{pendingOrdersList.length}</strong></div>
                 </div>
               </div>
-              <div className="stat-card">
-                <TrendingUp size={40} />
-                <div>
-                  <h3>{formatCurrencyColored(stats.totalRevenue)}</h3>
-                  <p>Total Revenue</p>
+
+              <div className="stat-group-card">
+                <div className="stat-group-head">
+                  <Package size={28} />
+                  <div>
+                    <p className="stat-group-kicker">Catalog Health</p>
+                    <h3>{activeProductsCount}</h3>
+                    <p className="stat-group-main-label">Active Products</p>
+                  </div>
+                </div>
+                <div className="stat-group-metrics">
+                  <div className="stat-group-metric"><span>Inactive Products</span><strong>{inactiveProductsCount}</strong></div>
+                  <div className="stat-group-metric"><span>Low Stock (≤10)</span><strong>{lowStockProducts.length}</strong></div>
+                  <div className="stat-group-metric"><span>Total Products</span><strong>{products.length}</strong></div>
                 </div>
               </div>
-              <div className="stat-card">
-                <Package size={40} />
-                <div>
-                  <h3>{activeProductsCount}</h3>
-                  <p>Active Products ({inactiveProductsCount} inactive)</p>
+
+              <div className="stat-group-card">
+                <div className="stat-group-head">
+                  <Users size={28} />
+                  <div>
+                    <p className="stat-group-kicker">Customer Status</p>
+                    <h3>{customerUsers.length}</h3>
+                    <p className="stat-group-main-label">Total Customers</p>
+                  </div>
+                </div>
+                <div className="stat-group-metrics">
+                  <div className="stat-group-metric"><span>Online Logged-In</span><strong>{visitorStats.onlineLoggedInUsers}</strong></div>
+                  <div className="stat-group-metric"><span>Admin Users</span><strong>{adminUsers.length}</strong></div>
                 </div>
               </div>
-              <div className="stat-card">
-                <Users size={40} />
-                <div>
-                  <h3>{customerUsers.length}</h3>
-                  <p>Customers</p>
+
+              <div className="stat-group-card">
+                <div className="stat-group-head">
+                  <TrendingUp size={28} />
+                  <div>
+                    <p className="stat-group-kicker">Visitor Traffic</p>
+                    <h3>{visitorStats.onlineVisitors}</h3>
+                    <p className="stat-group-main-label">Online Visitors</p>
+                  </div>
                 </div>
-              </div>
-              <div className="stat-card">
-                <Clock size={40} />
-                <div>
-                  <h3>{pendingOrdersList.length}</h3>
-                  <p>Pending Orders</p>
+                <div className="stat-group-metrics">
+                  <div className="stat-group-metric"><span>Unique Today</span><strong>{visitorStats.uniqueSessionsToday}</strong></div>
+                  <div className="stat-group-metric"><span>Unique Month</span><strong>{visitorStats.uniqueSessionsMonth}</strong></div>
+                  <div className="stat-group-metric"><span>Unique Year</span><strong>{visitorStats.uniqueSessionsYear}</strong></div>
                 </div>
               </div>
             </div>

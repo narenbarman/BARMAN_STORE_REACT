@@ -1,8 +1,9 @@
-import { BrowserRouter, HashRouter, Routes, Route, Link } from 'react-router-dom';
+import { BrowserRouter, HashRouter, Routes, Route, Link, useLocation } from 'react-router-dom';
 import { ShoppingCart, Menu, X, Package, ClipboardList, Home as HomeIcon, Store, Shield } from 'lucide-react';
-import { useState, useEffect, lazy, Suspense } from 'react';
+import { useState, useEffect, lazy, Suspense, useRef } from 'react';
 import UserMenu from './components/UserMenu';
 import ErrorBoundary from './components/ErrorBoundary';
+import { analyticsApi } from './services/api';
 import './index.css';
 import './App.css';
 import * as info from './pages/info.js';
@@ -47,6 +48,61 @@ const getGitHubPagesHashUrl = (path = '/') => {
   const basePath = String(import.meta.env.BASE_URL || '/').replace(/\/$/, '');
   return `${window.location.origin}${basePath}/#${normalizedPath}`;
 };
+
+const VISITOR_SESSION_STORAGE_KEY = 'visitor_session_id';
+
+const createVisitorSessionId = () => {
+  if (typeof window !== 'undefined' && window.crypto?.randomUUID) {
+    return window.crypto.randomUUID();
+  }
+  return `${Date.now()}_${Math.random().toString(36).slice(2, 12)}`;
+};
+
+function VisitorTracker() {
+  const location = useLocation();
+  const sessionIdRef = useRef('');
+  const latestPathRef = useRef('/');
+
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+    let existingSessionId = String(window.localStorage.getItem(VISITOR_SESSION_STORAGE_KEY) || '').trim();
+    if (!existingSessionId) {
+      existingSessionId = createVisitorSessionId();
+      window.localStorage.setItem(VISITOR_SESSION_STORAGE_KEY, existingSessionId);
+    }
+    sessionIdRef.current = existingSessionId;
+    latestPathRef.current = `${location.pathname || '/'}${location.search || ''}`;
+    analyticsApi.startSession({
+      session_id: existingSessionId,
+      path: latestPathRef.current,
+      referrer: typeof document !== 'undefined' ? document.referrer || '' : '',
+    }).catch(() => {});
+  }, []);
+
+  useEffect(() => {
+    const currentPath = `${location.pathname || '/'}${location.search || ''}`;
+    latestPathRef.current = currentPath;
+    if (!sessionIdRef.current) return;
+    analyticsApi.heartbeat({
+      session_id: sessionIdRef.current,
+      path: currentPath,
+    }).catch(() => {});
+  }, [location.pathname, location.search]);
+
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+    const interval = window.setInterval(() => {
+      if (!sessionIdRef.current) return;
+      analyticsApi.heartbeat({
+        session_id: sessionIdRef.current,
+        path: latestPathRef.current || '/',
+      }).catch(() => {});
+    }, 30000);
+    return () => window.clearInterval(interval);
+  }, []);
+
+  return null;
+}
 
 function App() {
   const [cartCount, setCartCount] = useState(0);
@@ -159,6 +215,7 @@ function App() {
     <ErrorBoundary>
       <Router basename={routerBasename} future={routerFuture}>
       <div className="app">
+        <VisitorTracker />
         {/* Header */}
         <header className="header">
           <div className="header-content">
