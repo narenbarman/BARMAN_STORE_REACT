@@ -56,7 +56,7 @@ function ProductForm({ product, onClose, onSave }) {
       setFormData({
         name: product.name || '',
         description: product.description || '',
-        brand: product.brand || '',
+        brand: product.brand_path || product.brand || '',
         content: product.content || '',
         color: product.color || '',
         price: product.price?.toString() || '',
@@ -70,7 +70,7 @@ function ProductForm({ product, onClose, onSave }) {
         image: product.image || '',
         stock: product.stock?.toString() || '',
         expiry_date: product.expiry_date || '',
-        category: product.category || '',
+        category: product.category_path || product.category || '',
         defaultDiscount: product.defaultDiscount?.toString() || '',
         discountType: product.discountType || 'fixed'
       });
@@ -145,7 +145,7 @@ function ProductForm({ product, onClose, onSave }) {
       newErrors.price = 'Price must be a positive number';
     }
     
-    if (!data.category) {
+    if (!String(data.category || '').trim()) {
       newErrors.category = 'Category is required';
     }
     
@@ -178,7 +178,7 @@ function ProductForm({ product, onClose, onSave }) {
     stock: parseInt(data.stock),
     conversion_factor: parseFloat(data.conversion_factor) || 1,
     expiry_date: data.expiry_date || null,
-    category: data.category,
+    category: String(data.category || '').trim(),
     defaultDiscount: parseFloat(data.defaultDiscount) || 0,
     discountType: data.discountType
   });
@@ -393,6 +393,7 @@ function ProductForm({ product, onClose, onSave }) {
                   placeholder="e.g., Nescafe, Parle"
                   className="input-field"
                 />
+                <small className="field-help">Optional format: Parent {'->'} Child. Example: Dove {'->'} Baby Care.</small>
               </div>
 
               <div className="form-group">
@@ -425,18 +426,22 @@ function ProductForm({ product, onClose, onSave }) {
 
               <div className="form-group">
                 <label htmlFor="category">Category *</label>
-                <select
+                <input
+                  type="text"
                   id="category"
                   name="category"
+                  list="product-form-category-list"
                   value={formData.category}
                   onChange={handleChange}
+                  placeholder="e.g., Baby Products -> Haircare"
                   className={`input-field ${errors.category ? 'error' : ''}`}
-                >
-                  <option value="">Select a category</option>
+                />
+                <datalist id="product-form-category-list">
                   {categories.map((cat) => (
-                    <option key={cat.id} value={cat.name}>{cat.name}</option>
+                    <option key={cat.id} value={cat.name} />
                   ))}
-                </select>
+                </datalist>
+                <small className="field-help">Use Parent {'->'} Child for sub-category. Example: Baby Products {'->'} Haircare.</small>
                 {errors.category && <span className="field-error">{errors.category}</span>}
               </div>
             </div>

@@ -10,15 +10,118 @@ import './Products.css';
 
 const normalizeText = (value) => String(value || '').trim().toLowerCase();
 const getInitialVisibleCount = (isMobile) => (isMobile ? 12 : 16);
+const GROUP_BY_OPTIONS = {
+  category: 'category',
+  brand: 'brand'
+};
 
 const formatCurrencyColored = (amount) => {
   const formatted = formatCurrency(Math.abs(amount));
   return <span className={getSignedCurrencyClassName(amount)}>{formatted}</span>;
 };
 
-const getFamilyKey = (product) => {
+const formatPriceTag = (value) => {
+  const amount = Number(value || 0);
+  if (!Number.isFinite(amount) || amount <= 0) return '0/';
+  const normalized = Number.isInteger(amount)
+    ? String(amount)
+    : String(Number(amount.toFixed(2))).replace(/\.0+$/, '').replace(/(\.\d*[1-9])0+$/, '$1');
+  return `${normalized}/`;
+};
+
+const buildResponsiveImageSources = (src, preferredWidth = 480) => {
+  const raw = String(src || '').trim();
+  if (!raw || /^blob:/i.test(raw) || /^data:/i.test(raw)) {
+    return { src: raw, srcSet: '', sizes: '' };
+  }
+
+  let baseUrl;
+  try {
+    baseUrl = new URL(raw, typeof window !== 'undefined' ? window.location.origin : 'http://localhost');
+  } catch (_) {
+    return { src: raw, srcSet: '', sizes: '' };
+  }
+
+  const widths = Array.from(new Set([
+    Math.max(320, Math.round(preferredWidth * 0.75)),
+    Math.max(420, Math.round(preferredWidth)),
+    Math.max(640, Math.round(preferredWidth * 1.6))
+  ])).sort((a, b) => a - b);
+
+  const toOptimizedUrl = (width) => {
+    const next = new URL(baseUrl.toString());
+    const host = String(next.hostname || '').toLowerCase();
+
+    // Unsplash optimization parameters
+    if (host.includes('unsplash.com')) {
+      next.searchParams.set('auto', 'format');
+      next.searchParams.set('fit', 'max');
+      next.searchParams.set('q', '85');
+      next.searchParams.set('w', String(width));
+      return next.toString();
+    }
+
+    // Cloudinary transformation in URL path
+    if (host.includes('cloudinary.com') && next.pathname.includes('/upload/')) {
+      const [left, right] = next.pathname.split('/upload/');
+      next.pathname = `${left}/upload/f_auto,q_auto:good,w_${width}/${right}`;
+      return next.toString();
+    }
+
+    // Generic optimization query params (safe fallback even if ignored)
+    next.searchParams.set('auto', 'format');
+    next.searchParams.set('q', '85');
+    next.searchParams.set('w', String(width));
+    return next.toString();
+  };
+
+  const srcSet = widths.map((width) => `${toOptimizedUrl(width)} ${width}w`).join(', ');
+  const srcUrl = toOptimizedUrl(widths[0]);
+  const sizes = preferredWidth >= 900
+    ? '(max-width: 767px) 92vw, 840px'
+    : '(max-width: 767px) 46vw, 280px';
+
+  return { src: srcUrl, srcSet, sizes };
+};
+
+const splitHierarchyValue = (value) => {
+  const raw = String(value || '').trim();
+  if (!raw || !raw.includes('->')) return { parent: raw, child: '' };
+  const parts = raw.split('->').map((part) => String(part || '').trim());
+  if (parts.length !== 2 || !parts[0] || !parts[1]) return { parent: raw, child: '' };
+  return { parent: parts[0], child: parts[1] };
+};
+
+const composeHierarchyLabel = (parent, child) => {
+  const parentName = String(parent || '').trim();
+  const childName = String(child || '').trim();
+  if (!parentName) return '';
+  if (!childName) return parentName;
+  return `${parentName} -> ${childName}`;
+};
+
+const getProductHierarchy = (product) => {
+  const parsedCategory = splitHierarchyValue(product?.category);
+  const explicitCategory = String(product?.category || '').trim();
+  const explicitSubcategory = String(product?.subcategory ?? product?.sub_category ?? '').trim();
+  const category = explicitCategory || parsedCategory.parent || '';
+  const subcategory = explicitSubcategory || parsedCategory.child || '';
+  const categoryPath = String(product?.category_path || '').trim() || composeHierarchyLabel(category, subcategory);
+
+  const parsedBrand = splitHierarchyValue(product?.brand);
+  const explicitBrand = String(product?.brand || '').trim();
+  const explicitSubBrand = String(product?.sub_brand ?? product?.subBrand ?? product?.subbrand ?? '').trim();
+  const brand = explicitBrand || parsedBrand.parent || '';
+  const subBrand = explicitSubBrand || parsedBrand.child || '';
+  const brandPath = String(product?.brand_path || '').trim() || composeHierarchyLabel(brand, subBrand);
+
+  return { category, subcategory, categoryPath, brand, subBrand, brandPath };
+};
+
+const getFamilyKey = (product, hierarchy = null) => {
   const name = normalizeText(product?.name);
-  const brand = normalizeText(product?.brand);
+  const resolved = hierarchy || getProductHierarchy(product);
+  const brand = normalizeText(resolved.brandPath || resolved.brand);
   return `${name}|${brand}`;
 };
 
@@ -32,6 +135,11 @@ const getVariationLabel = (variation, index) => {
 
 function SafeProductImage({ src, alt, className, fallbackProduct, ...rest }) {
   const [resolvedSrc, setResolvedSrc] = useState(() => src || getProductFallbackImage(fallbackProduct));
+  const preferredWidth = String(className || '').includes('detail-mobile-image') ? 960 : 520;
+  const responsiveSources = useMemo(
+    () => buildResponsiveImageSources(resolvedSrc, preferredWidth),
+    [resolvedSrc, preferredWidth]
+  );
 
   useEffect(() => {
     let mounted = true;
@@ -64,12 +172,17 @@ function SafeProductImage({ src, alt, className, fallbackProduct, ...rest }) {
 
   return (
     <img
-      src={resolvedSrc}
+      src={responsiveSources.src || resolvedSrc}
+      srcSet={responsiveSources.srcSet || undefined}
+      sizes={responsiveSources.sizes || undefined}
       alt={alt}
       className={className}
+      decoding="async"
       {...rest}
       onError={(event) => {
         event.currentTarget.onerror = null;
+        event.currentTarget.srcset = '';
+        event.currentTarget.sizes = '';
         event.currentTarget.src = getProductFallbackImage(fallbackProduct);
       }}
     />
@@ -152,9 +265,8 @@ function ProductDetailView({
         )}
         <div className="detail-stock-line">
           <span className={selectedStock > 0 ? 'in-stock' : 'out-of-stock'}>
-            {selectedStock > 0 ? `${selectedStock} ${selectedVariation.uom || 'pcs'} in stock` : 'Out of stock'}
+            {selectedStock > 0 ? 'In stock' : 'Out of stock'}
           </span>
-          {selectedQty > 0 && <small>In cart: {selectedQty}</small>}
         </div>
       </div>
 
@@ -193,12 +305,16 @@ function ProductDetailView({
 function Products({ setCartCount }) {
   const isMobile = useIsMobile();
   const [searchParams, setSearchParams] = useSearchParams();
+  const initialGroupBy = searchParams.get('group') === GROUP_BY_OPTIONS.brand
+    ? GROUP_BY_OPTIONS.brand
+    : GROUP_BY_OPTIONS.category;
   const [products, setProducts] = useState([]);
   const [categories, setCategories] = useState([]);
   const [selectedCategory, setSelectedCategory] = useState(searchParams.get('category') || 'all');
   const [searchQuery, setSearchQuery] = useState(searchParams.get('q') || '');
   const [debouncedQuery, setDebouncedQuery] = useState(searchParams.get('q') || '');
   const [sortBy, setSortBy] = useState(searchParams.get('sort') || 'relevance');
+  const [groupBy, setGroupBy] = useState(initialGroupBy);
   const [inStockOnly, setInStockOnly] = useState(searchParams.get('stock') === '1');
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
@@ -227,13 +343,14 @@ function Products({ setCartCount }) {
     if (selectedCategory !== 'all') params.set('category', selectedCategory);
     if (debouncedQuery) params.set('q', debouncedQuery);
     if (sortBy !== 'relevance') params.set('sort', sortBy);
+    if (groupBy !== GROUP_BY_OPTIONS.category) params.set('group', groupBy);
     if (inStockOnly) params.set('stock', '1');
     setSearchParams(params, { replace: true });
-  }, [selectedCategory, debouncedQuery, sortBy, inStockOnly, setSearchParams]);
+  }, [selectedCategory, debouncedQuery, sortBy, groupBy, inStockOnly, setSearchParams]);
 
   useEffect(() => {
     setVisibleCount(getInitialVisibleCount(isMobile));
-  }, [selectedCategory, debouncedQuery, sortBy, inStockOnly, isMobile]);
+  }, [selectedCategory, debouncedQuery, sortBy, groupBy, inStockOnly, isMobile]);
 
   useEffect(() => {
     if (!notice) return undefined;
@@ -288,10 +405,11 @@ function Products({ setCartCount }) {
   const productFamilies = useMemo(() => {
     const familyMap = new Map();
     products.forEach((product) => {
-      const key = getFamilyKey(product);
+      const hierarchy = getProductHierarchy(product);
+      const key = getFamilyKey(product, hierarchy);
       const variationSignature = [
         normalizeText(product?.name),
-        normalizeText(product?.brand),
+        normalizeText(hierarchy.brandPath || hierarchy.brand),
         Number(product?.price || 0).toFixed(2),
         Number(product?.mrp || product?.price || 0).toFixed(2),
         normalizeText(product?.content),
@@ -303,8 +421,12 @@ function Products({ setCartCount }) {
           id: key,
           key,
           name: String(product.name || 'Product').trim() || 'Product',
-          brand: String(product.brand || '').trim(),
-          category: String(product.category || '').trim(),
+          brand: hierarchy.brandPath || hierarchy.brand || '',
+          brandRoot: hierarchy.brand || '',
+          subBrand: hierarchy.subBrand || '',
+          category: hierarchy.category || '',
+          subcategory: hierarchy.subcategory || '',
+          categoryPath: hierarchy.categoryPath || hierarchy.category || '',
           description: String(product.description || '').trim(),
           variations: []
         });
@@ -321,8 +443,12 @@ function Products({ setCartCount }) {
           id: product.id,
           signature: variationSignature,
           name: String(product.name || '').trim(),
-          brand: String(product.brand || '').trim(),
-          category: String(product.category || '').trim(),
+          brand: hierarchy.brandPath || hierarchy.brand || '',
+          brandRoot: hierarchy.brand || '',
+          subBrand: hierarchy.subBrand || '',
+          category: hierarchy.categoryPath || hierarchy.category || '',
+          categoryRoot: hierarchy.category || '',
+          subcategory: hierarchy.subcategory || '',
           description: String(product.description || '').trim(),
           color: String(product.color || '').trim(),
           content: String(product.content || '').trim(),
@@ -338,8 +464,23 @@ function Products({ setCartCount }) {
       if (!family.description && product.description) {
         family.description = String(product.description || '').trim();
       }
-      if (!family.category && product.category) {
-        family.category = String(product.category || '').trim();
+      if (!family.category && hierarchy.category) {
+        family.category = hierarchy.category;
+      }
+      if (!family.categoryPath && hierarchy.categoryPath) {
+        family.categoryPath = hierarchy.categoryPath;
+      }
+      if (!family.brand && (hierarchy.brandPath || hierarchy.brand)) {
+        family.brand = hierarchy.brandPath || hierarchy.brand;
+      }
+      if (!family.brandRoot && hierarchy.brand) {
+        family.brandRoot = hierarchy.brand;
+      }
+      if (!family.subBrand && hierarchy.subBrand) {
+        family.subBrand = hierarchy.subBrand;
+      }
+      if (!family.subcategory && hierarchy.subcategory) {
+        family.subcategory = hierarchy.subcategory;
       }
     });
 
@@ -387,7 +528,11 @@ function Products({ setCartCount }) {
       const searchable = [
         family.name,
         family.brand,
+        family.brandRoot,
+        family.subBrand,
         family.category,
+        family.subcategory,
+        family.categoryPath,
         family.description,
         ...family.variations.map((variation) => `${variation.content} ${variation.color} ${variation.sku}`)
       ]
@@ -437,6 +582,65 @@ function Products({ setCartCount }) {
 
   const visibleFamilies = useMemo(() => filteredFamilies.slice(0, visibleCount), [filteredFamilies, visibleCount]);
   const hasMoreProducts = visibleCount < filteredFamilies.length;
+  const groupingLabel = groupBy === GROUP_BY_OPTIONS.brand
+    ? 'Brand -> Sub-brand'
+    : 'Category -> Sub-category';
+
+  const visibleFamilyIndexById = useMemo(() => {
+    return visibleFamilies.reduce((acc, family, index) => {
+      acc[family.id] = index;
+      return acc;
+    }, {});
+  }, [visibleFamilies]);
+
+  const groupedVisibleFamilies = useMemo(() => {
+    const topGroups = [];
+    const topGroupMap = new Map();
+
+    visibleFamilies.forEach((family) => {
+      const topName = groupBy === GROUP_BY_OPTIONS.brand
+        ? (String(family.brandRoot || '').trim() || 'Unbranded')
+        : (String(family.category || '').trim() || 'General');
+      const subName = groupBy === GROUP_BY_OPTIONS.brand
+        ? (String(family.subBrand || '').trim() || 'General')
+        : (String(family.subcategory || '').trim() || 'General');
+      const topKey = normalizeText(topName) || '__group__';
+      if (!topGroupMap.has(topKey)) {
+        topGroupMap.set(topKey, {
+          key: topKey,
+          name: topName,
+          total: 0,
+          subGroups: [],
+          subGroupMap: new Map()
+        });
+        topGroups.push(topGroupMap.get(topKey));
+      }
+      const topGroup = topGroupMap.get(topKey);
+      topGroup.total += 1;
+
+      const subKey = `${topKey}::${normalizeText(subName) || 'general'}`;
+      if (!topGroup.subGroupMap.has(subKey)) {
+        const nextSubGroup = {
+          key: subKey,
+          name: subName,
+          total: 0,
+          families: []
+        };
+        topGroup.subGroupMap.set(subKey, nextSubGroup);
+        topGroup.subGroups.push(nextSubGroup);
+      }
+      const subGroup = topGroup.subGroupMap.get(subKey);
+      subGroup.total += 1;
+      subGroup.families.push(family);
+    });
+
+    return topGroups.map((group) => ({
+      key: group.key,
+      name: group.name,
+      total: group.total,
+      subGroups: group.subGroups
+    }));
+  }, [visibleFamilies, groupBy]);
 
   const getSelectedVariation = (family) => {
     const selectedId = selectedVariationByFamily[family.id];
@@ -526,6 +730,102 @@ function Products({ setCartCount }) {
     [filteredFamilies, activeMobileFamilyId]
   );
 
+  const renderFamilyCard = (family) => {
+    const selectedVariation = getSelectedVariation(family);
+    const familyInStock = family.variations.some((variation) => Number(variation.stock || 0) > 0);
+    const familyCartQty = family.variations.reduce((sum, variation) => sum + Number(cartQtyById[variation.id] || 0), 0);
+    const isActiveDesktop = !isMobile && activeDesktopFamilyId === family.id;
+    const selectedQty = Number(cartQtyById[selectedVariation.id] || 0);
+    const selectedStock = Number(selectedVariation.stock || 0);
+    const selectedMaxed = selectedStock > 0 && selectedQty >= selectedStock;
+    const animationIndex = Number(visibleFamilyIndexById[family.id] || 0);
+
+    return (
+      <div
+        key={family.id}
+        className="product-card fade-in-up compact-mobile-card family-card"
+        style={{ animationDelay: `${animationIndex * 0.04}s` }}
+        onClick={() => openFamilyDetails(family.id)}
+        onKeyDown={(event) => {
+          if (event.key === 'Enter' || event.key === ' ') openFamilyDetails(family.id);
+        }}
+        role="button"
+        tabIndex={0}
+      >
+        <div className="product-image">
+          <SafeProductImage
+            src={selectedVariation.image}
+            alt={family.name}
+            loading="lazy"
+            fallbackProduct={selectedVariation.raw}
+          />
+          <div className="price-corner-tag">
+            {formatPriceTag(family.variations.length > 1 ? family.minPrice : selectedVariation.price)}
+          </div>
+        </div>
+
+        <div className="product-info">
+          <h3 className="product-name">{family.name}</h3>
+          {!isMobile && (
+            <div className="product-footer compact">
+              <div className="product-stock">
+                <span className={familyInStock ? 'in-stock' : 'out-of-stock'}>
+                  {familyInStock ? 'In stock' : 'Out of stock'}
+                </span>
+                {familyCartQty > 0 && <small className="cart-qty-indicator">In cart: {familyCartQty}</small>}
+              </div>
+              {selectedQty > 0 ? (
+                <div className="card-qty-counter" onClick={(event) => event.stopPropagation()}>
+                  <button
+                    type="button"
+                    className="qty-step-btn"
+                    onClick={() => decreaseFromCart(selectedVariation)}
+                  >
+                    -
+                  </button>
+                  <span className="qty-step-value">{selectedQty}</span>
+                  <button
+                    type="button"
+                    className="qty-step-btn"
+                    onClick={() => addToCart(family, selectedVariation)}
+                    disabled={selectedStock === 0 || selectedMaxed}
+                  >
+                    +
+                  </button>
+                </div>
+              ) : (
+                <button
+                  type="button"
+                  className="add-to-cart-btn"
+                  onClick={(event) => {
+                    event.stopPropagation();
+                    addToCart(family, selectedVariation);
+                  }}
+                  disabled={selectedStock === 0}
+                >
+                  <Plus size={14} /> Add
+                </button>
+              )}
+            </div>
+          )}
+
+          {isActiveDesktop && (
+            <ProductDetailView
+              family={family}
+              selectedVariationId={selectedVariation.id}
+              onSelectVariation={handleSelectVariation}
+              onIncreaseQty={addToCart}
+              onDecreaseQty={decreaseFromCart}
+              cartQtyById={cartQtyById}
+              buttonStatus={buttonStatus}
+              showImage={false}
+            />
+          )}
+        </div>
+      </div>
+    );
+  };
+
   if (loading) {
     return (
       <div className="loading-container">
@@ -604,6 +904,16 @@ function Products({ setCartCount }) {
 
             <div className="sort-row">
               <div className="sort-group">
+                <Filter size={16} />
+                <select value={groupBy} onChange={(event) => setGroupBy(event.target.value)} aria-label="Group products">
+                  <option value={GROUP_BY_OPTIONS.category}>Group: Category {'->'} Sub-category</option>
+                  <option value={GROUP_BY_OPTIONS.brand}>Group: Brand {'->'} Sub-brand</option>
+                </select>
+              </div>
+            </div>
+
+            <div className="sort-row">
+              <div className="sort-group">
                 <SlidersHorizontal size={16} />
                 <select value={sortBy} onChange={(event) => setSortBy(event.target.value)} aria-label="Sort products">
                   <option value="relevance">Relevance</option>
@@ -624,103 +934,32 @@ function Products({ setCartCount }) {
 
       <div className="result-summary">
         <span>
-          Showing {visibleFamilies.length} of {filteredFamilies.length} products
+          Showing {visibleFamilies.length} of {filteredFamilies.length} products | Grouped by {groupingLabel}
         </span>
       </div>
 
-      <div className="products-grid">
-        {visibleFamilies.map((family, index) => {
-          const selectedVariation = getSelectedVariation(family);
-          const familyInStock = family.variations.some((variation) => Number(variation.stock || 0) > 0);
-          const familyCartQty = family.variations.reduce((sum, variation) => sum + Number(cartQtyById[variation.id] || 0), 0);
-          const isActiveDesktop = !isMobile && activeDesktopFamilyId === family.id;
-          const selectedQty = Number(cartQtyById[selectedVariation.id] || 0);
-          const selectedStock = Number(selectedVariation.stock || 0);
-          const selectedMaxed = selectedStock > 0 && selectedQty >= selectedStock;
-
-          return (
-            <div
-              key={family.id}
-              className="product-card fade-in-up compact-mobile-card family-card"
-              style={{ animationDelay: `${index * 0.04}s` }}
-              onClick={() => openFamilyDetails(family.id)}
-              onKeyDown={(event) => {
-                if (event.key === 'Enter' || event.key === ' ') openFamilyDetails(family.id);
-              }}
-              role="button"
-              tabIndex={0}
-            >
-              <div className="product-image">
-                <SafeProductImage
-                  src={selectedVariation.image}
-                  alt={family.name}
-                  loading="lazy"
-                  fallbackProduct={selectedVariation.raw}
-                />
-                <div className="price-corner-tag">
-                  {family.variations.length > 1 ? `From ${formatCurrency(Number(family.minPrice || 0))}` : formatCurrency(Number(selectedVariation.price || 0))}
-                </div>
-              </div>
-
-              <div className="product-info">
-                <h3 className="product-name">{family.name}</h3>
-                <div className="product-footer compact">
-                  <div className="product-stock">
-                    <span className={familyInStock ? 'in-stock' : 'out-of-stock'}>
-                      {familyInStock ? `${family.variations.length} options` : 'Out of stock'}
-                    </span>
-                    {familyCartQty > 0 && <small className="cart-qty-indicator">In cart: {familyCartQty}</small>}
+      <div className="products-grouped-list">
+        {groupedVisibleFamilies.map((topGroup) => (
+          <section key={topGroup.key} className="products-group-section">
+            <header className="products-group-header">
+              <h2>{topGroup.name}</h2>
+              <span>{topGroup.total}</span>
+            </header>
+            <div className="products-subgroups-wrap">
+              {topGroup.subGroups.map((subGroup) => (
+                <div key={subGroup.key} className="products-subgroup">
+                  <div className="products-subgroup-header">
+                    <h3>{subGroup.name}</h3>
+                    <span>{subGroup.total}</span>
                   </div>
-                  {selectedQty > 0 ? (
-                    <div className="card-qty-counter" onClick={(event) => event.stopPropagation()}>
-                      <button
-                        type="button"
-                        className="qty-step-btn"
-                        onClick={() => decreaseFromCart(selectedVariation)}
-                      >
-                        -
-                      </button>
-                      <span className="qty-step-value">{selectedQty}</span>
-                      <button
-                        type="button"
-                        className="qty-step-btn"
-                        onClick={() => addToCart(family, selectedVariation)}
-                        disabled={selectedStock === 0 || selectedMaxed}
-                      >
-                        +
-                      </button>
-                    </div>
-                  ) : (
-                    <button
-                      type="button"
-                      className="add-to-cart-btn"
-                      onClick={(event) => {
-                        event.stopPropagation();
-                        addToCart(family, selectedVariation);
-                      }}
-                      disabled={selectedStock === 0}
-                    >
-                      <Plus size={14} /> Add
-                    </button>
-                  )}
+                  <div className="group-products-grid">
+                    {subGroup.families.map((family) => renderFamilyCard(family))}
+                  </div>
                 </div>
-
-                {isActiveDesktop && (
-                  <ProductDetailView
-                    family={family}
-                    selectedVariationId={selectedVariation.id}
-                    onSelectVariation={handleSelectVariation}
-                    onIncreaseQty={addToCart}
-                    onDecreaseQty={decreaseFromCart}
-                    cartQtyById={cartQtyById}
-                    buttonStatus={buttonStatus}
-                    showImage={false}
-                  />
-                )}
-              </div>
+              ))}
             </div>
-          );
-        })}
+          </section>
+        ))}
       </div>
 
       {hasMoreProducts && (
@@ -741,6 +980,7 @@ function Products({ setCartCount }) {
               setSelectedCategory('all');
               setSearchQuery('');
               setSortBy('relevance');
+              setGroupBy(GROUP_BY_OPTIONS.category);
               setInStockOnly(false);
             }}
           >
@@ -779,6 +1019,16 @@ function Products({ setCartCount }) {
                   {category.name}
                 </button>
               ))}
+            </div>
+          </div>
+
+          <div className="sort-row">
+            <div className="sort-group">
+              <Filter size={16} />
+              <select value={groupBy} onChange={(event) => setGroupBy(event.target.value)} aria-label="Group products">
+                <option value={GROUP_BY_OPTIONS.category}>Group: Category {'->'} Sub-category</option>
+                <option value={GROUP_BY_OPTIONS.brand}>Group: Brand {'->'} Sub-brand</option>
+              </select>
             </div>
           </div>
 

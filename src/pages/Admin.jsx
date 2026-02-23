@@ -38,6 +38,26 @@ const asNumber = (value, fallback = 0) => {
   return Number.isFinite(parsed) ? parsed : fallback;
 };
 
+const formatHierarchyPath = (parent, child) => {
+  const root = String(parent || '').trim();
+  const leaf = String(child || '').trim();
+  if (!root) return '';
+  if (!leaf) return root;
+  return `${root} -> ${leaf}`;
+};
+
+const getCategoryPath = (product) => (
+  String(product?.category_path || '').trim()
+  || formatHierarchyPath(product?.category, product?.subcategory)
+  || String(product?.category || '').trim()
+);
+
+const getBrandPath = (product) => (
+  String(product?.brand_path || '').trim()
+  || formatHierarchyPath(product?.brand, product?.sub_brand)
+  || String(product?.brand || '').trim()
+);
+
 function Admin({ user }) {
   const navigate = useNavigate();
   const [searchParams, setSearchParams] = useSearchParams();
@@ -455,7 +475,7 @@ function Admin({ user }) {
   };
 
   const productCategories = Array.from(
-    new Set(products.map(p => String(p.category || '').trim()).filter(Boolean))
+    new Set(products.map((p) => getCategoryPath(p)).filter(Boolean))
   ).sort((a, b) => a.localeCompare(b));
 
   const activeProductsCount = useMemo(
@@ -506,7 +526,7 @@ function Admin({ user }) {
     let list = Array.isArray(products) ? [...products] : [];
 
     if (productTableCategoryFilter) {
-      list = list.filter((product) => String(product.category || '').trim() === productTableCategoryFilter);
+      list = list.filter((product) => getCategoryPath(product) === productTableCategoryFilter);
     }
 
     if (productTableStatusFilter !== 'all') {
@@ -526,10 +546,10 @@ function Admin({ user }) {
           product.id,
           product.name,
           product.description,
-          product.brand,
+          getBrandPath(product),
           product.content,
           product.color,
-          product.category,
+          getCategoryPath(product),
           product.sku,
           product.barcode,
           product.price,
@@ -552,9 +572,9 @@ function Admin({ user }) {
         case 'name':
           return String(product.name || '').toLowerCase();
         case 'category':
-          return String(product.category || '').toLowerCase();
+          return getCategoryPath(product).toLowerCase();
         case 'brand':
-          return String(product.brand || '').toLowerCase();
+          return getBrandPath(product).toLowerCase();
         case 'sku':
           return String(product.sku || '').toLowerCase();
         case 'barcode':
@@ -616,10 +636,10 @@ function Admin({ user }) {
     setTableEditForm({
       name: product.name || '',
       description: product.description || '',
-      brand: product.brand || '',
+      brand: getBrandPath(product),
       content: product.content || '',
       color: product.color || '',
-      category: product.category || '',
+      category: getCategoryPath(product),
       sku: product.sku || '',
       barcode: product.barcode || '',
       price: String(product.price ?? ''),
@@ -728,7 +748,7 @@ function Admin({ user }) {
     return {
       name: cleanName,
       description: cleanDescription,
-      brand: baseProduct.brand || '',
+      brand: getBrandPath(baseProduct) || '',
       content: baseProduct.content || '',
       color: baseProduct.color || '',
       price,
@@ -800,7 +820,7 @@ function Admin({ user }) {
     setQuickEditId(product.id);
     setQuickEditForm({
       name: product.name || '',
-      category: product.category || '',
+      category: getCategoryPath(product),
       price: String(product.price ?? ''),
       stock: String(product.stock ?? 0),
       image: product.image || ''
@@ -1583,8 +1603,8 @@ function Admin({ user }) {
                         return (
                           <tr key={product.id}>
                             <td>{isEditingRow ? <input className="table-edit-input" value={tableEditForm.name} onChange={(e) => handleTableEditChange('name', e.target.value)} /> : product.name}</td>
-                            <td>{isEditingRow ? <input className="table-edit-input" value={tableEditForm.brand} onChange={(e) => handleTableEditChange('brand', e.target.value)} /> : (product.brand || '-')}</td>
-                            <td>{isEditingRow ? <input className="table-edit-input" list="admin-product-category-list" value={tableEditForm.category} onChange={(e) => handleTableEditChange('category', e.target.value)} /> : product.category}</td>
+                            <td>{isEditingRow ? <input className="table-edit-input" value={tableEditForm.brand} onChange={(e) => handleTableEditChange('brand', e.target.value)} /> : (getBrandPath(product) || '-')}</td>
+                            <td>{isEditingRow ? <input className="table-edit-input" list="admin-product-category-list" value={tableEditForm.category} onChange={(e) => handleTableEditChange('category', e.target.value)} /> : getCategoryPath(product)}</td>
                             <td>{isEditingRow ? <input className="table-edit-input" type="number" min="0" step="0.01" value={tableEditForm.price} onChange={(e) => handleTableEditChange('price', e.target.value)} /> : formatCurrencyColored(product.price)}</td>
                             <td>{isEditingRow ? <input className="table-edit-input" type="number" min="0" step="0.01" value={tableEditForm.mrp} onChange={(e) => handleTableEditChange('mrp', e.target.value)} /> : formatCurrencyColored(product.mrp)}</td>
                             <td>{isEditingRow ? <input className="table-edit-input" type="number" min="0" step="1" value={tableEditForm.stock} onChange={(e) => handleTableEditChange('stock', e.target.value)} /> : <span className={product.stock < 10 ? 'low-stock' : ''}>{product.stock}</span>}</td>
@@ -1725,8 +1745,8 @@ function Admin({ user }) {
                     ? {
                         image: quickEditForm.image,
                         name: quickEditForm.name || product.name,
-                        category: quickEditForm.category || product.category,
-                        brand: product.brand
+                        category: quickEditForm.category || getCategoryPath(product),
+                        brand: getBrandPath(product)
                       }
                     : product;
                   return (
@@ -1789,7 +1809,7 @@ function Admin({ user }) {
                       ) : (
                         <>
                           <h3>{product.name}</h3>
-                          <p className="product-meta">{product.category}</p>
+                          <p className="product-meta">{getCategoryPath(product)}</p>
                           <p className="product-meta">{formatCurrencyColored(product.price)}</p>
                           <p className={product.stock < 10 ? 'product-stock-label low-stock' : 'product-stock-label'}>
                             Stock: {product.stock}

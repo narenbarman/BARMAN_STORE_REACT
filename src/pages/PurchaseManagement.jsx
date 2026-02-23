@@ -9,6 +9,8 @@ import useIsMobile from '../hooks/useIsMobile';
 import MobileBottomSheet from '../components/mobile/MobileBottomSheet';
 import './PurchaseManagement.css';
 
+const GST_RATE_OPTIONS = [0, 5, 18];
+
 function PurchaseManagement({ user }) {
   const isMobile = useIsMobile();
   const LOCAL_LEDGER_KEY = 'purchase_distributor_ledger_local_entries';
@@ -49,6 +51,10 @@ function PurchaseManagement({ user }) {
   const getNumericValue = (value) => {
     const num = Number(value);
     return Number.isFinite(num) ? num : null;
+  };
+  const normalizeGstRateOption = (value) => {
+    const numeric = toNumber(value);
+    return GST_RATE_OPTIONS.includes(numeric) ? numeric : 5;
   };
   const normalizeTextKey = (value) => String(value || '').trim().toLowerCase();
   const getEntryTypeKey = (entry) => String(entry?.type || entry?.transaction_type || '').trim().toLowerCase();
@@ -643,7 +649,7 @@ function PurchaseManagement({ user }) {
         uom: 'pcs',
         unit_price: 0,
         rate: 0,
-        gst_rate: 5,
+        gst_rate: normalizeGstRateOption(5),
         discount_type: 'percent',
         discount_value: 0
       }]
@@ -692,7 +698,8 @@ function PurchaseManagement({ user }) {
 
   const handleOrderItemChange = async (index, field, value) => {
     const items = [...orderFormData.items];
-    items[index][field] = value;
+    const nextValue = field === 'gst_rate' ? normalizeGstRateOption(value) : value;
+    items[index][field] = nextValue;
 
     if (field === 'product_id') {
       const selectedProductId = String(value || '');
@@ -724,7 +731,7 @@ function PurchaseManagement({ user }) {
           if (!current || String(current.product_id) !== selectedProductId) return prev;
 
           const suggestedRate = toNumber(suggestion.rate ?? suggestion.unit_price ?? current.rate ?? current.unit_price);
-          const suggestedGst = toNumber(suggestion.gst_rate ?? current.gst_rate ?? 5);
+          const suggestedGst = normalizeGstRateOption(suggestion.gst_rate ?? current.gst_rate ?? 5);
           const suggestedDate = suggestion.created_at ? new Date(suggestion.created_at).toLocaleDateString() : '';
           const suggestedPo = suggestion.po_number || 'last PO';
 
@@ -895,7 +902,7 @@ function PurchaseManagement({ user }) {
         uom: item.uom || 'pcs',
         unit_price: toNumber(item.unit_price ?? item.rate),
         rate: toNumber(item.rate ?? item.unit_price),
-        gst_rate: toNumber(item.gst_rate),
+        gst_rate: normalizeGstRateOption(item.gst_rate),
         discount_type: item.discount_type === 'fixed' ? 'fixed' : 'percent',
         discount_value: toNumber(item.discount_value),
         last_purchase_hint: ''
@@ -1106,7 +1113,20 @@ function PurchaseManagement({ user }) {
         billNumber = String(inputValue).trim();
       }
 
-      await purchaseOrdersApi.updateStatus(orderId, status, billNumber ? { bill_number: billNumber } : {});
+      const statusResult = await purchaseOrdersApi.updateStatus(orderId, status, billNumber ? { bill_number: billNumber } : {});
+      if (status === 'confirmed' && Number(statusResult?.cap_applied_count || 0) > 0) {
+        const lines = (statusResult.cap_adjustments || [])
+          .slice(0, 5)
+          .map((row) => {
+            const name = String(row?.product_name || row?.product_id || 'Product');
+            return `- ${name}: final stock ${row?.final_stock}`;
+          });
+        const moreCount = Math.max(0, Number(statusResult.cap_applied_count || 0) - lines.length);
+        const moreText = moreCount > 0 ? `\n...and ${moreCount} more item(s)` : '';
+        window.alert(
+          `Stock cap (${Number(statusResult?.stock_cap || 50)}) was applied to ${statusResult.cap_applied_count} item(s).\n\n${lines.join('\n')}${moreText}`
+        );
+      }
       if (status === 'confirmed') {
         try {
           const detailedOrder = await purchaseOrdersApi.getById(orderId);
@@ -1133,7 +1153,7 @@ function PurchaseManagement({ user }) {
       fetchOrders();
       fetchDistributorLedger();
     } catch (err) {
-      setError('Failed to update status');
+      setError(err?.message || 'Failed to update status');
     }
   };
 
@@ -2140,13 +2160,16 @@ function PurchaseManagement({ user }) {
                               </div>
                               <div className="item-field gst">
                                 <label>GST %</label>
-                                <input
-                                  type="number"
-                                  step="0.01"
-                                  min="0"
-                                  value={item.gst_rate ?? 0}
+                                <select
+                                  value={normalizeGstRateOption(item.gst_rate)}
                                   onChange={e => handleOrderItemChange(index, 'gst_rate', toNumber(e.target.value))}
-                                />
+                                >
+                                  {GST_RATE_OPTIONS.map((rate) => (
+                                    <option key={`gst-${rate}`} value={rate}>
+                                      {rate}%
+                                    </option>
+                                  ))}
+                                </select>
                               </div>
                             </>
                           )}

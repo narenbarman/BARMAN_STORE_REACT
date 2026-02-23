@@ -29,6 +29,10 @@ const AUTO_BACKUP_ON_STARTUP = parseBooleanEnv(process.env.AUTO_BACKUP_ON_STARTU
 const AUTO_BACKUP_INTERVAL_MINUTES = Math.max(1, Number(process.env.AUTO_BACKUP_INTERVAL_MINUTES || 360));
 const AUTO_BACKUP_RETENTION_COUNT = Math.max(0, Number(process.env.AUTO_BACKUP_RETENTION_COUNT || 30));
 const AUTO_BACKUP_RETENTION_DAYS = Math.max(0, Number(process.env.AUTO_BACKUP_RETENTION_DAYS || 30));
+const PURCHASE_STOCK_CAP_RAW = Number(process.env.PURCHASE_STOCK_CAP || 50);
+const PURCHASE_STOCK_CAP = Number.isFinite(PURCHASE_STOCK_CAP_RAW) && PURCHASE_STOCK_CAP_RAW >= 0
+  ? PURCHASE_STOCK_CAP_RAW
+  : 50;
 const AUTO_BACKUP_INTERVAL_MS = AUTO_BACKUP_INTERVAL_MINUTES * 60 * 1000;
 let autoBackupTimer = null;
 let autoBackupRunning = false;
@@ -873,7 +877,9 @@ const PRODUCT_IMPORT_HEADERS = [
   'barcode',
   'name',
   'category',
+  'subcategory',
   'brand',
+  'sub_brand',
   'content',
   'color',
   'uom',
@@ -893,7 +899,9 @@ const PRODUCT_IMPORT_SAMPLE = {
   barcode: '',
   name: 'Sample Product',
   category: 'Groceries',
+  subcategory: '',
   brand: 'BrandX',
+  sub_brand: '',
   content: '250g',
   color: '',
   uom: 'pcs',
@@ -955,9 +963,43 @@ const normalizeBooleanish = (value, fallback = 1) => {
   return fallback;
 };
 
+const HIERARCHY_SEPARATOR = '->';
+const splitHierarchyInput = (value) => {
+  const raw = String(value ?? '').trim();
+  if (!raw) return { parent: '', child: '', invalid: false };
+  if (!raw.includes(HIERARCHY_SEPARATOR)) {
+    return { parent: raw, child: '', invalid: false };
+  }
+  const parts = raw.split(HIERARCHY_SEPARATOR).map((part) => String(part || '').trim());
+  if (parts.length !== 2 || !parts[0] || !parts[1]) {
+    return { parent: raw, child: '', invalid: true };
+  }
+  return { parent: parts[0], child: parts[1], invalid: false };
+};
+
+const composeHierarchyPath = (parent, child) => {
+  const root = String(parent || '').trim();
+  const leaf = String(child || '').trim();
+  if (!root) return '';
+  if (!leaf) return root;
+  return `${root} ${HIERARCHY_SEPARATOR} ${leaf}`;
+};
+
 const normalizeProductRecord = (row) => {
   if (!row) return null;
   const out = { ...row };
+  const categoryParsed = splitHierarchyInput(out.category);
+  const explicitSubcategory = String(out.subcategory || '').trim();
+  out.category = String(categoryParsed.parent || out.category || '').trim();
+  out.subcategory = explicitSubcategory || categoryParsed.child || '';
+
+  const brandParsed = splitHierarchyInput(out.brand);
+  const explicitSubBrand = String(out.sub_brand || '').trim();
+  out.brand = String(brandParsed.parent || out.brand || '').trim();
+  out.sub_brand = explicitSubBrand || brandParsed.child || '';
+
+  out.category_path = composeHierarchyPath(out.category, out.subcategory);
+  out.brand_path = composeHierarchyPath(out.brand, out.sub_brand);
   out.defaultDiscount = Number(out.default_discount ?? 0);
   out.discountType = String(out.discount_type || 'fixed');
   out.is_active = Number(out.is_active ?? 1);
@@ -967,10 +1009,66 @@ const normalizeProductRecord = (row) => {
 const normalizeProductInput = (input = {}, current = null) => {
   const body = input || {};
   const existing = current || {};
+  const hasOwn = (obj, key) => Object.prototype.hasOwnProperty.call(obj, key);
+  const hasCategoryInput = hasOwn(body, 'category');
+  const hasBrandInput = hasOwn(body, 'brand');
+  const hasSubcategoryInput = hasOwn(body, 'subcategory') || hasOwn(body, 'sub_category');
+  const hasSubBrandInput = hasOwn(body, 'sub_brand') || hasOwn(body, 'subBrand') || hasOwn(body, 'subbrand');
+
   const name = body.name ?? existing.name ?? '';
-  const category = body.category ?? existing.category ?? 'Groceries';
+  const rawCategoryInput = body.category ?? existing.category ?? 'Groceries';
   const description = body.description ?? existing.description ?? null;
-  const brand = body.brand ?? existing.brand ?? null;
+  const rawBrandInput = body.brand ?? existing.brand ?? null;
+  const existingSubcategory = String(existing.subcategory || '').trim();
+  const existingSubBrand = String(existing.sub_brand || '').trim();
+  const rawSubcategoryInput = body.subcategory ?? body.sub_category ?? (hasCategoryInput ? '' : existingSubcategory);
+  const rawSubBrandInput = body.sub_brand ?? body.subBrand ?? body.subbrand ?? (hasBrandInput ? '' : existingSubBrand);
+
+  const parsedCategory = splitHierarchyInput(rawCategoryInput);
+  const parsedBrand = splitHierarchyInput(rawBrandInput);
+  const categoryInputTrimmed = String(parsedCategory.parent || '').trim();
+  const brandInputTrimmed = String(parsedBrand.parent || '').trim();
+
+  const categoryFromInput = categoryInputTrimmed || 'Groceries';
+  const brandFromInput = brandInputTrimmed || null;
+
+  const explicitSubcategory = String(rawSubcategoryInput || '').trim();
+  let subcategory = explicitSubcategory;
+  if (hasSubcategoryInput && explicitSubcategory) {
+    subcategory = explicitSubcategory;
+  } else if (parsedCategory.child) {
+    subcategory = parsedCategory.child;
+  } else if (hasSubcategoryInput) {
+    subcategory = '';
+  } else if (!hasCategoryInput) {
+    subcategory = existingSubcategory;
+  } else {
+    subcategory = '';
+  }
+
+  const explicitSubBrand = String(rawSubBrandInput || '').trim();
+  let subBrand = explicitSubBrand;
+  if (hasSubBrandInput && explicitSubBrand) {
+    subBrand = explicitSubBrand;
+  } else if (parsedBrand.child) {
+    subBrand = parsedBrand.child;
+  } else if (hasSubBrandInput) {
+    subBrand = '';
+  } else if (!hasBrandInput) {
+    subBrand = existingSubBrand;
+  } else {
+    subBrand = '';
+  }
+
+  const categoryPath = composeHierarchyPath(categoryFromInput, subcategory);
+  const brandPath = composeHierarchyPath(brandFromInput, subBrand);
+  const categoryFormatError = parsedCategory.invalid
+    ? 'category must be "Parent -> Child" when using ->'
+    : null;
+  const brandFormatError = parsedBrand.invalid
+    ? 'brand must be "Parent -> Child" when using ->'
+    : null;
+
   const content = body.content ?? existing.content ?? null;
   const color = body.color ?? existing.color ?? null;
   const priceRaw = body.price ?? existing.price ?? 0;
@@ -991,13 +1089,15 @@ const normalizeProductInput = (input = {}, current = null) => {
   const defaultDiscount = Number(defaultDiscountRaw || 0);
   const discountType = normalizeDiscountType(discountTypeRaw);
   const isActive = normalizeBooleanish(isActiveRaw, 1);
-  const sku = String(skuCandidate || '').trim() || generateSku(name, brand, content, mrp || price);
+  const sku = String(skuCandidate || '').trim() || generateSku(name, brandFromInput, content, mrp || price);
   const barcode = String(barcodeCandidate || '').trim() || null;
 
   return {
     name: String(name || '').trim(),
     description: description === null || description === undefined ? null : String(description).trim() || null,
-    brand: brand === null || brand === undefined ? null : String(brand).trim() || null,
+    brand: brandFromInput,
+    sub_brand: brandFromInput ? (subBrand || null) : null,
+    brand_path: brandPath || null,
     content: content === null || content === undefined ? null : String(content).trim() || null,
     color: color === null || color === undefined ? null : String(color).trim() || null,
     price,
@@ -1007,16 +1107,22 @@ const normalizeProductInput = (input = {}, current = null) => {
     barcode,
     image: normalizeHttpImageUrl(image),
     stock,
-    category: String(category || '').trim() || 'Groceries',
+    category: categoryFromInput,
+    subcategory: subcategory || null,
+    category_path: categoryPath || categoryFromInput,
     expiry_date: expiryDate ? String(expiryDate).slice(0, 10) : null,
     default_discount: defaultDiscount,
     discount_type: discountType,
     is_active: isActive,
+    category_format_error: categoryFormatError,
+    brand_format_error: brandFormatError,
   };
 };
 
 const validateProductPayload = (payload, { partial = false } = {}) => {
   const errors = [];
+  if (payload.category_format_error) errors.push(payload.category_format_error);
+  if (payload.brand_format_error) errors.push(payload.brand_format_error);
   if (!partial || payload.name !== undefined) {
     if (!String(payload.name || '').trim()) errors.push('name is required');
   }
@@ -1079,25 +1185,28 @@ const findProductConflict = (payload, { excludeId = null } = {}) => {
 
   const nameKey = normalizeTextKey(payload?.name);
   const brandKey = normalizeTextKey(payload?.brand);
+  const subBrandKey = normalizeTextKey(payload?.sub_brand);
   if (!nameKey) return null;
 
   const byNameBrand = excludeId
     ? dbAll(
-      `SELECT id, name, brand, price, mrp
+      `SELECT id, name, brand, sub_brand, price, mrp
        FROM products
        WHERE lower(trim(name)) = ?
          AND lower(trim(COALESCE(brand, ''))) = ?
+         AND lower(trim(COALESCE(sub_brand, ''))) = ?
          AND id <> ?
        ORDER BY id DESC`,
-      [nameKey, brandKey, Number(excludeId)]
+      [nameKey, brandKey, subBrandKey, Number(excludeId)]
     )
     : dbAll(
-      `SELECT id, name, brand, price, mrp
+      `SELECT id, name, brand, sub_brand, price, mrp
        FROM products
        WHERE lower(trim(name)) = ?
          AND lower(trim(COALESCE(brand, ''))) = ?
+         AND lower(trim(COALESCE(sub_brand, ''))) = ?
        ORDER BY id DESC`,
-      [nameKey, brandKey]
+      [nameKey, brandKey, subBrandKey]
     );
   if (!byNameBrand.length) return null;
 
@@ -1114,7 +1223,7 @@ const findProductConflict = (payload, { excludeId = null } = {}) => {
       severity: 'block',
       product_id: exact.id,
       product_name: exact.name,
-      message: `Exact duplicate exists (Product #${exact.id}: ${exact.name}) for name + brand + price + MRP`
+      message: `Exact duplicate exists (Product #${exact.id}: ${exact.name}) for name + brand/sub-brand + price + MRP`
     };
   }
 
@@ -1125,7 +1234,7 @@ const findProductConflict = (payload, { excludeId = null } = {}) => {
     severity: 'confirm',
     product_id: firstMatch.id,
     product_name: firstMatch.name,
-    message: `Identical product name + brand exists (Product #${firstMatch.id}: ${firstMatch.name}). Choose to allow or cancel.`
+    message: `Identical product name + brand/sub-brand exists (Product #${firstMatch.id}: ${firstMatch.name}). Choose to allow or cancel.`
   };
 };
 
@@ -1133,9 +1242,10 @@ const buildProductExactKey = (payload) => {
   const nameKey = normalizeTextKey(payload?.name);
   if (!nameKey) return '';
   const brandKey = normalizeTextKey(payload?.brand);
+  const subBrandKey = normalizeTextKey(payload?.sub_brand);
   const price = normalizeMoneyValue(payload?.price);
   const mrp = normalizeMoneyValue(payload?.mrp);
-  return `${nameKey}::${brandKey}::${price ?? ''}::${mrp ?? ''}`;
+  return `${nameKey}::${brandKey}::${subBrandKey}::${price ?? ''}::${mrp ?? ''}`;
 };
 
 const findExistingProductForImport = (row) => {
@@ -1280,12 +1390,13 @@ const applyProductImportBatch = ({ batchId, checksum, authUser, allowIdenticalRo
         if (row.action === 'create') {
           dbRun(
             `INSERT INTO products
-            (name, description, brand, content, color, price, mrp, uom, sku, barcode, image, stock, category, expiry_date, default_discount, discount_type, is_active)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+            (name, description, brand, sub_brand, content, color, price, mrp, uom, sku, barcode, image, stock, category, subcategory, expiry_date, default_discount, discount_type, is_active)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
             [
               payload.name,
               payload.description,
               payload.brand,
+              payload.sub_brand,
               payload.content,
               payload.color,
               payload.price,
@@ -1296,6 +1407,7 @@ const applyProductImportBatch = ({ batchId, checksum, authUser, allowIdenticalRo
               payload.image,
               payload.stock,
               payload.category,
+              payload.subcategory,
               payload.expiry_date,
               payload.default_discount,
               payload.discount_type,
@@ -1307,12 +1419,13 @@ const applyProductImportBatch = ({ batchId, checksum, authUser, allowIdenticalRo
         } else {
           dbRun(
             `UPDATE products SET
-             name=?, description=?, brand=?, content=?, color=?, price=?, mrp=?, uom=?, sku=?, barcode=?, image=?, stock=?, category=?, expiry_date=?, default_discount=?, discount_type=?, is_active=?
+             name=?, description=?, brand=?, sub_brand=?, content=?, color=?, price=?, mrp=?, uom=?, sku=?, barcode=?, image=?, stock=?, category=?, subcategory=?, expiry_date=?, default_discount=?, discount_type=?, is_active=?
              WHERE id=?`,
             [
               payload.name,
               payload.description,
               payload.brand,
+              payload.sub_brand,
               payload.content,
               payload.color,
               payload.price,
@@ -1323,6 +1436,7 @@ const applyProductImportBatch = ({ batchId, checksum, authUser, allowIdenticalRo
               payload.image,
               payload.stock,
               payload.category,
+              payload.subcategory,
               payload.expiry_date,
               payload.default_discount,
               payload.discount_type,
@@ -1381,7 +1495,9 @@ const toProductExportRow = (row) => ({
   barcode: row.barcode || '',
   name: row.name || '',
   category: row.category || '',
+  subcategory: row.subcategory || '',
   brand: row.brand || '',
+  sub_brand: row.sub_brand || '',
   content: row.content || '',
   color: row.color || '',
   uom: row.uom || 'pcs',
@@ -1600,6 +1716,7 @@ const initDB = () => {
       name TEXT NOT NULL,
       description TEXT,
       brand TEXT,
+      sub_brand TEXT,
       content TEXT,
       color TEXT,
       price REAL NOT NULL,
@@ -1610,6 +1727,7 @@ const initDB = () => {
       image TEXT,
       stock INTEGER DEFAULT 0,
       category TEXT NOT NULL,
+      subcategory TEXT,
       expiry_date DATE,
       default_discount REAL DEFAULT 0,
       discount_type TEXT DEFAULT 'fixed',
@@ -1722,6 +1840,7 @@ const initDB = () => {
       notes TEXT,
       expected_delivery DATE,
       invoice_number TEXT,
+      stock_applied_on_confirm INTEGER DEFAULT 0,
       created_by INTEGER,
       created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
       updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
@@ -1948,12 +2067,14 @@ const initDB = () => {
   `);
 
   alterTableSafe(`ALTER TABLE products ADD COLUMN brand TEXT`);
+  alterTableSafe(`ALTER TABLE products ADD COLUMN sub_brand TEXT`);
   alterTableSafe(`ALTER TABLE products ADD COLUMN content TEXT`);
   alterTableSafe(`ALTER TABLE products ADD COLUMN color TEXT`);
   alterTableSafe(`ALTER TABLE products ADD COLUMN mrp REAL`);
   alterTableSafe(`ALTER TABLE products ADD COLUMN uom TEXT DEFAULT 'pcs'`);
   alterTableSafe(`ALTER TABLE products ADD COLUMN sku TEXT`);
   alterTableSafe(`ALTER TABLE products ADD COLUMN barcode TEXT`);
+  alterTableSafe(`ALTER TABLE products ADD COLUMN subcategory TEXT`);
   alterTableSafe(`ALTER TABLE products ADD COLUMN expiry_date DATE`);
   alterTableSafe(`ALTER TABLE products ADD COLUMN default_discount REAL DEFAULT 0`);
   alterTableSafe(`ALTER TABLE products ADD COLUMN discount_type TEXT DEFAULT 'fixed'`);
@@ -2002,6 +2123,7 @@ const initDB = () => {
   alterTableSafe(`ALTER TABLE purchase_orders ADD COLUMN tax_amount REAL DEFAULT 0`);
   alterTableSafe(`ALTER TABLE purchase_orders ADD COLUMN total_amount REAL DEFAULT 0`);
   alterTableSafe(`ALTER TABLE purchase_orders ADD COLUMN bill_number TEXT`);
+  alterTableSafe(`ALTER TABLE purchase_orders ADD COLUMN stock_applied_on_confirm INTEGER DEFAULT 0`);
   alterTableSafe(`ALTER TABLE distributor_ledger ADD COLUMN source TEXT`);
   alterTableSafe(`ALTER TABLE distributor_ledger ADD COLUMN source_id TEXT`);
   alterTableSafe(`ALTER TABLE distributor_ledger ADD COLUMN transaction_date DATE`);
@@ -2014,6 +2136,34 @@ const initDB = () => {
   alterTableSafe(`ALTER TABLE purchase_order_items ADD COLUMN taxable_value REAL DEFAULT 0`);
   alterTableSafe(`ALTER TABLE purchase_order_items ADD COLUMN tax_amount REAL DEFAULT 0`);
   alterTableSafe(`ALTER TABLE purchase_order_items ADD COLUMN line_total REAL DEFAULT 0`);
+  // Backfill legacy "Parent -> Child" text into dedicated hierarchy columns.
+  try {
+    dbRun(
+      `UPDATE products
+       SET subcategory = trim(substr(category, instr(category, '->') + 2)),
+           category = trim(substr(category, 1, instr(category, '->') - 1))
+       WHERE instr(category, '->') > 0
+         AND (subcategory IS NULL OR trim(subcategory) = '')
+         AND trim(substr(category, 1, instr(category, '->') - 1)) <> ''
+         AND trim(substr(category, instr(category, '->') + 2)) <> ''`
+    );
+  } catch (_) {
+    // ignore backfill failures
+  }
+  try {
+    dbRun(
+      `UPDATE products
+       SET sub_brand = trim(substr(brand, instr(brand, '->') + 2)),
+           brand = trim(substr(brand, 1, instr(brand, '->') - 1))
+       WHERE brand IS NOT NULL
+         AND instr(brand, '->') > 0
+         AND (sub_brand IS NULL OR trim(sub_brand) = '')
+         AND trim(substr(brand, 1, instr(brand, '->') - 1)) <> ''
+         AND trim(substr(brand, instr(brand, '->') + 2)) <> ''`
+    );
+  } catch (_) {
+    // ignore backfill failures
+  }
 
   // Backfill from legacy "password" column if present.
   try {
@@ -3759,12 +3909,13 @@ app.post('/api/products', requireAdmin, (req, res) => {
     const categoryName = resolveOrCreateCategoryName(body.category || 'Groceries');
     const result = dbRun(
       `INSERT INTO products
-      (name, description, brand, content, color, price, mrp, uom, sku, barcode, image, stock, category, expiry_date, default_discount, discount_type, is_active)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      (name, description, brand, sub_brand, content, color, price, mrp, uom, sku, barcode, image, stock, category, subcategory, expiry_date, default_discount, discount_type, is_active)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       [
         body.name,
         body.description || null,
         body.brand || null,
+        body.sub_brand || null,
         body.content || null,
         body.color || null,
         Number(body.price || 0),
@@ -3775,6 +3926,7 @@ app.post('/api/products', requireAdmin, (req, res) => {
         body.image || null,
         Number(body.stock || 0),
         categoryName,
+        body.subcategory || null,
         body.expiry_date || null,
         Number(body.default_discount || 0),
         body.discount_type || 'fixed',
@@ -3814,12 +3966,13 @@ app.put('/api/products/:id(\\d+)', requireAdmin, (req, res) => {
     const categoryName = resolveOrCreateCategoryName(body.category || current.category || 'Groceries');
     dbRun(
       `UPDATE products SET
-       name=?, description=?, brand=?, content=?, color=?, price=?, mrp=?, uom=?, sku=?, barcode=?, image=?, stock=?, category=?, expiry_date=?, default_discount=?, discount_type=?, is_active=?
+       name=?, description=?, brand=?, sub_brand=?, content=?, color=?, price=?, mrp=?, uom=?, sku=?, barcode=?, image=?, stock=?, category=?, subcategory=?, expiry_date=?, default_discount=?, discount_type=?, is_active=?
        WHERE id=?`,
       [
         body.name,
         body.description,
         body.brand,
+        body.sub_brand,
         body.content,
         body.color,
         Number(body.price),
@@ -3830,6 +3983,7 @@ app.put('/api/products/:id(\\d+)', requireAdmin, (req, res) => {
         body.image,
         Number(body.stock),
         categoryName,
+        body.subcategory,
         body.expiry_date,
         Number(body.default_discount || 0),
         body.discount_type || 'fixed',
@@ -5212,19 +5366,93 @@ app.put('/api/purchase-orders/:id/status', (req, res) => {
     if (!order) return res.status(404).json({ error: 'Purchase order not found' });
 
     if (status === 'confirmed') {
-      dbRun(
-        `UPDATE purchase_orders
-         SET status = ?,
-             bill_number = COALESCE(?, bill_number),
-             invoice_number = COALESCE(?, invoice_number),
-             updated_at = CURRENT_TIMESTAMP
-         WHERE id = ?`,
-        [status, billNumber || null, billNumber || null, req.params.id]
-      );
+      const stockAlreadyApplied = Number(order.stock_applied_on_confirm || 0) === 1;
+      const capAdjustments = [];
+
+      if (!stockAlreadyApplied) {
+        const items = dbAll(`SELECT * FROM purchase_order_items WHERE order_id = ?`, [req.params.id]);
+        const tx = db.transaction(() => {
+          items.forEach((item) => {
+            const productId = Number(item.product_id || 0);
+            if (!productId) return;
+            const product = dbGet(`SELECT id, stock FROM products WHERE id = ?`, [productId]);
+            if (!product) return;
+
+            const orderedQty = Math.max(0, Number(item.quantity || 0));
+            const beforeStock = Number(product.stock || 0);
+            const intendedStock = beforeStock + orderedQty;
+            const finalStock = Math.min(PURCHASE_STOCK_CAP, Math.max(0, intendedStock));
+            const quantityChange = finalStock - beforeStock;
+            const capHit = intendedStock > PURCHASE_STOCK_CAP || beforeStock > PURCHASE_STOCK_CAP;
+
+            if (quantityChange !== 0) {
+              dbRun(`UPDATE products SET stock = ? WHERE id = ?`, [finalStock, productId]);
+              const noteLines = ['Auto stock update on PO confirmation'];
+              if (capHit) {
+                noteLines.push(`Stock cap ${PURCHASE_STOCK_CAP} applied (intended ${intendedStock}, final ${finalStock})`);
+              }
+              logStockLedger({
+                productId,
+                transactionType: quantityChange >= 0 ? 'PURCHASE' : 'ADJUSTMENT',
+                quantityChange,
+                previousBalance: beforeStock,
+                newBalance: finalStock,
+                referenceType: 'PO_CONFIRM',
+                referenceId: String(req.params.id),
+                userId: req.body?.updated_by || req.body?.created_by || null,
+                notes: noteLines.join('. '),
+              });
+            }
+
+            if (capHit) {
+              capAdjustments.push({
+                product_id: productId,
+                product_name: item.product_name || null,
+                ordered_quantity: orderedQty,
+                before_stock: beforeStock,
+                intended_stock: intendedStock,
+                final_stock: finalStock,
+                discarded_quantity: Math.max(0, intendedStock - finalStock),
+              });
+            }
+          });
+
+          dbRun(
+            `UPDATE purchase_orders
+             SET status = ?,
+                 bill_number = COALESCE(?, bill_number),
+                 invoice_number = COALESCE(?, invoice_number),
+                 stock_applied_on_confirm = 1,
+                 updated_at = CURRENT_TIMESTAMP
+             WHERE id = ?`,
+            [status, billNumber || null, billNumber || null, req.params.id]
+          );
+        });
+        tx();
+      } else {
+        dbRun(
+          `UPDATE purchase_orders
+           SET status = ?,
+               bill_number = COALESCE(?, bill_number),
+               invoice_number = COALESCE(?, invoice_number),
+               updated_at = CURRENT_TIMESTAMP
+           WHERE id = ?`,
+          [status, billNumber || null, billNumber || null, req.params.id]
+        );
+      }
+
+      return res.json({
+        success: true,
+        stock_cap: PURCHASE_STOCK_CAP,
+        stock_applied: !stockAlreadyApplied,
+        stock_already_applied: stockAlreadyApplied,
+        cap_applied_count: capAdjustments.length,
+        cap_adjustments: capAdjustments,
+      });
     } else {
       dbRun(`UPDATE purchase_orders SET status = ?, updated_at=CURRENT_TIMESTAMP WHERE id = ?`, [status, req.params.id]);
+      return res.json({ success: true });
     }
-    return res.json({ success: true });
   } catch (error) {
     return res.status(500).json({ error: error.message });
   }
@@ -5236,6 +5464,7 @@ app.post('/api/purchase-orders/:id/receive', (req, res) => {
     if (!order) return res.status(404).json({ error: 'Purchase order not found' });
     const b = req.body || {};
     const items = Array.isArray(b.items) ? b.items : [];
+    const shouldApplyStockOnReceive = Number(order.stock_applied_on_confirm || 0) !== 1;
     const tx = db.transaction(() => {
       items.forEach((it) => {
         const item = dbGet(`SELECT * FROM purchase_order_items WHERE id = ? AND order_id = ?`, [it.item_id, req.params.id]);
@@ -5250,7 +5479,7 @@ app.post('/api/purchase-orders/:id/receive', (req, res) => {
           unitPrice,
           item.id,
         ]);
-        if (item.product_id) {
+        if (item.product_id && shouldApplyStockOnReceive) {
           const before = dbGet(`SELECT stock FROM products WHERE id = ?`, [item.product_id])?.stock || 0;
           dbRun(`UPDATE products SET stock = stock + ? WHERE id = ?`, [qty, item.product_id]);
           const after = dbGet(`SELECT stock FROM products WHERE id = ?`, [item.product_id])?.stock || 0;
