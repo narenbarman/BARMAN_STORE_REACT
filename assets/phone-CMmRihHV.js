@@ -1,0 +1,1 @@
+const s="Phone number must be 10 digits (India format, optional +91 prefix).",e=i=>{const n=String(i??"").trim();if(!n)return"";let t=n.replace(/\D/g,"");return t?(t.startsWith("00")&&(t=t.slice(2)),t.length===12&&t.startsWith("91")?t=t.slice(2):t.length===11&&t.startsWith("0")&&(t=t.slice(1)),t.length===10?t:""):""},r=i=>e(i).length===10;export{s as P,r as i,e as n};
