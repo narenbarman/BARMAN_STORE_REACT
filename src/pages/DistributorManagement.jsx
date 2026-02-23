@@ -1,6 +1,7 @@
 import { useState, useEffect } from 'react';
 import { Plus, Edit, Trash2, X, Search, Phone, MapPin, Calendar, Package } from 'lucide-react';
 import { distributorsApi } from '../services/api';
+import { isValidIndianPhone, normalizeIndianPhone, PHONE_POLICY_MESSAGE } from '../utils/phone';
 import './DistributorManagement.css';
 
 function DistributorManagement({ user }) {
@@ -60,10 +61,17 @@ function DistributorManagement({ user }) {
     setError('');
 
     try {
+      if (formData.phone && !isValidIndianPhone(formData.phone)) {
+        setError(PHONE_POLICY_MESSAGE);
+        return;
+      }
       const distributorData = {
         name: formData.name.trim(),
         salesman_name: formData.salesman_name.trim(),
-        contacts: JSON.stringify({ phone: formData.phone, email: formData.email }),
+        contacts: JSON.stringify({
+          phone: formData.phone ? normalizeIndianPhone(formData.phone) : '',
+          email: formData.email
+        }),
         address: formData.address.trim(),
         products_supplied: formData.products_supplied.trim(),
         order_day: formData.order_day,

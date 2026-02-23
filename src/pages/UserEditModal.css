@@ -81,6 +81,18 @@
   box-sizing: border-box;
 }
 
+.user-edit-form textarea {
+  width: 100%;
+  padding: 10px 14px;
+  border: 1px solid #d1d5db;
+  border-radius: 8px;
+  font-size: 0.95rem;
+  transition: border-color 0.2s, box-shadow 0.2s;
+  box-sizing: border-box;
+  resize: vertical;
+  min-height: 120px;
+}
+
 .user-edit-form input:focus,
 .user-edit-form select:focus {
   outline: none;
@@ -104,6 +116,24 @@
   margin-top: 6px;
   font-size: 0.8rem;
   color: #64748b;
+}
+
+.user-static-summary {
+  border: 1px solid #e2e8f0;
+  border-radius: 10px;
+  padding: 10px 12px;
+  margin-bottom: 16px;
+  background: #f8fafc;
+}
+
+.user-static-summary p {
+  margin: 0 0 8px;
+  color: #334155;
+  font-size: 0.9rem;
+}
+
+.user-static-summary p:last-child {
+  margin-bottom: 0;
 }
 
 .form-actions {
@@ -163,6 +193,43 @@
 .cancel-btn:disabled {
   opacity: 0.6;
   cursor: not-allowed;
+}
+
+.notification-manager {
+  border: 1px solid #e2e8f0;
+  border-radius: 10px;
+  padding: 12px;
+  background: #f8fafc;
+}
+
+.notification-actions-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 10px;
+}
+
+.notification-actions-row .cancel-btn,
+.notification-actions-row .submit-btn {
+  min-height: 40px;
+  padding: 8px 12px;
+  font-size: 0.85rem;
+}
+
+.notification-link-btn {
+  text-decoration: none;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.notification-body {
+  margin-top: 8px;
+}
+
+.notification-meta {
+  margin-top: 8px;
+  word-break: break-word;
 }
 
 .error-message {

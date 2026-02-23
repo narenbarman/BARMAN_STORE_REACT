@@ -6,6 +6,7 @@ import {
 } from 'lucide-react';
 import { ordersApi, customersApi } from '../services/api';
 import { formatCurrency } from '../utils/formatters';
+import { isValidIndianPhone, normalizeIndianPhone, PHONE_POLICY_MESSAGE } from '../utils/phone';
 import './Checkout.css';
 
 // Generate session ID for guest users
@@ -238,6 +239,9 @@ function Checkout() {
     setError(null);
 
     try {
+      if (!isValidIndianPhone(formData.customer_phone)) {
+        throw new Error(PHONE_POLICY_MESSAGE);
+      }
       const orderData = {
         items: cart.map(item => ({
           product_id: item.id,
@@ -246,7 +250,7 @@ function Checkout() {
         })),
         customer_name: formData.customer_name,
         customer_email: formData.customer_email,
-        customer_phone: formData.customer_phone,
+        customer_phone: normalizeIndianPhone(formData.customer_phone),
         shipping_address: {
           street: formData.street,
           city: formData.city,
@@ -422,14 +426,13 @@ function Checkout() {
 
               <div className="form-row two-col">
                 <div className="form-group">
-                  <label htmlFor="customer_email">Email Address *</label>
+                  <label htmlFor="customer_email">Email Address</label>
                   <input
                     type="email"
                     id="customer_email"
                     name="customer_email"
                     value={formData.customer_email}
                     onChange={handleInputChange}
-                    required
                     placeholder="john@example.com"
                   />
                 </div>

@@ -1,19 +1,8 @@
-import { useState } from 'react';
-import { Link, useNavigate } from 'react-router-dom';
+import { useEffect, useState } from 'react';
+import { Link, useLocation, useNavigate } from 'react-router-dom';
 import { authApi } from '../services/api';
+import { isValidIndianPhone, normalizeIndianPhone, PHONE_POLICY_MESSAGE } from '../utils/phone';
 import './login.css';
-
-// Phone number validation
-const normalizePhoneNumber = (phone) => {
-  const cleaned = String(phone || '').replace(/\D/g, '');
-  if (cleaned.length === 12 && cleaned.startsWith('91')) return cleaned.slice(2);
-  if (cleaned.length === 11 && cleaned.startsWith('1')) return cleaned.slice(1);
-  return cleaned;
-};
-
-const validatePhoneNumber = (phone) => {
-  return normalizePhoneNumber(phone).length === 10;
-};
 
 const validateEmail = (email) => {
   const re = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
@@ -34,13 +23,65 @@ function ChangePassword() {
   const [identifierType, setIdentifierType] = useState('email'); // 'email' or 'phone'
   const [email, setEmail] = useState('');
   const [phone, setPhone] = useState('');
+  const [identifierLocked, setIdentifierLocked] = useState(false);
   const [currentPassword, setCurrentPassword] = useState('');
   const [newPassword, setNewPassword] = useState('');
   const [confirmPassword, setConfirmPassword] = useState('');
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
   const [success, setSuccess] = useState('');
+  const location = useLocation();
   const navigate = useNavigate();
+
+  useEffect(() => {
+    let storedUser = null;
+    try {
+      const raw = localStorage.getItem('user');
+      storedUser = raw ? JSON.parse(raw) : null;
+    } catch (_) {
+      storedUser = null;
+    }
+
+    const params = new URLSearchParams(location.search);
+    const forcedFromQuery = params.get('force') === '1';
+    const forcedFromSession = Boolean(storedUser?.must_change_password);
+    const shouldLockIdentifier = forcedFromQuery || forcedFromSession;
+
+    const qpEmail = String(params.get('email') || '').trim().toLowerCase();
+    const qpPhone = normalizeIndianPhone(params.get('phone') || '');
+    const sessionEmail = String(storedUser?.email || '').trim().toLowerCase();
+    const sessionPhone = normalizeIndianPhone(storedUser?.phone || '');
+
+    if (qpEmail && validateEmail(qpEmail)) {
+      setIdentifierType('email');
+      setEmail(qpEmail);
+      setPhone('');
+      setIdentifierLocked(shouldLockIdentifier);
+      return;
+    }
+    if (sessionEmail && validateEmail(sessionEmail)) {
+      setIdentifierType('email');
+      setEmail(sessionEmail);
+      setPhone('');
+      setIdentifierLocked(shouldLockIdentifier);
+      return;
+    }
+    if (qpPhone) {
+      setIdentifierType('phone');
+      setPhone(qpPhone);
+      setEmail('');
+      setIdentifierLocked(shouldLockIdentifier);
+      return;
+    }
+    if (sessionPhone) {
+      setIdentifierType('phone');
+      setPhone(sessionPhone);
+      setEmail('');
+      setIdentifierLocked(shouldLockIdentifier);
+      return;
+    }
+    setIdentifierLocked(false);
+  }, [location.search]);
 
   const handleSubmit = async (e) => {
     e.preventDefault();
@@ -54,8 +95,8 @@ function ChangePassword() {
       setLoading(false);
       return;
     }
-    if (identifierType === 'phone' && !validatePhoneNumber(phone)) {
-      setError('Please enter a valid phone number (10-11 digits)');
+    if (identifierType === 'phone' && !isValidIndianPhone(phone)) {
+      setError(PHONE_POLICY_MESSAGE);
       setLoading(false);
       return;
     }
@@ -75,14 +116,34 @@ function ChangePassword() {
     try {
       await authApi.changePassword(
         identifierType === 'email' ? email : null,
-        identifierType === 'phone' ? normalizePhoneNumber(phone) : null,
+        identifierType === 'phone' ? normalizeIndianPhone(phone) : null,
         currentPassword,
-        newPassword
+        newPassword,
+        confirmPassword
       );
-      setSuccess('Password changed successfully! Redirecting to login...');
+      try {
+        const raw = localStorage.getItem('user');
+        const currentUser = raw ? JSON.parse(raw) : null;
+        if (currentUser && currentUser.must_change_password) {
+          const updated = { ...currentUser, must_change_password: false };
+          localStorage.setItem('user', JSON.stringify(updated));
+          window.dispatchEvent(new Event('user-updated'));
+        }
+      } catch (_) {
+        // Ignore local storage errors here.
+      }
+      setSuccess('Password changed successfully! This window will close.');
       setTimeout(() => {
-        navigate('/login');
-      }, 2000);
+        try {
+          window.open('', '_self');
+          window.close();
+        } catch (_) {
+          // Ignore close errors and fall back to navigation.
+        }
+        setTimeout(() => {
+          navigate('/login');
+        }, 250);
+      }, 1000);
     } catch (err) {
       setError(err.message);
     } finally {
@@ -105,6 +166,7 @@ function ChangePassword() {
               type="button"
               className={`toggle-btn ${identifierType === 'email' ? 'active' : ''}`}
               onClick={() => setIdentifierType('email')}
+              disabled={identifierLocked || loading}
             >
               Email
             </button>
@@ -112,6 +174,7 @@ function ChangePassword() {
               type="button"
               className={`toggle-btn ${identifierType === 'phone' ? 'active' : ''}`}
               onClick={() => setIdentifierType('phone')}
+              disabled={identifierLocked || loading}
             >
               Phone
             </button>
@@ -127,6 +190,7 @@ function ChangePassword() {
                 onChange={(e) => setEmail(e.target.value)}
                 placeholder="Enter your email"
                 required={identifierType === 'email'}
+                disabled={identifierLocked || loading}
               />
             </div>
           )}
@@ -141,6 +205,7 @@ function ChangePassword() {
                 onChange={(e) => setPhone(e.target.value)}
                 placeholder="Enter your phone (e.g., 123-456-7890)"
                 required={identifierType === 'phone'}
+                disabled={identifierLocked || loading}
               />
               <small style={{ color: 'var(--color-text)', opacity: 0.7 }}>
                 Enter your registered phone number (10 digits, optional +91 prefix)

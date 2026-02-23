@@ -1,12 +1,13 @@
 import { useState, useEffect, useRef } from 'react';
 import { useParams, useNavigate, Link, useLocation } from 'react-router-dom';
-import { ArrowLeft, Plus, DollarSign, CreditCard, RefreshCw, Printer, Upload, FileText, Eye, Download, MessageCircle } from 'lucide-react';
+import { ArrowLeft, Plus, DollarSign, CreditCard, RefreshCw, Printer, Upload, FileText, Eye, Download, MessageCircle, X } from 'lucide-react';
 import { creditApi, usersApi } from '../services/api';
-import { openWhatsApp } from '../utils/whatsapp';
+import { sendWhatsAppSmart } from '../utils/whatsapp';
 import * as info from './info';
 import { printHtmlDocument, escapeHtml } from '../utils/printService';
 import { createPdfDoc, addAutoTable, addPdfFooterWithPagination, savePdf, safeFileName } from '../utils/pdfService';
 import { formatCurrency, getSignedCurrencyClassName } from '../utils/formatters';
+import { buildCreditReportText, buildCreditEntryText, buildCreditTransactionText } from '../utils/messageTemplates';
 import './CreditHistory.css';
 
 // Currency format for PDF table and summary values.
@@ -406,45 +407,27 @@ function CreditHistory({ user }) {
       ? Number(allThroughPeriod[allThroughPeriod.length - 1].balance || 0)
       : 0;
 
-    const lines = [];
-    lines.push(info.TITLE || 'BARMAN STORE');
-    lines.push('');
-    lines.push(`Credit Report for: ${customer?.name || 'Customer'}`);
-    lines.push(`Date Range: ${from} to ${to}`);
-    lines.push(`Generated: ${new Date().toLocaleString()}`);
-    lines.push('');
-    if (!transactions || transactions.length === 0) {
-      lines.push('No transactions in this range.');
-      lines.push(`Period Ending Balance: ${formatCurrency(periodEndingBalance)}`);
-      lines.push(`Current Day Balance: ${formatCurrency(parseFloat(balance || 0))}`);
-    } else {
-      lines.push('Transactions:');
-      let totalGiven = 0;
-      let totalPayment = 0;
-      transactions.forEach((t) => {
-        const date = formatTransactionDate(t);
-        const typeLabel = getTypeLabel(t.type);
-        const amount = Number(t.amount) || 0;
-        if (t.type === 'given') totalGiven += amount;
-        else if (t.type === 'payment') totalPayment += amount;
-        const desc = t.reference ? `${t.description || ''} (${t.reference})`.trim() : (t.description || '-');
-        lines.push(`- ${date} | ${typeLabel} | ${formatCurrency(amount)} | Balance: ${formatCurrency(Number(t.balance || 0))}`);
-        lines.push(`  Desc: ${desc}`);
-      });
-      lines.push('');
-      lines.push(`Total Given: ${formatCurrency(totalGiven)}`);
-      lines.push(`Total Payment: ${formatCurrency(totalPayment)}`);
-      lines.push(`Net Change: ${formatCurrency(totalGiven - totalPayment)}`);
-      lines.push(`Period Ending Balance: ${formatCurrency(periodEndingBalance)}`);
-      lines.push(`Current Day Balance: ${formatCurrency(parseFloat(balance || 0))}`);
-    }
-    lines.push('');
-    if (info.ONLINE_STORE_URL) {
-      lines.push(`Visit online: ${info.ONLINE_STORE_URL}`);
-      lines.push('');
-    }
-    lines.push('Thank you for shopping with us.');
-    return lines.join('\n');
+    const normalizedTransactions = (transactions || []).map((t) => ({
+      dateLabel: formatTransactionDate(t),
+      typeLabel: getTypeLabel(t.type),
+      type: t.type,
+      amount: Number(t.amount) || 0,
+      balance: Number(t.balance || 0),
+      description: t.reference ? `${t.description || ''} (${t.reference})`.trim() : (t.description || '-')
+    }));
+
+    return buildCreditReportText({
+      companyTitle: info.TITLE || 'BARMAN STORE',
+      customerName: customer?.name || 'Customer',
+      fromDate: from,
+      toDate: to,
+      generatedAt: Date.now(),
+      transactions: normalizedTransactions,
+      periodEndingBalance,
+      currentDayBalance: parseFloat(balance || 0),
+      onlineStoreUrl: info.ONLINE_STORE_URL,
+      thankYouLine: 'Thank you for shopping with us.'
+    });
   };
 
   // Generate report for selected date range (client-side filter)
@@ -479,12 +462,27 @@ function CreditHistory({ user }) {
     }
   };
 
-  const handleSendWhatsApp = () => {
-    if (!reportText) return;
-    openWhatsApp({
+  const sendOnWhatsApp = async (text) => {
+    if (!text) return;
+    const result = await sendWhatsAppSmart({
       phone: customer?.phone,
-      text: reportText,
+      text,
     });
+    if (result.status === 'missing_phone') {
+      setError('Customer phone is missing or invalid. Please update phone and try again.');
+      return;
+    }
+    if (result.status === 'fallback_copy') {
+      setSuccess('Message was long. Copied to clipboard; paste it in WhatsApp.');
+      return;
+    }
+    if (result.status === 'fallback_no_copy') {
+      setError('Message was long. Opened WhatsApp chat, please paste the message manually.');
+    }
+  };
+
+  const handleSendWhatsApp = async () => {
+    await sendOnWhatsApp(reportText);
   };
 
   const buildManualEntryText = ({
@@ -497,30 +495,18 @@ function CreditHistory({ user }) {
     previousBalance,
     updatedBalance,
     thankYouLine
-  }) => {
-    const lines = [];
-    lines.push(companyTitle || 'BARMAN STORE');
-    lines.push('');
-    lines.push('Credit Ledger Update');
-    lines.push(`Date: ${new Date(entryDate || Date.now()).toLocaleDateString('en-IN')}`);
-    lines.push('');
-    lines.push(`New Entry: ${getTypeLabel(entryType)} | ${formatCurrency(Number(amount || 0))}`);
-    lines.push(`Description: ${description || 'No additional note'}`);
-    if (reference) {
-      lines.push(`Reference: ${reference}`);
-    }
-    lines.push('');
-    lines.push(`Previous Balance: ${formatCurrency(Number(previousBalance || 0))}`);
-    lines.push(`Updated Balance: ${formatCurrency(Number(updatedBalance || 0))}`);
-    lines.push(`Current Total Credit: ${formatCurrency(Number(updatedBalance || 0))}`);
-    lines.push('');
-    if (info.ONLINE_STORE_URL) {
-      lines.push(`Visit online: ${info.ONLINE_STORE_URL}`);
-      lines.push('');
-    }
-    lines.push(thankYouLine || 'Thank you for shopping with us.');
-    return lines.join('\n');
-  };
+  }) => buildCreditEntryText({
+    companyTitle: companyTitle || info.TITLE || 'BARMAN STORE',
+    entryTypeLabel: getTypeLabel(entryType),
+    amount,
+    description,
+    reference,
+    entryDate,
+    previousBalance,
+    updatedBalance,
+    onlineStoreUrl: info.ONLINE_STORE_URL,
+    thankYouLine: thankYouLine || 'Thank you for shopping with us.'
+  });
 
   const handleCopyEntryShare = async () => {
     if (!entryShareText) return;
@@ -532,12 +518,8 @@ function CreditHistory({ user }) {
     }
   };
 
-  const handleSendEntryWhatsApp = () => {
-    if (!entryShareText) return;
-    openWhatsApp({
-      phone: customer?.phone,
-      text: entryShareText,
-    });
+  const handleSendEntryWhatsApp = async () => {
+    await sendOnWhatsApp(entryShareText);
   };
 
   const isTransactionWithinFiveDays = (transactionOrDate) => {
@@ -570,37 +552,21 @@ function CreditHistory({ user }) {
       }));
   })();
 
-  const buildTransactionShareText = (transaction) => {
-    const amount = Number(transaction?.amount || 0);
-    const updatedBalance = Number(transaction?.balance || 0);
-    const lines = [];
-    lines.push(info.TITLE || 'BARMAN STORE');
-    lines.push('');
-    lines.push('Transaction Update');
-    lines.push(`Date: ${formatTransactionDate(transaction)}`);
-    lines.push(`Type: ${getTypeLabel(transaction?.type)}`);
-    lines.push(`Amount: ${formatCurrency(amount)}`);
-    lines.push(`Description: ${transaction?.description || 'No additional note'}`);
-    if (transaction?.reference) {
-      lines.push(`Reference: ${transaction.reference}`);
-    }
-    lines.push(`Updated Balance: ${formatCurrency(updatedBalance)}`);
-    lines.push(`Current Total Credit: ${formatCurrency(updatedBalance)}`);
-    lines.push('');
-    if (info.ONLINE_STORE_URL) {
-      lines.push(`Visit online: ${info.ONLINE_STORE_URL}`);
-      lines.push('');
-    }
-    lines.push('Thank you for shopping with us.');
-    return lines.join('\n');
-  };
+  const buildTransactionShareText = (transaction) => buildCreditTransactionText({
+    companyTitle: info.TITLE || 'BARMAN STORE',
+    dateLabel: formatTransactionDate(transaction),
+    typeLabel: getTypeLabel(transaction?.type),
+    amount: Number(transaction?.amount || 0),
+    description: transaction?.description || 'No additional note',
+    reference: transaction?.reference || '',
+    updatedBalance: Number(transaction?.balance || 0),
+    onlineStoreUrl: info.ONLINE_STORE_URL,
+    thankYouLine: 'Thank you for shopping with us.'
+  });
 
-  const handleSendTransactionWhatsApp = (transaction) => {
+  const handleSendTransactionWhatsApp = async (transaction) => {
     if (!isTransactionWithinFiveDays(transaction)) return;
-    openWhatsApp({
-      phone: customer?.phone,
-      text: buildTransactionShareText(transaction),
-    });
+    await sendOnWhatsApp(buildTransactionShareText(transaction));
   };
 
   // Generate PDF report with company branding
@@ -1151,6 +1117,14 @@ function CreditHistory({ user }) {
       {showInvoiceModal && selectedTransaction && (
         <div className="modal-overlay invoice-modal-overlay" onClick={() => setShowInvoiceModal(false)}>
           <div className="invoice-template fade-in-up" onClick={(e) => e.stopPropagation()}>
+            <button
+              type="button"
+              className="invoice-close-btn"
+              onClick={() => setShowInvoiceModal(false)}
+              aria-label="Close invoice"
+            >
+              <X size={20} />
+            </button>
             <div className="invoice-header">
               <h1>INVOICE</h1>
               <div className="company-details">

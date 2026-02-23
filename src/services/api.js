@@ -158,22 +158,63 @@ export const authApi = {
       body: { phone, password },
     }),
   
-  register: (email, password, name, phone, address) => 
+  register: (email, password, confirmPassword, name, phone, address) => 
     apiFetch('/api/auth/register', {
       method: 'POST',
-      body: { email, password, name, phone, address },
+      body: { email, password, confirmPassword, name, phone, address },
     }),
   
-  changePassword: (email, phone, currentPassword, newPassword) =>
+  changePassword: (email, phone, currentPassword, newPassword, confirmPassword) =>
     apiFetch('/api/auth/change-password', {
       method: 'POST',
-      body: { email, phone, currentPassword, newPassword },
+      body: { email, phone, currentPassword, newPassword, confirmPassword },
     }),
 
   requestPasswordReset: (email, phone, reason) =>
     apiFetch('/api/auth/request-password-reset', {
       method: 'POST',
       body: { email, phone, reason },
+    }),
+  requestEmailVerification: (email) =>
+    apiFetch('/api/auth/email/verification/request', {
+      method: 'POST',
+      body: { email },
+    }),
+  requestMyEmailVerification: () =>
+    apiFetch('/api/auth/email/verification/request-self', {
+      method: 'POST',
+    }),
+  requestPhoneVerification: (phone) =>
+    apiFetch('/api/auth/phone/verification/request', {
+      method: 'POST',
+      body: { phone },
+    }),
+  requestMyPhoneVerification: () =>
+    apiFetch('/api/auth/phone/verification/request-self', {
+      method: 'POST',
+    }),
+  confirmEmailVerification: (email, token) =>
+    apiFetch('/api/auth/email/verification/confirm', {
+      method: 'POST',
+      body: { email, token },
+    }),
+  confirmPhoneVerification: (phone, code) =>
+    apiFetch('/api/auth/phone/verification/confirm', {
+      method: 'POST',
+      body: { phone, code },
+    }),
+  getEmailVerificationStatus: () => apiFetch('/api/auth/email/verification/status'),
+  getPhoneVerificationStatus: () => apiFetch('/api/auth/phone/verification/status'),
+  getResetMode: () => apiFetch('/api/auth/reset-mode'),
+  verifyResetOtp: (payload) =>
+    apiFetch('/api/auth/reset-password/otp/verify', {
+      method: 'POST',
+      body: payload,
+    }),
+  completeResetWithOtp: (payload) =>
+    apiFetch('/api/auth/reset-password/otp/complete', {
+      method: 'POST',
+      body: payload,
     }),
 };
 
@@ -498,6 +539,28 @@ export const adminApi = {
     apiFetch(`/api/admin/password-reset-requests/${id}`, {
       method: 'PUT',
       body: payload,
+    }),
+  prepareEmailNotification: (payload) =>
+    apiFetch('/api/admin/notifications/email/prepare', {
+      method: 'POST',
+      body: payload,
+    }),
+  prepareWhatsAppNotification: (payload) =>
+    apiFetch('/api/admin/notifications/whatsapp/prepare', {
+      method: 'POST',
+      body: payload,
+    }),
+  markNotificationSent: (id) =>
+    apiFetch(`/api/admin/notifications/${id}/mark-sent`, {
+      method: 'POST',
+    }),
+  markUserEmailVerified: (id) =>
+    apiFetch(`/api/admin/users/${id}/email/verify`, {
+      method: 'POST',
+    }),
+  markUserPhoneVerified: (id) =>
+    apiFetch(`/api/admin/users/${id}/phone/verify`, {
+      method: 'POST',
     }),
   createBackup: () =>
     apiFetch('/api/admin/backup/create', {

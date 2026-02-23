@@ -6,6 +6,10 @@ const fs = require('fs');
 const crypto = require('crypto');
 const bcrypt = require('bcrypt');
 const XLSX = require('xlsx');
+const { createOtpProvider } = require('./otpProvider');
+const { createEmailVerificationProvider } = require('./emailVerificationProvider');
+const { createNotificationService } = require('./notificationService');
+const { createWhatsappProvider } = require('./whatsappProvider');
 
 const app = express();
 const PORT = process.env.PORT || 5000;
@@ -14,6 +18,32 @@ const BACKUP_DIR = process.env.BACKUP_DIR || path.join(__dirname, 'backups');
 const UPLOADS_DIR = process.env.UPLOADS_DIR || path.join(__dirname, 'uploads');
 const PROFILE_UPLOAD_DIR = path.join(UPLOADS_DIR, 'profiles');
 let db = new Database(DB_PATH);
+
+const parseBooleanEnv = (value, fallback = false) => {
+  const raw = String(value ?? '').trim().toLowerCase();
+  if (!raw) return fallback;
+  return ['1', 'true', 'yes', 'on'].includes(raw);
+};
+const AUTO_BACKUP_ENABLED = parseBooleanEnv(process.env.AUTO_BACKUP_ENABLED, false);
+const AUTO_BACKUP_ON_STARTUP = parseBooleanEnv(process.env.AUTO_BACKUP_ON_STARTUP, false);
+const AUTO_BACKUP_INTERVAL_MINUTES = Math.max(1, Number(process.env.AUTO_BACKUP_INTERVAL_MINUTES || 360));
+const AUTO_BACKUP_RETENTION_COUNT = Math.max(0, Number(process.env.AUTO_BACKUP_RETENTION_COUNT || 30));
+const AUTO_BACKUP_RETENTION_DAYS = Math.max(0, Number(process.env.AUTO_BACKUP_RETENTION_DAYS || 30));
+const AUTO_BACKUP_INTERVAL_MS = AUTO_BACKUP_INTERVAL_MINUTES * 60 * 1000;
+let autoBackupTimer = null;
+let autoBackupRunning = false;
+const autoBackupState = {
+  enabled: AUTO_BACKUP_ENABLED,
+  interval_minutes: AUTO_BACKUP_INTERVAL_MINUTES,
+  retention_count: AUTO_BACKUP_RETENTION_COUNT,
+  retention_days: AUTO_BACKUP_RETENTION_DAYS,
+  on_startup: AUTO_BACKUP_ON_STARTUP,
+  last_run_at: null,
+  last_success_at: null,
+  last_error: null,
+  last_backup_file: null,
+  next_run_at: null,
+};
 
 const normalizeOrigin = (value) => {
   const raw = String(value || '').trim();
@@ -166,11 +196,37 @@ const verifyPassword = (plain, user) => {
   return false;
 };
 
-const normalizePhone = (phone) => {
-  if (!phone) return null;
-  const digits = String(phone).replace(/\D/g, '');
-  return digits || null;
+const PHONE_POLICY_MESSAGE = 'Phone number must be 10 digits (India format, optional +91 prefix).';
+const parsePhoneInput = (phone, { required = false } = {}) => {
+  const raw = String(phone ?? '').trim();
+  if (!raw) {
+    return required
+      ? { value: null, error: 'Phone number is required' }
+      : { value: null, error: null };
+  }
+
+  let digits = raw.replace(/\D/g, '');
+  if (!digits) {
+    return { value: null, error: PHONE_POLICY_MESSAGE };
+  }
+
+  if (digits.startsWith('00')) {
+    digits = digits.slice(2);
+  }
+
+  if (digits.length === 12 && digits.startsWith('91')) {
+    digits = digits.slice(2);
+  } else if (digits.length === 11 && digits.startsWith('0')) {
+    digits = digits.slice(1);
+  }
+
+  if (digits.length !== 10) {
+    return { value: null, error: PHONE_POLICY_MESSAGE };
+  }
+
+  return { value: digits, error: null };
 };
+const normalizePhone = (phone) => parsePhoneInput(phone).value;
 const normalizeEmail = (email) => {
   const v = String(email || '').trim().toLowerCase();
   return v || null;
@@ -196,6 +252,249 @@ const generateTemporaryPassword = (length = 14) => {
   }
   return candidate;
 };
+const generateOtpCode = (length = 6) => {
+  const digits = '0123456789';
+  let code = '';
+  for (let i = 0; i < length; i += 1) {
+    code += digits[Math.floor(Math.random() * digits.length)];
+  }
+  return code;
+};
+const generatePhoneVerificationCode = (length = 6) => {
+  const digits = '0123456789';
+  let code = '';
+  for (let i = 0; i < length; i += 1) {
+    code += digits[Math.floor(Math.random() * digits.length)];
+  }
+  return code;
+};
+const generateOpaqueToken = (bytes = 24) => crypto.randomBytes(bytes).toString('hex');
+const hashOpaqueToken = (value) =>
+  crypto.createHash('sha256').update(String(value || '')).digest('hex');
+const generateEmailVerificationToken = () => crypto.randomBytes(24).toString('hex');
+const hashVerificationToken = (token) =>
+  crypto.createHash('sha256').update(String(token || '')).digest('hex');
+const createEmailVerificationRecord = ({ userId, email }) => {
+  const token = generateEmailVerificationToken();
+  const tokenHash = hashVerificationToken(token);
+  const expiresAt = new Date(Date.now() + EMAIL_VERIFY_TTL_SECONDS * 1000).toISOString();
+  dbRun(
+    `INSERT INTO email_verification_tokens (user_id, email, token_hash, expires_at, attempts, max_attempts, used)
+     VALUES (?, ?, ?, ?, 0, ?, 0)`,
+    [userId, email, tokenHash, expiresAt, EMAIL_VERIFY_MAX_ATTEMPTS]
+  );
+  return { token, expiresAt };
+};
+const createPhoneVerificationRecord = ({ userId, phone }) => {
+  const code = generatePhoneVerificationCode(6);
+  const codeHash = hashOpaqueToken(code);
+  const expiresAt = new Date(Date.now() + PHONE_VERIFY_TTL_SECONDS * 1000).toISOString();
+  dbRun(
+    `INSERT INTO phone_verification_tokens (user_id, phone, token_hash, expires_at, attempts, max_attempts, used)
+     VALUES (?, ?, ?, ?, 0, ?, 0)`,
+    [userId, phone, codeHash, expiresAt, PHONE_VERIFY_MAX_ATTEMPTS]
+  );
+  return { code, expiresAt };
+};
+const buildEmailVerificationLink = ({ email, token }) => {
+  const base = String(process.env.EMAIL_VERIFY_BASE_URL || 'http://localhost/login').trim();
+  const hasQuery = base.includes('?');
+  return `${base}${hasQuery ? '&' : '?'}email=${encodeURIComponent(email)}&token=${encodeURIComponent(token)}`;
+};
+const buildPhoneVerificationLink = ({ phone, code }) => {
+  const hasQuery = PHONE_VERIFY_BASE_URL.includes('?');
+  return `${PHONE_VERIFY_BASE_URL}${hasQuery ? '&' : '?'}phone=${encodeURIComponent(phone)}&phoneToken=${encodeURIComponent(code)}`;
+};
+const sendPhoneVerificationChallenge = async ({
+  userId,
+  phone,
+  recipientName = null,
+  requestedBy = null,
+  exposeTemplate = false,
+  deliveryModeOverride = null,
+}) => {
+  if (!phone) return { queued: false, reason: 'missing_phone' };
+  dbRun(`UPDATE phone_verification_tokens SET used = 1 WHERE user_id = ? AND phone = ? AND used = 0`, [userId, phone]);
+  const { code, expiresAt } = createPhoneVerificationRecord({ userId, phone });
+  const link = buildPhoneVerificationLink({ phone, code });
+  const preparedWhatsApp = notificationService.prepareWhatsApp({
+    type: 'phone_verification',
+    to: phone,
+    payload: { recipientName, code, link, expiresAt },
+  });
+  const eventId = createNotificationEvent({
+    type: 'phone_verification',
+    channel: 'whatsapp',
+    recipient: phone,
+    recipientUserId: userId,
+    subject: 'Phone verification',
+    body: preparedWhatsApp.text,
+    metadata: {
+      mode: deliveryModeOverride || WHATSAPP_DELIVERY_MODE,
+      link,
+      expires_at: expiresAt,
+    },
+    status: 'prepared',
+    preparedBy: requestedBy,
+  });
+  const effectiveMode = String(deliveryModeOverride || WHATSAPP_DELIVERY_MODE).trim().toLowerCase() === 'auto'
+    ? 'auto'
+    : 'manual';
+
+  if (effectiveMode === 'manual') {
+    const response = {
+      queued: false,
+      reason: 'manual_send_required',
+      mode: effectiveMode,
+      event_id: eventId,
+      expiresAt,
+    };
+    if (exposeTemplate) {
+      response.whatsapp = {
+        to: preparedWhatsApp.to,
+        text: preparedWhatsApp.text,
+        whatsapp_url: preparedWhatsApp.whatsapp_url,
+        link,
+        code,
+      };
+    }
+    return response;
+  }
+
+  if (!whatsappProvider?.isReady) {
+    updateNotificationEventStatus(eventId, {
+      status: 'failed',
+      errorMessage: 'WhatsApp provider is not configured',
+    });
+    return {
+      queued: false,
+      reason: 'provider_not_ready',
+      mode: effectiveMode,
+      event_id: eventId,
+      missing: whatsappProvider?.missing || [],
+    };
+  }
+
+  await whatsappProvider.sendMessage({
+    to: preparedWhatsApp.to,
+    text: preparedWhatsApp.text,
+  });
+  updateNotificationEventStatus(eventId, { status: 'sent' });
+  const response = {
+    queued: true,
+    mode: effectiveMode,
+    event_id: eventId,
+    expiresAt,
+  };
+  if (exposeTemplate) {
+    response.whatsapp = {
+      to: preparedWhatsApp.to,
+      text: preparedWhatsApp.text,
+      whatsapp_url: preparedWhatsApp.whatsapp_url,
+      link,
+      code,
+    };
+  }
+  return response;
+};
+const sendEmailVerificationChallenge = async ({
+  userId,
+  email,
+  recipientName = null,
+  requestedBy = null,
+  exposeTemplate = false,
+  deliveryModeOverride = null,
+}) => {
+  if (!email) return { queued: false, reason: 'missing_email' };
+  dbRun(`UPDATE email_verification_tokens SET used = 1 WHERE user_id = ? AND email = ? AND used = 0`, [userId, email]);
+  const { token, expiresAt } = createEmailVerificationRecord({ userId, email });
+  const link = buildEmailVerificationLink({ email, token });
+  const preparedEmail = notificationService.prepareEmail({
+    type: 'email_verification',
+    to: email,
+    payload: { recipientName, link, token, expiresAt },
+  });
+  const eventId = createNotificationEvent({
+    type: 'email_verification',
+    channel: 'email',
+    recipient: email,
+    recipientUserId: userId,
+    subject: preparedEmail.subject,
+    body: preparedEmail.body,
+    metadata: {
+      mode: deliveryModeOverride || EMAIL_DELIVERY_MODE,
+      link,
+      expires_at: expiresAt,
+    },
+    status: 'prepared',
+    preparedBy: requestedBy,
+  });
+  const effectiveMode = String(deliveryModeOverride || EMAIL_DELIVERY_MODE).trim().toLowerCase() === 'auto'
+    ? 'auto'
+    : 'manual';
+
+  if (effectiveMode === 'manual') {
+    const response = {
+      queued: false,
+      reason: 'manual_send_required',
+      mode: effectiveMode,
+      event_id: eventId,
+      expiresAt,
+    };
+    if (exposeTemplate) {
+      response.email = {
+        to: preparedEmail.to,
+        subject: preparedEmail.subject,
+        body: preparedEmail.body,
+        mailto_url: preparedEmail.mailto_url,
+        link,
+        token,
+      };
+    }
+    return response;
+  }
+
+  if (!emailVerificationProvider?.isReady) {
+    updateNotificationEventStatus(eventId, {
+      status: 'failed',
+      errorMessage: 'Email provider is not configured',
+    });
+    return {
+      queued: false,
+      reason: 'provider_not_ready',
+      mode: effectiveMode,
+      event_id: eventId,
+      missing: emailVerificationProvider?.missing || [],
+    };
+  }
+
+  await emailVerificationProvider.sendVerification({
+    to: email,
+    token,
+    link,
+    expiresAt,
+    subject: preparedEmail.subject,
+    body: preparedEmail.body,
+  });
+  updateNotificationEventStatus(eventId, { status: 'sent' });
+  const response = {
+    queued: true,
+    mode: effectiveMode,
+    event_id: eventId,
+    expiresAt,
+  };
+  if (exposeTemplate) {
+    response.email = {
+      to: preparedEmail.to,
+      subject: preparedEmail.subject,
+      body: preparedEmail.body,
+      mailto_url: preparedEmail.mailto_url,
+      link,
+      token,
+    };
+  }
+  return response;
+};
 
 const createRateLimiter = ({ windowMs, max, keyFn }) => {
   const hits = new Map();
@@ -220,6 +519,87 @@ const authIpLimiter = createRateLimiter({
   windowMs: 15 * 60 * 1000,
   max: 20,
   keyFn: (req) => `ip:${req.ip || req.connection?.remoteAddress || 'unknown'}`
+});
+const AUTH_FLOW_MODE = String(process.env.AUTH_FLOW_MODE || 'manual').trim().toLowerCase() === 'provider'
+  ? 'provider'
+  : 'manual';
+const PASSWORD_RESET_MODE = String(
+  process.env.PASSWORD_RESET_MODE || (AUTH_FLOW_MODE === 'provider' ? 'otp' : 'admin')
+).trim().toLowerCase() === 'otp'
+  ? 'otp'
+  : 'admin';
+const PHONE_VERIFICATION_REQUIRED = parseBooleanEnv(process.env.PHONE_VERIFICATION_REQUIRED, false);
+const OTP_PROVIDER = String(process.env.OTP_PROVIDER || 'twilio').trim().toLowerCase();
+const OTP_TTL_SECONDS = Math.max(60, Number(process.env.OTP_TTL_SECONDS || 300));
+const OTP_MAX_ATTEMPTS = Math.max(1, Number(process.env.OTP_MAX_ATTEMPTS || 5));
+const OTP_DELIVERY_MODE = String(
+  process.env.OTP_DELIVERY_MODE || (AUTH_FLOW_MODE === 'provider' ? 'auto' : 'manual')
+).trim().toLowerCase() === 'auto'
+  ? 'auto'
+  : 'manual';
+const OTP_VERIFY_SESSION_TTL_SECONDS = Math.max(60, Number(process.env.OTP_VERIFY_SESSION_TTL_SECONDS || 900));
+const BUSINESS_NAME = String(process.env.BUSINESS_NAME || 'BARMAN STORE').trim() || 'BARMAN STORE';
+const PASSWORD_RESET_LOGIN_URL = String(
+  process.env.PASSWORD_RESET_LOGIN_URL || 'https://narenbarman.github.io/BARMAN_STORE_REACT/#/login'
+).trim();
+const PHONE_VERIFY_BASE_URL = String(
+  process.env.PHONE_VERIFY_BASE_URL || 'https://narenbarman.github.io/BARMAN_STORE_REACT/#/login'
+).trim();
+const PHONE_VERIFY_TTL_SECONDS = Math.max(60, Number(process.env.PHONE_VERIFY_TTL_SECONDS || 900));
+const PHONE_VERIFY_MAX_ATTEMPTS = Math.max(1, Number(process.env.PHONE_VERIFY_MAX_ATTEMPTS || 5));
+const WHATSAPP_PROVIDER = String(process.env.WHATSAPP_PROVIDER || 'meta').trim().toLowerCase();
+const WHATSAPP_DELIVERY_MODE = String(
+  process.env.WHATSAPP_DELIVERY_MODE || (AUTH_FLOW_MODE === 'provider' ? 'auto' : 'manual')
+).trim().toLowerCase() === 'auto'
+  ? 'auto'
+  : 'manual';
+const EMAIL_DELIVERY_MODE = String(
+  process.env.EMAIL_DELIVERY_MODE || (AUTH_FLOW_MODE === 'provider' ? 'auto' : 'manual')
+).trim().toLowerCase() === 'auto'
+  ? 'auto'
+  : 'manual';
+const otpProvider = createOtpProvider({
+  OTP_PROVIDER,
+  OTP_API_KEY: process.env.OTP_API_KEY || '',
+  OTP_API_SECRET: process.env.OTP_API_SECRET || '',
+  OTP_SENDER_ID: process.env.OTP_SENDER_ID || '',
+});
+const EMAIL_VERIFICATION_MODE = String(process.env.EMAIL_VERIFICATION_MODE || 'stub').trim().toLowerCase();
+const EMAIL_VERIFY_TTL_SECONDS = Math.max(60, Number(process.env.EMAIL_VERIFY_TTL_SECONDS || 900));
+const EMAIL_VERIFY_MAX_ATTEMPTS = Math.max(1, Number(process.env.EMAIL_VERIFY_MAX_ATTEMPTS || 5));
+const emailVerificationProvider = createEmailVerificationProvider({
+  EMAIL_VERIFICATION_MODE,
+  EMAIL_API_KEY: process.env.EMAIL_API_KEY || '',
+  EMAIL_API_SECRET: process.env.EMAIL_API_SECRET || '',
+  EMAIL_FROM: process.env.EMAIL_FROM || '',
+});
+const whatsappProvider = createWhatsappProvider({
+  WHATSAPP_PROVIDER,
+  WHATSAPP_API_KEY: process.env.WHATSAPP_API_KEY || '',
+  WHATSAPP_API_SECRET: process.env.WHATSAPP_API_SECRET || '',
+  WHATSAPP_PHONE_NUMBER_ID: process.env.WHATSAPP_PHONE_NUMBER_ID || '',
+});
+const notificationService = createNotificationService({
+  businessName: BUSINESS_NAME,
+  defaultCountryCode: '91',
+});
+const emailVerificationLimiter = createRateLimiter({
+  windowMs: 10 * 60 * 1000,
+  max: 10,
+  keyFn: (req) => {
+    const email = normalizeEmail(req.body?.email);
+    return `email-verify:${email || req.ip || req.connection?.remoteAddress || 'unknown'}`;
+  }
+});
+const passwordResetIdentifierLimiter = createRateLimiter({
+  windowMs: 15 * 60 * 1000,
+  max: 6,
+  keyFn: (req) => {
+    const email = normalizeEmail(req.body?.email);
+    const phone = normalizePhone(req.body?.phone);
+    const identifier = email || phone || `ip:${req.ip || req.connection?.remoteAddress || 'unknown'}`;
+    return `pwd-reset:${identifier}`;
+  }
 });
 
 const PROFILE_IMAGE_ALLOWED_MIME = new Set(['image/jpeg', 'image/png', 'image/webp']);
@@ -406,6 +786,53 @@ const generateSku = (name, brand, content, mrp) => {
 const dbRun = (sql, params = []) => db.prepare(sql).run(params);
 const dbGet = (sql, params = []) => db.prepare(sql).get(params);
 const dbAll = (sql, params = []) => db.prepare(sql).all(params);
+
+const createNotificationEvent = ({
+  type,
+  channel = 'email',
+  recipient,
+  recipientUserId = null,
+  subject = null,
+  body = null,
+  metadata = null,
+  status = 'prepared',
+  preparedBy = null,
+  sentBy = null,
+}) => {
+  const metadataJson = metadata ? JSON.stringify(metadata) : null;
+  const result = dbRun(
+    `INSERT INTO notification_events
+    (type, channel, recipient, recipient_user_id, subject, body, status, error_message, metadata, prepared_by, sent_by, sent_at)
+    VALUES (?, ?, ?, ?, ?, ?, ?, NULL, ?, ?, ?, ?)`,
+    [
+      String(type || '').trim(),
+      String(channel || 'email').trim() || 'email',
+      String(recipient || '').trim(),
+      recipientUserId || null,
+      subject ? String(subject) : null,
+      body ? String(body) : null,
+      String(status || 'prepared').trim() || 'prepared',
+      metadataJson,
+      preparedBy || null,
+      sentBy || null,
+      status === 'sent' ? new Date().toISOString() : null,
+    ]
+  );
+  return Number(result.lastInsertRowid || 0);
+};
+
+const updateNotificationEventStatus = (id, { status, errorMessage = null, sentBy = null }) => {
+  const eventId = Number(id || 0);
+  if (!eventId) return;
+  const normalizedStatus = String(status || '').trim().toLowerCase();
+  const sentAt = normalizedStatus === 'sent' ? new Date().toISOString() : null;
+  dbRun(
+    `UPDATE notification_events
+     SET status = ?, error_message = ?, sent_by = ?, sent_at = ?
+     WHERE id = ?`,
+    [normalizedStatus, errorMessage ? String(errorMessage) : null, sentBy || null, sentAt, eventId]
+  );
+};
 
 const PRODUCT_IMPORT_BATCH_TTL_MS = Number(process.env.PRODUCT_IMPORT_BATCH_TTL_MS || 30 * 60 * 1000);
 const PRODUCT_IMPORT_HEADERS = [
@@ -1010,6 +1437,94 @@ const listDatabaseBackups = () => {
   return files;
 };
 
+const isAutoBackupFileName = (name) => /^barman-store-auto-\d{8}-\d{6}\.db$/i.test(String(name || ''));
+
+const pruneAutoBackups = () => {
+  ensureBackupDir();
+  const allAutoBackups = fs.readdirSync(BACKUP_DIR)
+    .filter((name) => validateBackupFileName(name) && isAutoBackupFileName(name))
+    .map((name) => {
+      const filePath = path.join(BACKUP_DIR, name);
+      const stat = fs.statSync(filePath);
+      return {
+        file_name: name,
+        path: filePath,
+        created_at: stat.mtime,
+      };
+    })
+    .sort((a, b) => b.created_at - a.created_at);
+
+  const now = Date.now();
+  const maxAgeMs = AUTO_BACKUP_RETENTION_DAYS > 0 ? AUTO_BACKUP_RETENTION_DAYS * 24 * 60 * 60 * 1000 : 0;
+  const removed = [];
+
+  allAutoBackups.forEach((backup, index) => {
+    const olderThanDays = maxAgeMs > 0 && (now - backup.created_at.getTime()) > maxAgeMs;
+    const beyondCount = AUTO_BACKUP_RETENTION_COUNT > 0 && index >= AUTO_BACKUP_RETENTION_COUNT;
+    if (!olderThanDays && !beyondCount) return;
+    try {
+      fs.unlinkSync(backup.path);
+      removed.push(backup.file_name);
+    } catch (_) {
+      // Ignore cleanup failures; they should not break backup flow.
+    }
+  });
+
+  return removed;
+};
+
+const runAutoBackup = (trigger = 'interval') => {
+  if (!AUTO_BACKUP_ENABLED || autoBackupRunning) return null;
+  autoBackupRunning = true;
+  autoBackupState.last_run_at = new Date().toISOString();
+  try {
+    const backup = createDatabaseBackup('auto');
+    const removed = pruneAutoBackups();
+    autoBackupState.last_success_at = new Date().toISOString();
+    autoBackupState.last_backup_file = backup.file_name;
+    autoBackupState.last_error = null;
+    console.log(`[AUTO_BACKUP] Success (${trigger}): ${backup.file_name}${removed.length ? ` | pruned: ${removed.join(', ')}` : ''}`);
+    return { backup, removed };
+  } catch (error) {
+    autoBackupState.last_error = String(error?.message || error);
+    console.error(`[AUTO_BACKUP] Failed (${trigger}):`, error?.message || error);
+    return null;
+  } finally {
+    autoBackupRunning = false;
+    if (AUTO_BACKUP_ENABLED) {
+      autoBackupState.next_run_at = new Date(Date.now() + AUTO_BACKUP_INTERVAL_MS).toISOString();
+    }
+  }
+};
+
+const startAutoBackupScheduler = () => {
+  if (!AUTO_BACKUP_ENABLED) {
+    autoBackupState.next_run_at = null;
+    console.log('[AUTO_BACKUP] Disabled');
+    return;
+  }
+  if (autoBackupTimer) {
+    clearInterval(autoBackupTimer);
+  }
+  autoBackupState.next_run_at = new Date(Date.now() + AUTO_BACKUP_INTERVAL_MS).toISOString();
+  if (AUTO_BACKUP_ON_STARTUP) {
+    runAutoBackup('startup');
+  } else {
+    try {
+      const removed = pruneAutoBackups();
+      if (removed.length) {
+        console.log(`[AUTO_BACKUP] Pruned old auto backups: ${removed.join(', ')}`);
+      }
+    } catch (_) {
+      // Keep startup resilient.
+    }
+  }
+  autoBackupTimer = setInterval(() => {
+    runAutoBackup('interval');
+  }, AUTO_BACKUP_INTERVAL_MS);
+  console.log(`[AUTO_BACKUP] Enabled | every ${AUTO_BACKUP_INTERVAL_MINUTES} minute(s) | retention count=${AUTO_BACKUP_RETENTION_COUNT || 'unlimited'} | retention days=${AUTO_BACKUP_RETENTION_DAYS || 'unlimited'} | startup=${AUTO_BACKUP_ON_STARTUP}`);
+};
+
 const assertBackupIntegrity = (filePath) => {
   const checkDb = new Database(filePath, { readonly: true, fileMustExist: true });
   try {
@@ -1038,7 +1553,9 @@ const initDB = () => {
       role TEXT NOT NULL DEFAULT 'customer',
       name TEXT NOT NULL,
       email TEXT UNIQUE,
+      email_verified INTEGER DEFAULT 0,
       phone TEXT UNIQUE,
+      phone_verified INTEGER DEFAULT 0,
       address TEXT,
       profile_image TEXT,
       password_hash TEXT NOT NULL,
@@ -1267,8 +1784,74 @@ const initDB = () => {
       reason TEXT,
       status TEXT DEFAULT 'pending',
       admin_note TEXT,
+      requested_from_ip TEXT,
+      processed_by INTEGER,
+      processed_at DATETIME,
       created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
       updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+    );
+
+    CREATE TABLE IF NOT EXISTS password_reset_otps (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      user_id INTEGER,
+      phone TEXT NOT NULL,
+      otp_hash TEXT NOT NULL,
+      expires_at DATETIME NOT NULL,
+      attempts INTEGER DEFAULT 0,
+      max_attempts INTEGER DEFAULT 5,
+      used INTEGER DEFAULT 0,
+      created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+    );
+
+    CREATE TABLE IF NOT EXISTS password_reset_sessions (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      user_id INTEGER NOT NULL,
+      phone TEXT NOT NULL,
+      token_hash TEXT NOT NULL,
+      expires_at DATETIME NOT NULL,
+      used INTEGER DEFAULT 0,
+      created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+    );
+
+    CREATE TABLE IF NOT EXISTS email_verification_tokens (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      user_id INTEGER NOT NULL,
+      email TEXT NOT NULL,
+      token_hash TEXT NOT NULL,
+      expires_at DATETIME NOT NULL,
+      attempts INTEGER DEFAULT 0,
+      max_attempts INTEGER DEFAULT 5,
+      used INTEGER DEFAULT 0,
+      created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+    );
+
+    CREATE TABLE IF NOT EXISTS phone_verification_tokens (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      user_id INTEGER NOT NULL,
+      phone TEXT NOT NULL,
+      token_hash TEXT NOT NULL,
+      expires_at DATETIME NOT NULL,
+      attempts INTEGER DEFAULT 0,
+      max_attempts INTEGER DEFAULT 5,
+      used INTEGER DEFAULT 0,
+      created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+    );
+
+    CREATE TABLE IF NOT EXISTS notification_events (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      type TEXT NOT NULL,
+      channel TEXT NOT NULL DEFAULT 'email',
+      recipient TEXT NOT NULL,
+      recipient_user_id INTEGER,
+      subject TEXT,
+      body TEXT,
+      status TEXT NOT NULL DEFAULT 'prepared',
+      error_message TEXT,
+      metadata TEXT,
+      prepared_by INTEGER,
+      sent_by INTEGER,
+      created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+      sent_at DATETIME
     );
 
     CREATE TABLE IF NOT EXISTS order_status_history (
@@ -1334,12 +1917,17 @@ const initDB = () => {
   alterTableSafe(`ALTER TABLE order_items ADD COLUMN total REAL DEFAULT 0`);
   alterTableSafe(`ALTER TABLE users ADD COLUMN role TEXT DEFAULT 'customer'`);
   alterTableSafe(`ALTER TABLE users ADD COLUMN email TEXT`);
+  alterTableSafe(`ALTER TABLE users ADD COLUMN email_verified INTEGER DEFAULT 0`);
   alterTableSafe(`ALTER TABLE users ADD COLUMN phone TEXT`);
+  alterTableSafe(`ALTER TABLE users ADD COLUMN phone_verified INTEGER DEFAULT 0`);
   alterTableSafe(`ALTER TABLE users ADD COLUMN address TEXT`);
   alterTableSafe(`ALTER TABLE users ADD COLUMN profile_image TEXT`);
   alterTableSafe(`ALTER TABLE users ADD COLUMN password_hash TEXT`);
   alterTableSafe(`ALTER TABLE users ADD COLUMN must_change_password INTEGER DEFAULT 0`);
   alterTableSafe(`ALTER TABLE users ADD COLUMN credit_limit REAL DEFAULT 0`);
+  alterTableSafe(`ALTER TABLE password_reset_requests ADD COLUMN requested_from_ip TEXT`);
+  alterTableSafe(`ALTER TABLE password_reset_requests ADD COLUMN processed_by INTEGER`);
+  alterTableSafe(`ALTER TABLE password_reset_requests ADD COLUMN processed_at DATETIME`);
   alterTableSafe(`ALTER TABLE credit_history ADD COLUMN transaction_date DATE`);
   alterTableSafe(`ALTER TABLE credit_history ADD COLUMN created_by INTEGER`);
   alterTableSafe(`ALTER TABLE credit_history ADD COLUMN edited INTEGER DEFAULT 0`);
@@ -1413,8 +2001,8 @@ app.post('/api/notify-order/:orderId', (req, res) => {
     const bootstrapAdminPassword = String(process.env.BOOTSTRAP_ADMIN_PASSWORD || '');
     if (bootstrapAdminEmail && isStrongPassword(bootstrapAdminPassword)) {
       dbRun(
-        `INSERT INTO users (role, name, email, phone, address, password_hash, must_change_password) VALUES (?, ?, ?, ?, ?, ?, ?)`,
-        ['admin', 'Administrator', bootstrapAdminEmail, null, null, hashPassword(bootstrapAdminPassword), 0]
+        `INSERT INTO users (role, name, email, email_verified, phone, address, password_hash, must_change_password) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+        ['admin', 'Administrator', bootstrapAdminEmail, 1, null, null, hashPassword(bootstrapAdminPassword), 0]
       );
       console.warn('Bootstrap admin account created from environment configuration.');
     } else {
@@ -1462,7 +2050,9 @@ const sanitizeUser = (row) => {
     role: row.role,
     name: row.name,
     email: row.email,
+    email_verified: Number(row.email_verified || 0) === 1,
     phone: row.phone,
+    phone_verified: Number(row.phone_verified || 0) === 1,
     address: row.address,
     profile_image: row.profile_image || null,
     must_change_password: Number(row.must_change_password || 0) === 1,
@@ -1511,7 +2101,9 @@ app.post('/api/auth/login', authIpLimiter, (req, res) => {
     if (email) {
       user = dbGet(`SELECT * FROM users WHERE email = ?`, [normalizeEmail(email)]);
     } else if (phone) {
-      const normalizedPhone = normalizePhone(phone);
+      const phoneParsed = parsePhoneInput(phone, { required: true });
+      if (phoneParsed.error) return res.status(400).json({ error: phoneParsed.error });
+      const normalizedPhone = phoneParsed.value;
       user = dbGet(`SELECT * FROM users WHERE phone = ?`, [normalizedPhone]);
     } else {
       return res.status(400).json({ error: 'Email or phone number is required' });
@@ -1531,16 +2123,21 @@ app.post('/api/auth/login', authIpLimiter, (req, res) => {
   }
 });
 
-app.post('/api/auth/register', authIpLimiter, (req, res) => {
+app.post('/api/auth/register', authIpLimiter, async (req, res) => {
   try {
-    const { email, phone, password, name, address } = req.body || {};
+    const { email, phone, password, confirmPassword, name, address } = req.body || {};
     const normalizedEmail = normalizeEmail(email);
-    const normalizedPhone = normalizePhone(phone);
+    const phoneParsed = parsePhoneInput(phone);
+    if (phoneParsed.error) return res.status(400).json({ error: phoneParsed.error });
+    const normalizedPhone = phoneParsed.value;
     if (!normalizedEmail && !normalizedPhone) {
       return res.status(400).json({ error: 'Email or phone number is required' });
     }
     if (!isStrongPassword(password)) {
       return res.status(400).json({ error: PASSWORD_POLICY_MESSAGE });
+    }
+    if (String(password || '') !== String(confirmPassword || '')) {
+      return res.status(400).json({ error: 'Password and confirm password do not match' });
     }
 
     if (normalizedEmail && dbGet(`SELECT id FROM users WHERE email = ?`, [normalizedEmail])) {
@@ -1551,11 +2148,33 @@ app.post('/api/auth/register', authIpLimiter, (req, res) => {
     }
 
     const result = dbRun(
-      `INSERT INTO users (role, name, email, phone, address, password_hash, must_change_password) VALUES (?, ?, ?, ?, ?, ?, ?)`,
-      ['customer', name || 'Customer', normalizedEmail, normalizedPhone, address || null, hashPassword(password), 0]
+      `INSERT INTO users (role, name, email, email_verified, phone, phone_verified, address, password_hash, must_change_password) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      ['customer', name || 'Customer', normalizedEmail, 0, normalizedPhone, 0, address || null, hashPassword(password), 0]
     );
     const user = dbGet(`SELECT * FROM users WHERE id = ?`, [result.lastInsertRowid]);
-    return res.status(201).json({ success: true, user: sanitizeUser(user), token: generateToken(user) });
+    let emailVerification = null;
+    let phoneVerification = null;
+    if (normalizedEmail) {
+      emailVerification = await sendEmailVerificationChallenge({
+        userId: user.id,
+        email: normalizedEmail,
+        recipientName: user.name,
+      });
+    }
+    if (normalizedPhone) {
+      phoneVerification = await sendPhoneVerificationChallenge({
+        userId: user.id,
+        phone: normalizedPhone,
+        recipientName: user.name,
+      });
+    }
+    return res.status(201).json({
+      success: true,
+      user: sanitizeUser(user),
+      token: generateToken(user),
+      email_verification: emailVerification,
+      phone_verification: phoneVerification,
+    });
   } catch (error) {
     return res.status(500).json({ error: error.message });
   }
@@ -1563,18 +2182,23 @@ app.post('/api/auth/register', authIpLimiter, (req, res) => {
 
 app.post('/api/auth/change-password', authIpLimiter, (req, res) => {
   try {
-    const { email, phone, currentPassword, newPassword } = req.body || {};
+    const { email, phone, currentPassword, newPassword, confirmPassword } = req.body || {};
     let user = null;
     if (email) {
       user = dbGet(`SELECT * FROM users WHERE email = ?`, [normalizeEmail(email)]);
     } else if (phone) {
-      user = dbGet(`SELECT * FROM users WHERE phone = ?`, [normalizePhone(phone)]);
+      const phoneParsed = parsePhoneInput(phone, { required: true });
+      if (phoneParsed.error) return res.status(400).json({ error: phoneParsed.error });
+      user = dbGet(`SELECT * FROM users WHERE phone = ?`, [phoneParsed.value]);
     }
     if (!user) return res.status(404).json({ error: 'User not found' });
     const passwordOk = verifyPassword(currentPassword, user);
     if (!passwordOk) return res.status(401).json({ error: 'Current password is incorrect' });
     if (!isStrongPassword(newPassword)) {
       return res.status(400).json({ error: PASSWORD_POLICY_MESSAGE });
+    }
+    if (String(newPassword || '') !== String(confirmPassword || '')) {
+      return res.status(400).json({ error: 'New password and confirm password do not match' });
     }
     dbRun(`UPDATE users SET password_hash = ?, must_change_password = 0 WHERE id = ?`, [hashPassword(newPassword), user.id]);
     return res.json({ success: true, message: 'Password changed successfully' });
@@ -1583,28 +2207,100 @@ app.post('/api/auth/change-password', authIpLimiter, (req, res) => {
   }
 });
 
-app.post('/api/auth/request-password-reset', authIpLimiter, (req, res) => {
+app.post('/api/auth/request-password-reset', authIpLimiter, passwordResetIdentifierLimiter, async (req, res) => {
   try {
     const { email, phone, reason } = req.body || {};
+    const reasonText = String(reason || '').trim();
     const normalizedEmail = normalizeEmail(email);
-    const normalizedPhone = normalizePhone(phone);
+    const phoneParsed = parsePhoneInput(phone);
+    if (phoneParsed.error) return res.status(400).json({ error: phoneParsed.error });
+    const normalizedPhone = phoneParsed.value;
     if (!normalizedEmail && !normalizedPhone) {
       return res.status(400).json({ error: 'Email or phone number is required' });
     }
+    if (reasonText.length < 5) {
+      return res.status(400).json({ error: 'Reason is required (min 5 characters)' });
+    }
     let user = null;
     if (normalizedEmail) {
-      user = dbGet(`SELECT id, email, phone FROM users WHERE email = ?`, [normalizedEmail]);
+      user = dbGet(`SELECT id, name, email, phone FROM users WHERE email = ?`, [normalizedEmail]);
     } else if (normalizedPhone) {
-      user = dbGet(`SELECT id, email, phone FROM users WHERE phone = ?`, [normalizedPhone]);
+      user = dbGet(`SELECT id, name, email, phone FROM users WHERE phone = ?`, [normalizedPhone]);
     }
+
+    if (PASSWORD_RESET_MODE === 'otp') {
+      if (!user?.phone) {
+        // Keep account enumeration hard even in OTP mode.
+        return res.status(201).json({
+          success: true,
+          mode: PASSWORD_RESET_MODE,
+          delivery_mode: OTP_DELIVERY_MODE,
+          message: 'If the account exists, reset instructions will be sent.',
+        });
+      }
+      const otpCode = generateOtpCode(6);
+      const otpHash = hashPassword(otpCode);
+      const expiresAt = new Date(Date.now() + OTP_TTL_SECONDS * 1000).toISOString();
+      dbRun(
+        `INSERT INTO password_reset_otps (user_id, phone, otp_hash, expires_at, attempts, max_attempts, used)
+         VALUES (?, ?, ?, ?, 0, ?, 0)`,
+        [user.id, user.phone, otpHash, expiresAt, OTP_MAX_ATTEMPTS]
+      );
+      if (OTP_DELIVERY_MODE === 'auto') {
+        if (!otpProvider?.isReady) {
+          return res.status(503).json({
+            error: 'OTP provider is not configured',
+            missing: otpProvider?.missing || [],
+          });
+        }
+        await otpProvider.sendOtp({ phone: user.phone, code: otpCode });
+      } else {
+        const preparedWhatsApp = notificationService.prepareWhatsApp({
+          type: 'password_reset_otp',
+          to: user.phone,
+          payload: {
+            recipientName: null,
+            code: otpCode,
+            link: '',
+            expiresAt,
+          },
+        });
+        createNotificationEvent({
+          type: 'password_reset_otp',
+          channel: 'whatsapp',
+          recipient: user.phone,
+          recipientUserId: user.id,
+          subject: 'Password reset OTP prepared',
+          body: preparedWhatsApp.text,
+          metadata: {
+            mode: 'manual',
+            phone: user.phone,
+            expires_at: expiresAt,
+            whatsapp_url: preparedWhatsApp.whatsapp_url,
+          },
+          status: 'prepared',
+        });
+      }
+      return res.status(201).json({
+        success: true,
+        mode: PASSWORD_RESET_MODE,
+        delivery_mode: OTP_DELIVERY_MODE,
+        message: OTP_DELIVERY_MODE === 'auto'
+          ? 'OTP sent successfully'
+          : 'OTP generated for manual handling',
+      });
+    }
+
     if (user) {
       dbRun(
-        `INSERT INTO password_reset_requests (user_id, email, phone, reason, status) VALUES (?, ?, ?, ?, 'pending')`,
-        [user.id, user.email || null, user.phone || null, reason || null]
+        `INSERT INTO password_reset_requests (user_id, email, phone, reason, status, requested_from_ip)
+         VALUES (?, ?, ?, ?, 'pending', ?)`,
+        [user.id, user.email || null, user.phone || null, reasonText, req.ip || req.connection?.remoteAddress || null]
       );
     }
     return res.status(201).json({
       success: true,
+      mode: PASSWORD_RESET_MODE,
       message: 'Password reset request submitted to admin',
     });
   } catch (error) {
@@ -1612,12 +2308,609 @@ app.post('/api/auth/request-password-reset', authIpLimiter, (req, res) => {
   }
 });
 
+app.post('/api/auth/email/verification/request', authIpLimiter, emailVerificationLimiter, async (req, res) => {
+  try {
+    const normalizedEmail = normalizeEmail(req.body?.email);
+    if (!normalizedEmail) {
+      return res.status(400).json({ error: 'Email is required' });
+    }
+
+    const user = dbGet(`SELECT id, name, email, email_verified FROM users WHERE email = ?`, [normalizedEmail]);
+    if (!user) {
+      return res.status(201).json({
+        success: true,
+        message: 'If the account exists, verification instructions will be sent.',
+      });
+    }
+    if (Number(user.email_verified || 0) === 1) {
+      return res.status(200).json({ success: true, message: 'Email is already verified' });
+    }
+
+    const delivery = await sendEmailVerificationChallenge({
+      userId: user.id,
+      email: normalizedEmail,
+      recipientName: user.name,
+    });
+    return res.status(201).json({
+      success: true,
+      message: 'Verification instructions sent',
+      delivery,
+      mode: EMAIL_VERIFICATION_MODE,
+    });
+  } catch (error) {
+    return res.status(500).json({ error: error.message });
+  }
+});
+
+app.post('/api/auth/email/verification/confirm', authIpLimiter, emailVerificationLimiter, (req, res) => {
+  try {
+    const normalizedEmail = normalizeEmail(req.body?.email);
+    const token = String(req.body?.token || '').trim();
+    if (!normalizedEmail || !token) {
+      return res.status(400).json({ error: 'Email and token are required' });
+    }
+    const user = dbGet(`SELECT id, email_verified FROM users WHERE email = ?`, [normalizedEmail]);
+    if (!user) return res.status(400).json({ error: 'Invalid or expired verification token' });
+    if (Number(user.email_verified || 0) === 1) {
+      return res.json({ success: true, message: 'Email is already verified' });
+    }
+
+    const tokenRow = dbGet(
+      `SELECT * FROM email_verification_tokens
+       WHERE user_id = ? AND email = ? AND used = 0
+       ORDER BY id DESC LIMIT 1`,
+      [user.id, normalizedEmail]
+    );
+    if (!tokenRow) return res.status(400).json({ error: 'Invalid or expired verification token' });
+
+    const now = Date.now();
+    const expiresAt = new Date(tokenRow.expires_at).getTime();
+    if (!Number.isFinite(expiresAt) || now > expiresAt) {
+      dbRun(`UPDATE email_verification_tokens SET used = 1 WHERE id = ?`, [tokenRow.id]);
+      return res.status(400).json({ error: 'Invalid or expired verification token' });
+    }
+    if (Number(tokenRow.attempts || 0) >= Number(tokenRow.max_attempts || EMAIL_VERIFY_MAX_ATTEMPTS)) {
+      dbRun(`UPDATE email_verification_tokens SET used = 1 WHERE id = ?`, [tokenRow.id]);
+      return res.status(400).json({ error: 'Verification token attempt limit reached' });
+    }
+
+    const providedHash = hashVerificationToken(token);
+    if (providedHash !== String(tokenRow.token_hash || '')) {
+      const nextAttempts = Number(tokenRow.attempts || 0) + 1;
+      const exhausted = nextAttempts >= Number(tokenRow.max_attempts || EMAIL_VERIFY_MAX_ATTEMPTS);
+      dbRun(
+        `UPDATE email_verification_tokens SET attempts = ?, used = ? WHERE id = ?`,
+        [nextAttempts, exhausted ? 1 : Number(tokenRow.used || 0), tokenRow.id]
+      );
+      return res.status(400).json({ error: 'Invalid or expired verification token' });
+    }
+
+    dbRun(`UPDATE users SET email_verified = 1 WHERE id = ?`, [user.id]);
+    dbRun(`UPDATE email_verification_tokens SET used = 1 WHERE user_id = ? AND email = ? AND used = 0`, [user.id, normalizedEmail]);
+    return res.json({ success: true, message: 'Email verified successfully' });
+  } catch (error) {
+    return res.status(500).json({ error: error.message });
+  }
+});
+
+app.get('/api/auth/email/verification/status', requireAuth, (req, res) => {
+  try {
+    const user = dbGet(`SELECT id, email, email_verified FROM users WHERE id = ?`, [req.authUser.id]);
+    if (!user) return res.status(404).json({ error: 'User not found' });
+    return res.json({
+      email: user.email || null,
+      email_verified: Number(user.email_verified || 0) === 1,
+      mode: EMAIL_VERIFICATION_MODE,
+      provider_ready: Boolean(emailVerificationProvider?.isReady),
+    });
+  } catch (error) {
+    return res.status(500).json({ error: error.message });
+  }
+});
+
+app.post('/api/auth/email/verification/request-self', requireAuth, async (req, res) => {
+  try {
+    const user = dbGet(`SELECT id, name, email, email_verified FROM users WHERE id = ?`, [req.authUser.id]);
+    if (!user) return res.status(404).json({ error: 'User not found' });
+    const normalizedEmail = normalizeEmail(user.email);
+    if (!normalizedEmail) {
+      return res.status(400).json({ error: 'No email is set on your profile' });
+    }
+    if (Number(user.email_verified || 0) === 1) {
+      return res.status(200).json({ success: true, message: 'Email is already verified' });
+    }
+    const delivery = await sendEmailVerificationChallenge({
+      userId: user.id,
+      email: normalizedEmail,
+      recipientName: user.name,
+      requestedBy: Number(req.authUser?.id || 0) || null,
+      exposeTemplate: true,
+      deliveryModeOverride: 'manual',
+    });
+    return res.status(201).json({
+      success: true,
+      message: 'Verification instructions prepared',
+      delivery,
+      prepared_email: delivery.email || null,
+      mode: EMAIL_VERIFICATION_MODE,
+    });
+  } catch (error) {
+    return res.status(500).json({ error: error.message });
+  }
+});
+
+app.post('/api/auth/phone/verification/request', authIpLimiter, async (req, res) => {
+  try {
+    const phoneParsed = parsePhoneInput(req.body?.phone, { required: true });
+    if (phoneParsed.error) return res.status(400).json({ error: phoneParsed.error });
+    const normalizedPhone = phoneParsed.value;
+    const user = dbGet(`SELECT id, name, phone, phone_verified FROM users WHERE phone = ?`, [normalizedPhone]);
+    if (!user) {
+      return res.status(201).json({
+        success: true,
+        message: 'If the account exists, verification instructions will be sent.',
+      });
+    }
+    if (Number(user.phone_verified || 0) === 1) {
+      return res.status(200).json({ success: true, message: 'Phone is already verified' });
+    }
+    const delivery = await sendPhoneVerificationChallenge({
+      userId: user.id,
+      phone: normalizedPhone,
+      recipientName: user.name,
+    });
+    return res.status(201).json({
+      success: true,
+      message: 'Phone verification instructions prepared',
+      delivery,
+      mode: WHATSAPP_DELIVERY_MODE,
+    });
+  } catch (error) {
+    return res.status(500).json({ error: error.message });
+  }
+});
+
+app.post('/api/auth/phone/verification/confirm', authIpLimiter, (req, res) => {
+  try {
+    const phoneParsed = parsePhoneInput(req.body?.phone, { required: true });
+    if (phoneParsed.error) return res.status(400).json({ error: phoneParsed.error });
+    const normalizedPhone = phoneParsed.value;
+    const code = String(req.body?.code || req.body?.token || '').trim();
+    if (!code) return res.status(400).json({ error: 'Phone and code are required' });
+    const user = dbGet(`SELECT id, phone_verified FROM users WHERE phone = ?`, [normalizedPhone]);
+    if (!user) return res.status(400).json({ error: 'Invalid or expired verification code' });
+    if (Number(user.phone_verified || 0) === 1) {
+      return res.json({ success: true, message: 'Phone is already verified' });
+    }
+
+    const tokenRow = dbGet(
+      `SELECT * FROM phone_verification_tokens
+       WHERE user_id = ? AND phone = ? AND used = 0
+       ORDER BY id DESC LIMIT 1`,
+      [user.id, normalizedPhone]
+    );
+    if (!tokenRow) return res.status(400).json({ error: 'Invalid or expired verification code' });
+
+    const now = Date.now();
+    const expiresAt = new Date(tokenRow.expires_at).getTime();
+    if (!Number.isFinite(expiresAt) || now > expiresAt) {
+      dbRun(`UPDATE phone_verification_tokens SET used = 1 WHERE id = ?`, [tokenRow.id]);
+      return res.status(400).json({ error: 'Invalid or expired verification code' });
+    }
+    if (Number(tokenRow.attempts || 0) >= Number(tokenRow.max_attempts || PHONE_VERIFY_MAX_ATTEMPTS)) {
+      dbRun(`UPDATE phone_verification_tokens SET used = 1 WHERE id = ?`, [tokenRow.id]);
+      return res.status(400).json({ error: 'Verification code attempt limit reached' });
+    }
+
+    const providedHash = hashOpaqueToken(code);
+    if (providedHash !== String(tokenRow.token_hash || '')) {
+      const nextAttempts = Number(tokenRow.attempts || 0) + 1;
+      const exhausted = nextAttempts >= Number(tokenRow.max_attempts || PHONE_VERIFY_MAX_ATTEMPTS);
+      dbRun(
+        `UPDATE phone_verification_tokens SET attempts = ?, used = ? WHERE id = ?`,
+        [nextAttempts, exhausted ? 1 : Number(tokenRow.used || 0), tokenRow.id]
+      );
+      return res.status(400).json({ error: 'Invalid or expired verification code' });
+    }
+
+    dbRun(`UPDATE users SET phone_verified = 1 WHERE id = ?`, [user.id]);
+    dbRun(`UPDATE phone_verification_tokens SET used = 1 WHERE user_id = ? AND phone = ? AND used = 0`, [user.id, normalizedPhone]);
+    return res.json({ success: true, message: 'Phone verified successfully' });
+  } catch (error) {
+    return res.status(500).json({ error: error.message });
+  }
+});
+
+app.get('/api/auth/phone/verification/status', requireAuth, (req, res) => {
+  try {
+    const user = dbGet(`SELECT id, phone, phone_verified FROM users WHERE id = ?`, [req.authUser.id]);
+    if (!user) return res.status(404).json({ error: 'User not found' });
+    return res.json({
+      phone: user.phone || null,
+      phone_verified: Number(user.phone_verified || 0) === 1,
+      mode: WHATSAPP_DELIVERY_MODE,
+      provider_ready: Boolean(whatsappProvider?.isReady),
+    });
+  } catch (error) {
+    return res.status(500).json({ error: error.message });
+  }
+});
+
+app.post('/api/auth/phone/verification/request-self', requireAuth, async (req, res) => {
+  try {
+    const user = dbGet(`SELECT id, name, phone, phone_verified FROM users WHERE id = ?`, [req.authUser.id]);
+    if (!user) return res.status(404).json({ error: 'User not found' });
+    const normalizedPhone = normalizePhone(user.phone);
+    if (!normalizedPhone) {
+      return res.status(400).json({ error: 'No phone is set on your profile' });
+    }
+    if (Number(user.phone_verified || 0) === 1) {
+      return res.status(200).json({ success: true, message: 'Phone is already verified' });
+    }
+    const delivery = await sendPhoneVerificationChallenge({
+      userId: user.id,
+      phone: normalizedPhone,
+      recipientName: user.name,
+      requestedBy: Number(req.authUser?.id || 0) || null,
+      exposeTemplate: true,
+      deliveryModeOverride: 'manual',
+    });
+    return res.status(201).json({
+      success: true,
+      message: 'Phone verification instructions prepared',
+      delivery,
+      prepared_whatsapp: delivery.whatsapp || null,
+      mode: WHATSAPP_DELIVERY_MODE,
+    });
+  } catch (error) {
+    return res.status(500).json({ error: error.message });
+  }
+});
+
+app.post('/api/auth/reset-password/otp/verify', authIpLimiter, (req, res) => {
+  try {
+    if (PASSWORD_RESET_MODE !== 'otp') {
+      return res.status(400).json({ error: 'OTP reset is disabled', mode: PASSWORD_RESET_MODE });
+    }
+    const phoneParsed = parsePhoneInput(req.body?.phone, { required: true });
+    if (phoneParsed.error) return res.status(400).json({ error: phoneParsed.error });
+    const normalizedPhone = phoneParsed.value;
+    const otpCode = String(req.body?.otp || req.body?.code || '').trim();
+    if (!otpCode) return res.status(400).json({ error: 'OTP is required' });
+
+    const user = dbGet(`SELECT id, phone FROM users WHERE phone = ?`, [normalizedPhone]);
+    if (!user) return res.status(400).json({ error: 'Invalid or expired OTP' });
+    const otpRow = dbGet(
+      `SELECT * FROM password_reset_otps
+       WHERE user_id = ? AND phone = ? AND used = 0
+       ORDER BY id DESC LIMIT 1`,
+      [user.id, normalizedPhone]
+    );
+    if (!otpRow) return res.status(400).json({ error: 'Invalid or expired OTP' });
+
+    const now = Date.now();
+    const expiresAt = new Date(otpRow.expires_at).getTime();
+    if (!Number.isFinite(expiresAt) || now > expiresAt) {
+      dbRun(`UPDATE password_reset_otps SET used = 1 WHERE id = ?`, [otpRow.id]);
+      return res.status(400).json({ error: 'Invalid or expired OTP' });
+    }
+    if (Number(otpRow.attempts || 0) >= Number(otpRow.max_attempts || OTP_MAX_ATTEMPTS)) {
+      dbRun(`UPDATE password_reset_otps SET used = 1 WHERE id = ?`, [otpRow.id]);
+      return res.status(400).json({ error: 'OTP attempt limit reached' });
+    }
+
+    const otpOk = verifyPassword(otpCode, { password_hash: otpRow.otp_hash });
+    if (!otpOk) {
+      const nextAttempts = Number(otpRow.attempts || 0) + 1;
+      const exhausted = nextAttempts >= Number(otpRow.max_attempts || OTP_MAX_ATTEMPTS);
+      dbRun(
+        `UPDATE password_reset_otps SET attempts = ?, used = ? WHERE id = ?`,
+        [nextAttempts, exhausted ? 1 : Number(otpRow.used || 0), otpRow.id]
+      );
+      return res.status(400).json({ error: 'Invalid or expired OTP' });
+    }
+
+    dbRun(`UPDATE password_reset_otps SET used = 1 WHERE id = ?`, [otpRow.id]);
+    dbRun(`UPDATE password_reset_sessions SET used = 1 WHERE user_id = ? AND phone = ? AND used = 0`, [user.id, normalizedPhone]);
+    const resetToken = generateOpaqueToken(24);
+    const tokenHash = hashOpaqueToken(resetToken);
+    const sessionExpiresAt = new Date(Date.now() + OTP_VERIFY_SESSION_TTL_SECONDS * 1000).toISOString();
+    dbRun(
+      `INSERT INTO password_reset_sessions (user_id, phone, token_hash, expires_at, used)
+       VALUES (?, ?, ?, ?, 0)`,
+      [user.id, normalizedPhone, tokenHash, sessionExpiresAt]
+    );
+    return res.json({
+      success: true,
+      mode: PASSWORD_RESET_MODE,
+      reset_token: resetToken,
+      expires_at: sessionExpiresAt,
+    });
+  } catch (error) {
+    return res.status(500).json({ error: error.message || 'Failed to verify OTP' });
+  }
+});
+
+app.post('/api/auth/reset-password/otp/complete', authIpLimiter, (req, res) => {
+  try {
+    if (PASSWORD_RESET_MODE !== 'otp') {
+      return res.status(400).json({ error: 'OTP reset is disabled', mode: PASSWORD_RESET_MODE });
+    }
+    const phoneParsed = parsePhoneInput(req.body?.phone, { required: true });
+    if (phoneParsed.error) return res.status(400).json({ error: phoneParsed.error });
+    const normalizedPhone = phoneParsed.value;
+    const resetToken = String(req.body?.reset_token || req.body?.resetToken || req.body?.token || '').trim();
+    const newPassword = String(req.body?.new_password || req.body?.newPassword || '');
+    const confirmPassword = String(req.body?.confirm_password || req.body?.confirmPassword || '');
+    if (!resetToken) return res.status(400).json({ error: 'reset_token is required' });
+    if (!isStrongPassword(newPassword)) return res.status(400).json({ error: PASSWORD_POLICY_MESSAGE });
+    if (newPassword !== confirmPassword) {
+      return res.status(400).json({ error: 'Password and confirm password do not match' });
+    }
+
+    const user = dbGet(`SELECT id, phone FROM users WHERE phone = ?`, [normalizedPhone]);
+    if (!user) return res.status(400).json({ error: 'Invalid or expired reset token' });
+    const tokenHash = hashOpaqueToken(resetToken);
+    const session = dbGet(
+      `SELECT * FROM password_reset_sessions
+       WHERE user_id = ? AND phone = ? AND token_hash = ? AND used = 0
+       ORDER BY id DESC LIMIT 1`,
+      [user.id, normalizedPhone, tokenHash]
+    );
+    if (!session) return res.status(400).json({ error: 'Invalid or expired reset token' });
+    const now = Date.now();
+    const expiresAt = new Date(session.expires_at).getTime();
+    if (!Number.isFinite(expiresAt) || now > expiresAt) {
+      dbRun(`UPDATE password_reset_sessions SET used = 1 WHERE id = ?`, [session.id]);
+      return res.status(400).json({ error: 'Invalid or expired reset token' });
+    }
+
+    dbRun(`UPDATE users SET password_hash = ?, must_change_password = 0 WHERE id = ?`, [hashPassword(newPassword), user.id]);
+    dbRun(`UPDATE password_reset_sessions SET used = 1 WHERE id = ?`, [session.id]);
+    createNotificationEvent({
+      type: 'password_reset_otp_completed',
+      channel: 'auth',
+      recipient: normalizedPhone,
+      recipientUserId: user.id,
+      subject: 'Password reset completed via OTP',
+      body: 'Password reset was completed using OTP verification.',
+      metadata: { mode: 'otp' },
+      status: 'sent',
+    });
+    return res.json({ success: true, message: 'Password reset completed successfully' });
+  } catch (error) {
+    return res.status(500).json({ error: error.message || 'Failed to complete OTP reset' });
+  }
+});
+
+app.get('/api/auth/reset-mode', (_, res) => {
+  return res.json({
+    auth_flow_mode: AUTH_FLOW_MODE,
+    mode: PASSWORD_RESET_MODE,
+    otp_provider: OTP_PROVIDER,
+    otp_delivery_mode: OTP_DELIVERY_MODE,
+    otp_ready: PASSWORD_RESET_MODE === 'otp' ? Boolean(otpProvider?.isReady) : false,
+    otp_verify_session_ttl_seconds: OTP_VERIFY_SESSION_TTL_SECONDS,
+    phone_verification_required: PHONE_VERIFICATION_REQUIRED,
+    whatsapp_delivery_mode: WHATSAPP_DELIVERY_MODE,
+    whatsapp_provider: WHATSAPP_PROVIDER,
+    whatsapp_provider_ready: Boolean(whatsappProvider?.isReady),
+    email_verification_mode: EMAIL_VERIFICATION_MODE,
+    email_delivery_mode: EMAIL_DELIVERY_MODE,
+    email_provider_ready: Boolean(emailVerificationProvider?.isReady),
+  });
+});
+
+app.post('/api/admin/notifications/email/prepare', requireAdmin, async (req, res) => {
+  try {
+    const type = String(req.body?.type || '').trim().toLowerCase();
+    if (type !== 'email_verification') {
+      return res.status(400).json({ error: 'Unsupported notification type' });
+    }
+
+    const targetUserId = Number(req.body?.user_id || 0);
+    const targetEmail = normalizeEmail(req.body?.email);
+    let user = null;
+
+    if (targetUserId) {
+      user = dbGet(`SELECT id, name, email, email_verified FROM users WHERE id = ?`, [targetUserId]);
+    } else if (targetEmail) {
+      user = dbGet(`SELECT id, name, email, email_verified FROM users WHERE email = ?`, [targetEmail]);
+    } else {
+      return res.status(400).json({ error: 'user_id or email is required' });
+    }
+
+    if (!user || !normalizeEmail(user.email)) {
+      return res.status(404).json({ error: 'User with valid email not found' });
+    }
+
+    if (Number(user.email_verified || 0) === 1) {
+      return res.status(400).json({ error: 'Email is already verified' });
+    }
+
+    const delivery = await sendEmailVerificationChallenge({
+      userId: user.id,
+      email: normalizeEmail(user.email),
+      recipientName: user.name,
+      requestedBy: Number(req.authUser?.id || 0) || null,
+      exposeTemplate: true,
+      deliveryModeOverride: 'manual',
+    });
+
+    return res.status(201).json({
+      success: true,
+      type,
+      user: {
+        id: user.id,
+        name: user.name,
+        email: normalizeEmail(user.email),
+      },
+      delivery,
+      prepared_email: delivery.email || null,
+    });
+  } catch (error) {
+    return res.status(500).json({ error: error.message || 'Failed to prepare notification' });
+  }
+});
+
+app.post('/api/admin/notifications/whatsapp/prepare', requireAdmin, async (req, res) => {
+  try {
+    const type = String(req.body?.type || '').trim().toLowerCase();
+    if (type !== 'phone_verification') {
+      return res.status(400).json({ error: 'Unsupported notification type' });
+    }
+
+    const targetUserId = Number(req.body?.user_id || 0);
+    const phoneParsed = parsePhoneInput(req.body?.phone);
+    if (phoneParsed.error) return res.status(400).json({ error: phoneParsed.error });
+    const targetPhone = phoneParsed.value;
+    let user = null;
+
+    if (targetUserId) {
+      user = dbGet(`SELECT id, name, phone, phone_verified FROM users WHERE id = ?`, [targetUserId]);
+    } else if (targetPhone) {
+      user = dbGet(`SELECT id, name, phone, phone_verified FROM users WHERE phone = ?`, [targetPhone]);
+    } else {
+      return res.status(400).json({ error: 'user_id or phone is required' });
+    }
+
+    if (!user || !normalizePhone(user.phone)) {
+      return res.status(404).json({ error: 'User with valid phone not found' });
+    }
+
+    if (Number(user.phone_verified || 0) === 1) {
+      return res.status(400).json({ error: 'Phone is already verified' });
+    }
+
+    const delivery = await sendPhoneVerificationChallenge({
+      userId: user.id,
+      phone: normalizePhone(user.phone),
+      recipientName: user.name,
+      requestedBy: Number(req.authUser?.id || 0) || null,
+      exposeTemplate: true,
+      deliveryModeOverride: 'manual',
+    });
+
+    return res.status(201).json({
+      success: true,
+      type,
+      user: {
+        id: user.id,
+        name: user.name,
+        phone: normalizePhone(user.phone),
+      },
+      delivery,
+      prepared_whatsapp: delivery.whatsapp || null,
+    });
+  } catch (error) {
+    return res.status(500).json({ error: error.message || 'Failed to prepare notification' });
+  }
+});
+
+app.post('/api/admin/notifications/:id/mark-sent', requireAdmin, (req, res) => {
+  try {
+    const eventId = Number(req.params.id || 0);
+    if (!eventId) return res.status(400).json({ error: 'Invalid notification id' });
+    const row = dbGet(`SELECT id FROM notification_events WHERE id = ?`, [eventId]);
+    if (!row) return res.status(404).json({ error: 'Notification event not found' });
+    updateNotificationEventStatus(eventId, {
+      status: 'sent',
+      sentBy: Number(req.authUser?.id || 0) || null,
+    });
+    return res.json({ success: true, id: eventId, status: 'sent' });
+  } catch (error) {
+    return res.status(500).json({ error: error.message || 'Failed to update notification status' });
+  }
+});
+
+app.post('/api/admin/users/:id/email/verify', requireAdmin, (req, res) => {
+  try {
+    const targetUserId = Number(req.params.id || 0);
+    if (!targetUserId) return res.status(400).json({ error: 'Invalid user id' });
+    const user = dbGet(`SELECT * FROM users WHERE id = ?`, [targetUserId]);
+    if (!user) return res.status(404).json({ error: 'User not found' });
+    const normalizedEmail = normalizeEmail(user.email);
+    if (!normalizedEmail) {
+      return res.status(400).json({ error: 'User does not have an email to verify' });
+    }
+
+    if (Number(user.email_verified || 0) !== 1) {
+      dbRun(`UPDATE users SET email_verified = 1 WHERE id = ?`, [targetUserId]);
+    }
+    dbRun(
+      `UPDATE email_verification_tokens
+       SET used = 1
+       WHERE user_id = ? AND email = ? AND used = 0`,
+      [targetUserId, normalizedEmail]
+    );
+    createNotificationEvent({
+      type: 'email_verification_admin_override',
+      channel: 'admin_action',
+      recipient: normalizedEmail,
+      recipientUserId: targetUserId,
+      subject: 'Email verified by admin',
+      body: `Admin #${Number(req.authUser?.id || 0)} manually marked email as verified.`,
+      metadata: {
+        action: 'mark_email_verified',
+      },
+      status: 'sent',
+      preparedBy: Number(req.authUser?.id || 0) || null,
+      sentBy: Number(req.authUser?.id || 0) || null,
+    });
+    const updated = sanitizeUser(dbGet(`SELECT * FROM users WHERE id = ?`, [targetUserId]));
+    return res.json({ success: true, user: updated, message: 'Email marked as verified by admin' });
+  } catch (error) {
+    return res.status(500).json({ error: error.message || 'Failed to verify email' });
+  }
+});
+
+app.post('/api/admin/users/:id/phone/verify', requireAdmin, (req, res) => {
+  try {
+    const targetUserId = Number(req.params.id || 0);
+    if (!targetUserId) return res.status(400).json({ error: 'Invalid user id' });
+    const user = dbGet(`SELECT * FROM users WHERE id = ?`, [targetUserId]);
+    if (!user) return res.status(404).json({ error: 'User not found' });
+    const normalizedPhone = normalizePhone(user.phone);
+    if (!normalizedPhone) {
+      return res.status(400).json({ error: 'User does not have a phone to verify' });
+    }
+    if (Number(user.phone_verified || 0) !== 1) {
+      dbRun(`UPDATE users SET phone_verified = 1 WHERE id = ?`, [targetUserId]);
+    }
+    dbRun(
+      `UPDATE phone_verification_tokens
+       SET used = 1
+       WHERE user_id = ? AND phone = ? AND used = 0`,
+      [targetUserId, normalizedPhone]
+    );
+    createNotificationEvent({
+      type: 'phone_verification_admin_override',
+      channel: 'admin_action',
+      recipient: normalizedPhone,
+      recipientUserId: targetUserId,
+      subject: 'Phone verified by admin',
+      body: `Admin #${Number(req.authUser?.id || 0)} manually marked phone as verified.`,
+      metadata: {
+        action: 'mark_phone_verified',
+      },
+      status: 'sent',
+      preparedBy: Number(req.authUser?.id || 0) || null,
+      sentBy: Number(req.authUser?.id || 0) || null,
+    });
+    const updated = sanitizeUser(dbGet(`SELECT * FROM users WHERE id = ?`, [targetUserId]));
+    return res.json({ success: true, user: updated, message: 'Phone marked as verified by admin' });
+  } catch (error) {
+    return res.status(500).json({ error: error.message || 'Failed to verify phone' });
+  }
+});
+
 app.get('/api/admin/password-reset-requests', requireAdmin, (_, res) => {
   try {
     const rows = dbAll(`
-      SELECT prr.*, u.name as user_name
+      SELECT prr.*, u.name as user_name, p.name as processed_by_name
       FROM password_reset_requests prr
       LEFT JOIN users u ON u.id = prr.user_id
+      LEFT JOIN users p ON p.id = prr.processed_by
       ORDER BY prr.created_at DESC
     `);
     return res.json(rows);
@@ -1628,24 +2921,125 @@ app.get('/api/admin/password-reset-requests', requireAdmin, (_, res) => {
 
 app.put('/api/admin/password-reset-requests/:id', requireAdmin, (req, res) => {
   try {
-    const { status, admin_note, new_password } = req.body || {};
-    if (!['approved', 'rejected', 'pending'].includes(String(status || '').toLowerCase())) {
+    const { status, notify_channel } = req.body || {};
+    const normalizedStatus = String(status || '').toLowerCase();
+    if (!['approved', 'rejected', 'pending'].includes(normalizedStatus)) {
       return res.status(400).json({ error: 'Invalid status' });
     }
     const request = dbGet(`SELECT * FROM password_reset_requests WHERE id = ?`, [req.params.id]);
     if (!request) return res.status(404).json({ error: 'Request not found' });
-    const normalizedStatus = String(status).toLowerCase();
-    if (normalizedStatus === 'approved' && request.user_id) {
-      if (!isStrongPassword(new_password)) {
-        return res.status(400).json({ error: PASSWORD_POLICY_MESSAGE });
+    const processedAt = new Date().toISOString();
+    const notifyChannel = String(notify_channel || 'none').trim().toLowerCase();
+    if (!['none', 'email', 'whatsapp', 'both'].includes(notifyChannel)) {
+      return res.status(400).json({ error: 'Invalid notify channel' });
+    }
+    if (normalizedStatus !== 'approved' && notifyChannel !== 'none') {
+      return res.status(400).json({ error: 'Notification preparation is available only for approved requests' });
+    }
+    const targetUser = request.user_id
+      ? dbGet(`SELECT id, name, email, phone FROM users WHERE id = ?`, [request.user_id])
+      : null;
+    const recipientName = String(targetUser?.name || 'Customer').trim() || 'Customer';
+    const recipientEmail = normalizeEmail(targetUser?.email || request.email);
+    const recipientPhone = normalizePhone(targetUser?.phone || request.phone);
+    let generatedPassword = '';
+    let adminNote = '';
+    if (normalizedStatus === 'approved') {
+      if (!request.user_id) {
+        return res.status(400).json({ error: 'User reference is required for approved reset' });
       }
-      dbRun(`UPDATE users SET password_hash = ?, must_change_password = 1 WHERE id = ?`, [hashPassword(new_password), request.user_id]);
+      if (notifyChannel === 'none') {
+        return res.status(400).json({ error: 'Choose email or WhatsApp for approved reset' });
+      }
+      if ((notifyChannel === 'email' || notifyChannel === 'both') && !recipientEmail) {
+        return res.status(400).json({ error: 'Email is not available for this user' });
+      }
+      if ((notifyChannel === 'whatsapp' || notifyChannel === 'both') && !recipientPhone) {
+        return res.status(400).json({ error: 'Phone number is not available for this user' });
+      }
+      generatedPassword = generateTemporaryPassword();
+      dbRun(`UPDATE users SET password_hash = ?, must_change_password = 1 WHERE id = ?`, [
+        hashPassword(generatedPassword),
+        request.user_id,
+      ]);
+      adminNote = `Password reset approved by admin. Temporary password was generated automatically and shared via ${notifyChannel}.`;
+    } else if (normalizedStatus === 'rejected') {
+      adminNote = 'Password reset request rejected by admin.';
+    } else {
+      adminNote = 'Password reset request moved to pending by admin.';
     }
     dbRun(
-      `UPDATE password_reset_requests SET status = ?, admin_note = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?`,
-      [normalizedStatus, admin_note || null, req.params.id]
+      `UPDATE password_reset_requests
+       SET status = ?, admin_note = ?, processed_by = ?, processed_at = ?, updated_at = CURRENT_TIMESTAMP
+       WHERE id = ?`,
+      [normalizedStatus, adminNote, Number(req.authUser?.id || 0) || null, processedAt, req.params.id]
     );
-    return res.json({ success: true });
+    const response = { success: true, status: normalizedStatus, admin_note: adminNote };
+    if (normalizedStatus === 'approved' && notifyChannel !== 'none') {
+      const preparedBy = Number(req.authUser?.id || 0) || null;
+      const templatePayload = {
+        recipientName,
+        newPassword: generatedPassword,
+        loginIdentifier: recipientEmail || recipientPhone || '',
+        loginUrl: PASSWORD_RESET_LOGIN_URL,
+      };
+      const notification = {};
+      if (notifyChannel === 'email' || notifyChannel === 'both') {
+        const preparedEmail = notificationService.prepareEmail({
+          type: 'password_reset_admin',
+          to: recipientEmail,
+          payload: templatePayload,
+        });
+        const eventId = createNotificationEvent({
+          type: 'password_reset_admin',
+          channel: 'email',
+          recipient: preparedEmail.to,
+          recipientUserId: Number(request.user_id || 0) || null,
+          subject: preparedEmail.subject,
+          body: preparedEmail.body,
+          metadata: {
+            mode: 'manual',
+            request_id: Number(req.params.id || 0) || null,
+            login_url: PASSWORD_RESET_LOGIN_URL,
+          },
+          status: 'prepared',
+          preparedBy,
+        });
+        notification.email = {
+          event_id: eventId,
+          ...preparedEmail,
+        };
+      }
+      if (notifyChannel === 'whatsapp' || notifyChannel === 'both') {
+        const preparedWhatsApp = notificationService.prepareWhatsApp({
+          type: 'password_reset_admin',
+          to: recipientPhone,
+          payload: templatePayload,
+        });
+        const eventId = createNotificationEvent({
+          type: 'password_reset_admin',
+          channel: 'whatsapp',
+          recipient: preparedWhatsApp.to,
+          recipientUserId: Number(request.user_id || 0) || null,
+          subject: 'Password reset by admin',
+          body: preparedWhatsApp.text,
+          metadata: {
+            mode: 'manual',
+            request_id: Number(req.params.id || 0) || null,
+            login_url: PASSWORD_RESET_LOGIN_URL,
+            whatsapp_url: preparedWhatsApp.whatsapp_url,
+          },
+          status: 'prepared',
+          preparedBy,
+        });
+        notification.whatsapp = {
+          event_id: eventId,
+          ...preparedWhatsApp,
+        };
+      }
+      response.notification = notification;
+    }
+    return res.json(response);
   } catch (error) {
     return res.status(500).json({ error: error.message });
   }
@@ -1655,6 +3049,18 @@ app.post('/api/admin/backup/create', requireAdmin, (_, res) => {
   try {
     const backup = createDatabaseBackup('manual');
     return res.status(201).json({ success: true, backup });
+  } catch (error) {
+    return res.status(500).json({ error: error.message });
+  }
+});
+
+app.get('/api/admin/backup/status', requireAdmin, (_, res) => {
+  try {
+    return res.json({
+      ...autoBackupState,
+      running: autoBackupRunning,
+      backup_dir: BACKUP_DIR,
+    });
   } catch (error) {
     return res.status(500).json({ error: error.message });
   }
@@ -1751,7 +3157,9 @@ app.post('/api/users', requireAdmin, (req, res) => {
   try {
     const { name, email, phone, address, password, role } = req.body || {};
     const normalizedEmail = normalizeEmail(email);
-    const normalizedPhone = normalizePhone(phone);
+    const phoneParsed = parsePhoneInput(phone);
+    if (phoneParsed.error) return res.status(400).json({ error: phoneParsed.error });
+    const normalizedPhone = phoneParsed.value;
     if (!name || String(name).trim().length < 2) {
       return res.status(400).json({ error: 'Name must be at least 2 characters' });
     }
@@ -1774,11 +3182,31 @@ app.post('/api/users', requireAdmin, (req, res) => {
     }
     const nextPassword = providedPassword || generateTemporaryPassword();
     const mustChangePassword = providedPassword ? 0 : 1;
+    const requestedEmailVerified = Number(req.body?.email_verified || 0) === 1;
+    const requestedPhoneVerified = Number(req.body?.phone_verified || 0) === 1;
+    const emailVerifiedValue = normalizedEmail ? (requestedEmailVerified ? 1 : 0) : 0;
+    const phoneVerifiedValue = normalizedPhone ? (requestedPhoneVerified ? 1 : 0) : 0;
     const result = dbRun(
-      `INSERT INTO users (role, name, email, phone, address, password_hash, must_change_password) VALUES (?, ?, ?, ?, ?, ?, ?)`,
-      [userRole, String(name).trim(), normalizedEmail, normalizedPhone, address || null, hashPassword(nextPassword), mustChangePassword]
+      `INSERT INTO users (role, name, email, email_verified, phone, phone_verified, address, password_hash, must_change_password) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      [userRole, String(name).trim(), normalizedEmail, emailVerifiedValue, normalizedPhone, phoneVerifiedValue, address || null, hashPassword(nextPassword), mustChangePassword]
     );
     const user = sanitizeUser(dbGet(`SELECT * FROM users WHERE id = ?`, [result.lastInsertRowid]));
+    if (normalizedEmail && emailVerifiedValue === 0) {
+      sendEmailVerificationChallenge({
+        userId: user.id,
+        email: normalizedEmail,
+        recipientName: user.name,
+        requestedBy: Number(req.authUser?.id || 0) || null,
+      }).catch(() => {});
+    }
+    if (normalizedPhone && phoneVerifiedValue === 0) {
+      sendPhoneVerificationChallenge({
+        userId: user.id,
+        phone: normalizedPhone,
+        recipientName: user.name,
+        requestedBy: Number(req.authUser?.id || 0) || null,
+      }).catch(() => {});
+    }
     return res.status(201).json({ success: true, user, message: 'User created successfully' });
   } catch (error) {
     return res.status(500).json({ error: error.message });
@@ -1798,8 +3226,26 @@ app.put('/api/users/:id', requireAuth, (req, res) => {
     const { name, email, phone, address, profile_image, role } = req.body || {};
     const current = dbGet(`SELECT * FROM users WHERE id = ?`, [req.params.id]);
     if (!current) return res.status(404).json({ error: 'User not found' });
-    const normalizedPhone = phone !== undefined ? normalizePhone(phone) : current.phone;
-    const emailValue = email !== undefined ? normalizeEmail(email) : current.email;
+    if (isAdmin && !isSelf) {
+      if (current.role === 'admin') {
+        return res.status(400).json({ error: 'Admin users cannot be modified' });
+      }
+      const emailVerified = Number(current.email_verified || 0) === 1;
+      const phoneVerified = Number(current.phone_verified || 0) === 1;
+      if (!emailVerified || !phoneVerified) {
+        return res.status(403).json({ error: 'User type can be changed only when both email and phone are verified' });
+      }
+      const nextRole = String(role || current.role).trim().toLowerCase() === 'admin' ? 'admin' : 'customer';
+      dbRun(`UPDATE users SET role = ? WHERE id = ?`, [nextRole, req.params.id]);
+      const updated = sanitizeUser(dbGet(`SELECT * FROM users WHERE id = ?`, [req.params.id]));
+      return res.json(updated);
+    }
+    const phoneParsed = phone !== undefined ? parsePhoneInput(phone) : { value: current.phone, error: null };
+    if (phoneParsed.error) return res.status(400).json({ error: phoneParsed.error });
+    const normalizedPhone = phoneParsed.value;
+    const currentEmail = normalizeEmail(current.email);
+    const currentPhone = normalizePhone(current.phone);
+    const emailValue = email !== undefined ? normalizeEmail(email) : currentEmail;
     if (emailValue) {
       const existing = dbGet(`SELECT id FROM users WHERE email = ? AND id != ?`, [emailValue, req.params.id]);
       if (existing) return res.status(400).json({ error: 'Email already in use' });
@@ -1808,19 +3254,56 @@ app.put('/api/users/:id', requireAuth, (req, res) => {
       const existing = dbGet(`SELECT id FROM users WHERE phone = ? AND id != ?`, [normalizedPhone, req.params.id]);
       if (existing) return res.status(400).json({ error: 'Phone number already in use' });
     }
+    let emailVerifiedValue = Number(current.email_verified || 0) === 1 ? 1 : 0;
+    let phoneVerifiedValue = Number(current.phone_verified || 0) === 1 ? 1 : 0;
+    const emailChanged = email !== undefined && emailValue !== currentEmail;
+    const phoneChanged = phone !== undefined && normalizedPhone !== currentPhone;
+    if (!emailValue) {
+      emailVerifiedValue = 0;
+    } else if (emailChanged) {
+      emailVerifiedValue = isAdmin && Number(req.body?.email_verified || 0) === 1 ? 1 : 0;
+    } else if (isAdmin && email !== undefined && req.body?.email_verified !== undefined) {
+      emailVerifiedValue = Number(req.body?.email_verified || 0) === 1 ? 1 : 0;
+    }
+    if (!normalizedPhone) {
+      phoneVerifiedValue = 0;
+    } else if (phoneChanged) {
+      phoneVerifiedValue = isAdmin && Number(req.body?.phone_verified || 0) === 1 ? 1 : 0;
+    } else if (isAdmin && phone !== undefined && req.body?.phone_verified !== undefined) {
+      phoneVerifiedValue = Number(req.body?.phone_verified || 0) === 1 ? 1 : 0;
+    }
     dbRun(
-      `UPDATE users SET name = ?, email = ?, phone = ?, address = ?, profile_image = ?, role = ? WHERE id = ?`,
+      `UPDATE users SET name = ?, email = ?, email_verified = ?, phone = ?, phone_verified = ?, address = ?, profile_image = ?, role = ? WHERE id = ?`,
       [
         name !== undefined ? String(name).trim() : current.name,
         emailValue,
+        emailVerifiedValue,
         normalizedPhone,
+        phoneVerifiedValue,
         address !== undefined ? address : current.address,
         profile_image !== undefined ? (String(profile_image || '').trim() || null) : current.profile_image,
-        isAdmin ? (role || current.role) : current.role,
+        current.role,
         req.params.id,
       ]
     );
-    return res.json(sanitizeUser(dbGet(`SELECT * FROM users WHERE id = ?`, [req.params.id])));
+    const updated = sanitizeUser(dbGet(`SELECT * FROM users WHERE id = ?`, [req.params.id]));
+    if (emailChanged && emailValue && emailVerifiedValue === 0) {
+      sendEmailVerificationChallenge({
+        userId: Number(req.params.id),
+        email: emailValue,
+        recipientName: name !== undefined ? String(name).trim() : current.name,
+        requestedBy: Number(req.authUser?.id || 0) || null,
+      }).catch(() => {});
+    }
+    if (phoneChanged && normalizedPhone && phoneVerifiedValue === 0) {
+      sendPhoneVerificationChallenge({
+        userId: Number(req.params.id),
+        phone: normalizedPhone,
+        recipientName: name !== undefined ? String(name).trim() : current.name,
+        requestedBy: Number(req.authUser?.id || 0) || null,
+      }).catch(() => {});
+    }
+    return res.json(updated);
   } catch (error) {
     return res.status(500).json({ error: error.message });
   }
@@ -1917,6 +3400,11 @@ const validateCustomerProfile = (user, addressObj) => {
   if (!user?.phone || normalizePhone(user.phone)?.length < 10) {
     issues.push({ field: 'phone', message: 'Mobile number is required' });
   }
+  const emailVerified = Number(user?.email_verified || 0) === 1;
+  const phoneVerified = Number(user?.phone_verified || 0) === 1;
+  if (!emailVerified && !phoneVerified) {
+    issues.push({ field: 'verification', message: 'Verify at least one contact method (email or phone) before placing orders' });
+  }
   if (!addressObj?.street) issues.push({ field: 'street', message: 'Street address is required' });
   if (!addressObj?.city) issues.push({ field: 'city', message: 'City is required' });
   if (!addressObj?.state) issues.push({ field: 'state', message: 'State is required' });
@@ -1931,7 +3419,7 @@ app.get('/api/customers/:id/profile', requireAuth, (req, res) => {
     if (req.authUser.role !== 'admin' && Number(req.authUser.id) !== targetUserId) {
       return res.status(403).json({ error: 'Forbidden' });
     }
-    const user = dbGet(`SELECT id, name, email, phone, address, profile_image, role FROM users WHERE id = ?`, [req.params.id]);
+    const user = dbGet(`SELECT id, name, email, email_verified, phone, phone_verified, address, profile_image, role FROM users WHERE id = ?`, [req.params.id]);
     if (!user) return res.status(404).json({ error: 'Customer not found' });
     let address = {};
     if (user.address) {
@@ -1955,7 +3443,7 @@ app.post('/api/orders/validate-customer', (req, res) => {
   try {
     const userId = req.body?.user_id;
     if (!userId) return res.status(400).json({ error: 'MISSING_CUSTOMER', message: 'Customer ID is required' });
-    const user = dbGet(`SELECT id, name, email, phone, address, role FROM users WHERE id = ?`, [userId]);
+    const user = dbGet(`SELECT id, name, email, email_verified, phone, phone_verified, address, role FROM users WHERE id = ?`, [userId]);
     if (!user) return res.status(404).json({ error: 'CUSTOMER_NOT_FOUND', message: 'Customer not found' });
     let address = {};
     if (user.address) {
@@ -1969,7 +3457,15 @@ app.post('/api/orders/validate-customer', (req, res) => {
     return res.json({
       valid: validation.complete,
       isAdmin: user.role === 'admin',
-      profile: { id: user.id, name: user.name, email: user.email, phone: user.phone, address },
+      profile: {
+        id: user.id,
+        name: user.name,
+        email: user.email,
+        email_verified: Number(user.email_verified || 0) === 1,
+        phone: user.phone,
+        phone_verified: Number(user.phone_verified || 0) === 1,
+        address,
+      },
       validation,
     });
   } catch (error) {
@@ -2593,16 +4089,35 @@ const placeOrder = (payload) => {
   const {
     user_id = null,
     customer_name,
-    customer_email,
+    customer_email = '',
     customer_phone = null,
     shipping_address = {},
     items = [],
     payment_method = 'cash',
   } = payload;
 
-  if (!customer_name || !customer_email || !items.length) {
+  if (!customer_name || !items.length) {
     throw new Error('Missing required fields');
   }
+  const normalizedCustomerEmail = normalizeEmail(customer_email) || '';
+  if (user_id) {
+    const account = dbGet(`SELECT id, role, email_verified, phone_verified FROM users WHERE id = ?`, [user_id]);
+    if (!account) {
+      throw new Error('CUSTOMER_NOT_FOUND');
+    }
+    if (
+      String(account.role || '').toLowerCase() !== 'admin' &&
+      Number(account.email_verified || 0) !== 1 &&
+      Number(account.phone_verified || 0) !== 1
+    ) {
+      throw new Error('INCOMPLETE_PROFILE: Verify at least one contact method (email or phone) before placing orders');
+    }
+  }
+  const phoneParsed = parsePhoneInput(customer_phone);
+  if (phoneParsed.error) {
+    throw new Error(phoneParsed.error);
+  }
+  const normalizedCustomerPhone = phoneParsed.value;
 
   const parsedItems = items.map((it) => ({
     product_id: Number(it.product_id),
@@ -2634,8 +4149,8 @@ const placeOrder = (payload) => {
         orderNumber,
         user_id,
         customer_name,
-        customer_email,
-        normalizePhone(customer_phone),
+        normalizedCustomerEmail,
+        normalizedCustomerPhone,
         JSON.stringify(shipping_address || {}),
         total,
         'pending',
@@ -2681,9 +4196,36 @@ app.post('/api/orders', (req, res) => {
 app.post('/api/orders/create-validated', (req, res) => {
   try {
     const body = req.body || {};
-    const effectiveUserId = body.user_id || body.selected_customer_id || null;
+    const effectiveUserId = Number(body.user_id || body.selected_customer_id || 0) || null;
     if (body.is_admin_order && !body.selected_customer_id) {
       return res.status(400).json({ error: 'Selected customer is required for admin order' });
+    }
+    if (effectiveUserId) {
+      const customer = dbGet(
+        `SELECT id, name, email_verified, phone_verified, phone, address, role FROM users WHERE id = ?`,
+        [effectiveUserId]
+      );
+      if (!customer) {
+        return res.status(404).json({ error: 'CUSTOMER_NOT_FOUND', message: 'Customer not found' });
+      }
+      let address = {};
+      if (customer.address) {
+        try {
+          address = JSON.parse(customer.address);
+        } catch (_) {
+          address = { street: customer.address };
+        }
+      }
+      if (String(customer.role || '').toLowerCase() !== 'admin') {
+        const validation = validateCustomerProfile(customer, address);
+        if (!validation.complete) {
+          return res.status(400).json({
+            error: 'INCOMPLETE_PROFILE',
+            message: 'Customer profile is incomplete',
+            issues: validation.issues,
+          });
+        }
+      }
     }
 
     const result = placeOrder({
@@ -4110,5 +5652,6 @@ app.get('/', (_, res) => {
 
 app.listen(PORT, '0.0.0.0', () => {
   console.log(`BARMAN STORE API running on http://localhost:${PORT}`);
+  startAutoBackupScheduler();
 });
 

@@ -704,6 +704,83 @@ tbody tr:hover {
   background: rgba(0, 0, 0, 0.1);
 }
 
+.action-btn:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
+.action-btn:disabled:hover {
+  background: none;
+}
+
+.account-actions {
+  display: flex;
+  flex-direction: column;
+  gap: 1rem;
+}
+
+.account-actions-header {
+  display: flex;
+  justify-content: space-between;
+  gap: 0.75rem;
+  align-items: center;
+}
+
+.account-actions-subtitle {
+  margin: 0;
+  color: #64748b;
+}
+
+.account-actions-section {
+  display: flex;
+  flex-direction: column;
+  gap: 0.55rem;
+}
+
+.account-actions-section h2 {
+  margin: 0;
+  color: #1f2937;
+  font-size: 1rem;
+}
+
+.prepared-message-box {
+  margin-top: 0.75rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.45rem;
+}
+
+.prepared-message-box strong {
+  font-size: 0.82rem;
+}
+
+.prepared-message-box textarea {
+  padding: 6px 8px;
+  border-radius: 6px;
+  border: 1px solid var(--color-border);
+  width: 100%;
+  box-sizing: border-box;
+}
+
+.prepared-actions {
+  display: flex;
+  gap: 0.4rem;
+  flex-wrap: wrap;
+}
+
+.account-actions .spinning {
+  animation: admin-spin 1s linear infinite;
+}
+
+@keyframes admin-spin {
+  from {
+    transform: rotate(0deg);
+  }
+  to {
+    transform: rotate(360deg);
+  }
+}
+
 .users-group + .users-group {
   margin-top: 1.25rem;
 }

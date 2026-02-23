@@ -1,9 +1,10 @@
 import React, { useState, useEffect } from 'react';
 import { Download, Trash2, Search } from 'lucide-react';
 import { billingApi } from '../services/api';
-import { buildWhatsAppUrl } from '../utils/whatsapp';
+import { sendWhatsAppSmart } from '../utils/whatsapp';
 import { printHtmlDocument, escapeHtml } from '../utils/printService';
 import { createPdfDoc, addAutoTable, addPdfFooterWithPagination, savePdf, safeFileName } from '../utils/pdfService';
+import { buildBillShareText } from '../utils/messageTemplates';
 import company from '../config/company';
 import * as info from './info';
 import './BillsViewer.css';
@@ -139,40 +140,22 @@ const BillsViewer = () => {
     savePdf(doc, `${safeFileName(bill.bill_number || 'Bill')}_Invoice`);
   };
 
-  const buildShareText = (bill) => {
-    const items = Array.isArray(bill.items) ? bill.items : [];
-    const lines = [
-      `BILL #${bill.bill_number || ''}`,
-      `Date: ${new Date(bill.created_at || Date.now()).toLocaleString()}`,
-      `Customer: ${bill.customer_name || ''}`,
-      bill.customer_phone ? `Phone: ${bill.customer_phone}` : null,
-      bill.customer_email ? `Email: ${bill.customer_email}` : null,
-      bill.customer_address ? `Address: ${bill.customer_address}` : null,
-      '',
-      'Items:'
-    ];
-    if (items.length === 0) {
-      lines.push('- None');
-    } else {
-      items.forEach((it) => {
-        const name = it.product_name || it.name || 'Item';
-        const qty = Number(it.qty || it.quantity || 0);
-        const unit = it.unit || '';
-        const amount = Number(it.amount || 0);
-        lines.push(`- ${name} ${qty}${unit ? ' ' + unit : ''} : Rs ${amount}`);
-      });
-    }
-    lines.push('');
-    lines.push(`Total: Rs ${Number(bill.total_amount || 0)}`);
-    lines.push(`Paid: Rs ${Number(bill.paid_amount || 0)}`);
-    lines.push(`Credit: Rs ${Number(bill.credit_amount || 0)}`);
-    lines.push(`Status: ${bill.payment_status || ''}`);
-    if (info.ONLINE_STORE_URL) {
-      lines.push('');
-      lines.push(`Visit online: ${info.ONLINE_STORE_URL}`);
-    }
-    return lines.filter(Boolean).join('\n');
-  };
+  const buildShareText = (bill) => buildBillShareText({
+    companyTitle: info.TITLE || 'BARMAN STORE',
+    billNumber: bill?.bill_number,
+    createdAt: bill?.created_at,
+    customerName: bill?.customer_name,
+    customerPhone: bill?.customer_phone,
+    customerEmail: bill?.customer_email,
+    customerAddress: bill?.customer_address,
+    items: bill?.items || [],
+    totalAmount: bill?.total_amount,
+    paidAmount: bill?.paid_amount,
+    creditAmount: bill?.credit_amount,
+    paymentStatus: bill?.payment_status,
+    onlineStoreUrl: info.ONLINE_STORE_URL,
+    thankYouLine: 'Thank you for shopping with us.'
+  });
 
   const buildSmsText = (bill) => {
     const text = `BILL ${bill.bill_number || ''} Total Rs ${Number(bill.total_amount || 0)} Paid Rs ${Number(bill.paid_amount || 0)} Credit Rs ${Number(bill.credit_amount || 0)}. ${company.name}`;
@@ -300,6 +283,24 @@ const BillsViewer = () => {
     }
   };
 
+  const handleSendWhatsApp = async (bill) => {
+    const result = await sendWhatsAppSmart({
+      phone: bill?.customer_phone,
+      text: buildShareText(bill),
+    });
+    if (result.status === 'missing_phone') {
+      alert('Customer phone is missing or invalid. Please update phone and try again.');
+      return;
+    }
+    if (result.status === 'fallback_copy') {
+      alert('Message was long, copied to clipboard. Paste it in WhatsApp.');
+      return;
+    }
+    if (result.status === 'fallback_no_copy') {
+      alert('Message was long. Opened WhatsApp chat, please paste message manually.');
+    }
+  };
+
   const filteredBills = bills.filter(bill =>
     bill.bill_number?.toLowerCase().includes(searchTerm.toLowerCase()) ||
     bill.customer_name?.toLowerCase().includes(searchTerm.toLowerCase()) ||
@@ -311,7 +312,7 @@ const BillsViewer = () => {
   return (
     <div className="bills-viewer">
       <div className="bills-viewer-header">
-        <h1>📋 Bills History</h1>
+        <h1>Bills History</h1>
         <p>View and manage all created bills</p>
       </div>
 
@@ -352,7 +353,7 @@ const BillsViewer = () => {
               >
                 <div className="bill-card-header">
                   <span className="bill-number">{bill.bill_number}</span>
-                  <span className="bill-amount">₹{bill.total_amount}</span>
+                  <span className="bill-amount">?{bill.total_amount}</span>
                 </div>
                 <div className="bill-card-details">
                   <p><strong>{bill.customer_name}</strong></p>
@@ -402,18 +403,14 @@ const BillsViewer = () => {
                   >
                     SMS
                   </button>
-                  <a
+                  <button
+                    type="button"
                     className="action-btn whatsapp-btn"
-                    href={buildWhatsAppUrl({
-                      phone: selectedBill?.customer_phone,
-                      text: buildShareText(selectedBill),
-                    })}
-                    target="_blank"
-                    rel="noreferrer"
+                    onClick={() => handleSendWhatsApp(selectedBill)}
                     title="Share via WhatsApp"
                   >
                     WhatsApp
-                  </a>
+                  </button>
                   <button
                     className="action-btn delete-btn"
                     onClick={() => deleteBill(selectedBill.id)}
@@ -466,9 +463,9 @@ const BillsViewer = () => {
                           <td>{item.product_name}</td>
                           <td>{item.qty}</td>
                           <td>{item.unit}</td>
-                          <td>₹{item.mrp}</td>
-                          <td>₹{item.discount}</td>
-                          <td>₹{item.amount}</td>
+                          <td>?{item.mrp}</td>
+                          <td>?{item.discount}</td>
+                          <td>?{item.amount}</td>
                         </tr>
                       ))}
                     </tbody>
@@ -480,23 +477,23 @@ const BillsViewer = () => {
                 <h3>Payment Summary</h3>
                 <div className="summary-row">
                   <span>Subtotal:</span>
-                  <span>₹{selectedBill.subtotal}</span>
+                  <span>?{selectedBill.subtotal}</span>
                 </div>
                 <div className="summary-row">
                   <span>Discount:</span>
-                  <span>₹{selectedBill.discount_amount}</span>
+                  <span>?{selectedBill.discount_amount}</span>
                 </div>
                 <div className="summary-row highlight">
                   <span>Total:</span>
-                  <span>₹{selectedBill.total_amount}</span>
+                  <span>?{selectedBill.total_amount}</span>
                 </div>
                 <div className="summary-row">
                   <span>Paid Amount:</span>
-                  <span>₹{selectedBill.paid_amount ?? 0}</span>
+                  <span>?{selectedBill.paid_amount ?? 0}</span>
                 </div>
                 <div className="summary-row">
                   <span>Credit Amount:</span>
-                  <span>₹{selectedBill.credit_amount ?? 0}</span>
+                  <span>?{selectedBill.credit_amount ?? 0}</span>
                 </div>
                 <div className="summary-row">
                   <span>Payment Method:</span>

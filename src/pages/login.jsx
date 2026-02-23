@@ -1,34 +1,47 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import { authApi } from '../services/api';
+import { isValidIndianPhone, normalizeIndianPhone, PHONE_POLICY_MESSAGE } from '../utils/phone';
 import './login.css';
-
-// Phone number validation and formatting
-const formatPhoneNumber = (phone) => {
-  const cleaned = phone.replace(/\D/g, '');
-  // Normalize to local 10-digit format when country code is provided.
-  if (cleaned.length === 12 && cleaned.startsWith('91')) return cleaned.slice(2);
-  if (cleaned.length === 11 && cleaned.startsWith('1')) return cleaned.slice(1);
-  return cleaned;
-};
-
-const validatePhoneNumber = (phone) => {
-  const normalized = formatPhoneNumber(phone);
-  return normalized.length === 10;
-};
 
 const validateEmail = (email) => {
   const re = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
   return re.test(email);
 };
+const validateStrongPassword = (password) => {
+  const value = String(password || '');
+  return (
+    value.length >= 10 &&
+    /[a-z]/.test(value) &&
+    /[A-Z]/.test(value) &&
+    /[0-9]/.test(value) &&
+    /[^A-Za-z0-9]/.test(value)
+  );
+};
+
+const parseIdentifier = (rawValue) => {
+  const raw = String(rawValue || '').trim();
+  if (!raw) return { error: 'Enter your email or phone number' };
+  if (raw.includes('@')) {
+    const email = raw.toLowerCase();
+    if (!validateEmail(email)) {
+      return { error: 'Please enter a valid email address' };
+    }
+    return { email, phone: null, type: 'email' };
+  }
+  if (!isValidIndianPhone(raw)) {
+    return { error: PHONE_POLICY_MESSAGE };
+  }
+  return { email: null, phone: normalizeIndianPhone(raw), type: 'phone' };
+};
 
 function Login({ setUser }) {
-  const [loginMethod, setLoginMethod] = useState('email'); // 'email' or 'phone'
-  const [email, setEmail] = useState('');
-  const [phone, setPhone] = useState('');
+  const [identifier, setIdentifier] = useState('');
   const [password, setPassword] = useState('');
+  const [confirmPassword, setConfirmPassword] = useState('');
   const [isRegistering, setIsRegistering] = useState(false);
   const [name, setName] = useState('');
+  const [registerEmail, setRegisterEmail] = useState('');
   const [registerPhone, setRegisterPhone] = useState('');
   const [address, setAddress] = useState('');
   const [loading, setLoading] = useState(false);
@@ -36,6 +49,23 @@ function Login({ setUser }) {
   const [success, setSuccess] = useState('');
   const [resetReason, setResetReason] = useState('');
   const navigate = useNavigate();
+
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+    const params = new URLSearchParams(window.location.search);
+    const qpEmail = String(params.get('email') || '').trim().toLowerCase();
+    const qpPhone = normalizeIndianPhone(params.get('phone') || '');
+    const qpToken = String(params.get('token') || '').trim();
+    const qpPhoneToken = String(params.get('phoneToken') || '').trim();
+    if (qpEmail) {
+      setIdentifier(qpEmail);
+    } else if (qpPhone) {
+      setIdentifier(qpPhone);
+    }
+    if (qpToken || qpPhoneToken) {
+      setSuccess('Verification token detected. Sign in and complete verification from your Profile page.');
+    }
+  }, []);
 
   const handleSubmit = async (e) => {
     e.preventDefault();
@@ -46,54 +76,76 @@ function Login({ setUser }) {
     try {
       let data;
       if (isRegistering) {
-        // Registration with optional phone and address
-        const phoneValue = registerPhone || null;
-        const addressValue = address || null;
-        data = await authApi.register(email, password, name, phoneValue, addressValue);
-      } else {
-        // Login with either email or phone
-        if (loginMethod === 'email') {
-          if (!validateEmail(email)) {
-            setError('Please enter a valid email address');
-            setLoading(false);
-            return;
-          }
-          data = await authApi.login(email, password);
-        } else {
-          if (!validatePhoneNumber(phone)) {
-            setError('Please enter a valid phone number (10-11 digits)');
-            setLoading(false);
-            return;
-          }
-          data = await authApi.loginWithPhone(formatPhoneNumber(phone), password);
+        const normalizedRegisterEmail = String(registerEmail || '').trim().toLowerCase();
+        const normalizedRegisterPhone = registerPhone ? normalizeIndianPhone(registerPhone) : '';
+        if (!normalizedRegisterEmail && !normalizedRegisterPhone) {
+          setError('Enter at least one contact: email or phone');
+          setLoading(false);
+          return;
         }
+        if (normalizedRegisterEmail && !validateEmail(normalizedRegisterEmail)) {
+          setError('Please enter a valid email address');
+          setLoading(false);
+          return;
+        }
+        if (password !== confirmPassword) {
+          setError('Password and confirm password do not match');
+          setLoading(false);
+          return;
+        }
+        if (registerPhone && !normalizedRegisterPhone) {
+          setError(PHONE_POLICY_MESSAGE);
+          setLoading(false);
+          return;
+        }
+        if (!validateStrongPassword(password)) {
+          setError('Password must be at least 10 characters and include uppercase, lowercase, number, and special character');
+          setLoading(false);
+          return;
+        }
+        data = await authApi.register(
+          normalizedRegisterEmail || null,
+          password,
+          confirmPassword,
+          name,
+          normalizedRegisterPhone || null,
+          address || null
+        );
+      } else {
+        const parsed = parseIdentifier(identifier);
+        if (parsed.error) {
+          setError(parsed.error);
+          setLoading(false);
+          return;
+        }
+        data = parsed.type === 'email'
+          ? await authApi.login(parsed.email, password)
+          : await authApi.loginWithPhone(parsed.phone, password);
       }
 
-      // Store user and token in localStorage and state
       localStorage.setItem('user', JSON.stringify({ ...data.user, token: data.token }));
       setUser({ ...data.user, token: data.token });
 
-      // Redirect based on role
       if (data.user.must_change_password) {
-        navigate('/change-password');
+        const forceParams = new URLSearchParams();
+        forceParams.set('force', '1');
+        const nextEmail = String(data.user?.email || '').trim().toLowerCase();
+        const nextPhone = normalizeIndianPhone(data.user?.phone || '');
+        if (nextEmail) {
+          forceParams.set('email', nextEmail);
+        } else if (nextPhone) {
+          forceParams.set('phone', nextPhone);
+        }
+        navigate(`/change-password?${forceParams.toString()}`);
       } else if (data.user.role === 'admin') {
         navigate('/admin');
       } else {
         navigate('/');
       }
     } catch (err) {
-      setError(err.message);
+      setError(err.message || 'Authentication failed');
     } finally {
       setLoading(false);
-    }
-  };
-
-  const handlePhoneChange = (e, isRegister) => {
-    const value = e.target.value;
-    if (isRegister) {
-      setRegisterPhone(value);
-    } else {
-      setPhone(value);
     }
   };
 
@@ -101,15 +153,26 @@ function Login({ setUser }) {
     try {
       setError('');
       setSuccess('');
-      if (!email && !phone) {
+      if (String(resetReason || '').trim().length < 5) {
+        setError('Please provide a short reason (min 5 characters) for admin review');
+        return;
+      }
+      const parsed = parseIdentifier(identifier);
+      if (parsed.error) {
         setError('Enter your email or phone first to request reset');
         return;
       }
-      await authApi.requestPasswordReset(email || null, phone || null, resetReason || null);
+      await authApi.requestPasswordReset(parsed.email, parsed.phone, resetReason || null);
       setSuccess('Reset request sent to admin');
     } catch (err) {
       setError(err.message || 'Failed to submit reset request');
     }
+  };
+
+  const switchMode = (registerMode) => {
+    setIsRegistering(registerMode);
+    setError('');
+    setSuccess('');
   };
 
   return (
@@ -117,9 +180,9 @@ function Login({ setUser }) {
       <div className="login-container">
         <h1>{isRegistering ? 'Create Account' : 'Welcome Back'}</h1>
         <p className="login-subtitle">
-          {isRegistering 
-            ? 'Sign up for BARMAN STORE account' 
-            : 'Sign in to your BARMAN STORE account'}
+          {isRegistering
+            ? 'Sign up for BARMAN STORE account'
+            : 'Sign in with email or phone number'}
         </p>
 
         {error && <div className="error-message">{error}</div>}
@@ -141,12 +204,12 @@ function Login({ setUser }) {
               </div>
 
               <div className="form-group">
-                <label htmlFor="email">Email (Optional)</label>
+                <label htmlFor="registerEmail">Email (Optional)</label>
                 <input
                   type="email"
-                  id="email"
-                  value={email}
-                  onChange={(e) => setEmail(e.target.value)}
+                  id="registerEmail"
+                  value={registerEmail}
+                  onChange={(e) => setRegisterEmail(e.target.value)}
                   placeholder="Enter your email (optional)"
                 />
                 <small style={{ color: 'var(--color-text)', opacity: 0.7 }}>
@@ -160,7 +223,7 @@ function Login({ setUser }) {
                   type="tel"
                   id="registerPhone"
                   value={registerPhone}
-                  onChange={(e) => handlePhoneChange(e, true)}
+                  onChange={(e) => setRegisterPhone(e.target.value)}
                   placeholder="Enter your phone number (optional)"
                 />
                 <small style={{ color: 'var(--color-text)', opacity: 0.7 }}>
@@ -182,51 +245,18 @@ function Login({ setUser }) {
           )}
 
           {!isRegistering && (
-            <div className="login-method-toggle">
-              <button
-                type="button"
-                className={`toggle-btn ${loginMethod === 'email' ? 'active' : ''}`}
-                onClick={() => setLoginMethod('email')}
-              >
-                Email
-              </button>
-              <button
-                type="button"
-                className={`toggle-btn ${loginMethod === 'phone' ? 'active' : ''}`}
-                onClick={() => setLoginMethod('phone')}
-              >
-                Phone
-              </button>
-            </div>
-          )}
-
-          {!isRegistering && loginMethod === 'email' && (
             <div className="form-group">
-              <label htmlFor="email">Email</label>
+              <label htmlFor="identifier">Email or Phone</label>
               <input
-                type="email"
-                id="email"
-                value={email}
-                onChange={(e) => setEmail(e.target.value)}
-                placeholder="Enter your email"
-                required={!isRegistering && loginMethod === 'email'}
-              />
-            </div>
-          )}
-
-          {!isRegistering && loginMethod === 'phone' && (
-            <div className="form-group">
-              <label htmlFor="phone">Phone Number</label>
-              <input
-                type="tel"
-                id="phone"
-                value={phone}
-                onChange={(e) => handlePhoneChange(e, false)}
-                placeholder="Enter your phone (e.g., 123-456-7890)"
-                required={!isRegistering && loginMethod === 'phone'}
+                type="text"
+                id="identifier"
+                value={identifier}
+                onChange={(e) => setIdentifier(e.target.value)}
+                placeholder="Enter email or phone number"
+                required
               />
               <small style={{ color: 'var(--color-text)', opacity: 0.7 }}>
-                Enter your registered phone number (10 digits, optional +91 prefix)
+                System automatically detects email or India phone number
               </small>
             </div>
           )}
@@ -243,6 +273,20 @@ function Login({ setUser }) {
             />
           </div>
 
+          {isRegistering && (
+            <div className="form-group">
+              <label htmlFor="confirmPassword">Confirm Password</label>
+              <input
+                type="password"
+                id="confirmPassword"
+                value={confirmPassword}
+                onChange={(e) => setConfirmPassword(e.target.value)}
+                placeholder="Re-enter your password"
+                required
+              />
+            </div>
+          )}
+
           <button type="submit" className="login-button" disabled={loading}>
             {loading ? 'Please wait...' : (isRegistering ? 'Create Account' : 'Sign In')}
           </button>
@@ -253,14 +297,14 @@ function Login({ setUser }) {
             {isRegistering ? (
               <>
                 Already have an account?{' '}
-                <a href="#" onClick={(e) => { e.preventDefault(); setIsRegistering(false); setError(''); }}>
+                <a href="#" onClick={(e) => { e.preventDefault(); switchMode(false); }}>
                   Sign in
                 </a>
               </>
             ) : (
               <>
                 Don't have an account?{' '}
-                <a href="#" onClick={(e) => { e.preventDefault(); setIsRegistering(true); setError(''); }}>
+                <a href="#" onClick={(e) => { e.preventDefault(); switchMode(true); }}>
                   Create one
                 </a>
                 <br />
@@ -274,11 +318,11 @@ function Login({ setUser }) {
                     type="text"
                     value={resetReason}
                     onChange={(e) => setResetReason(e.target.value)}
-                    placeholder="Reset reason (optional)"
+                    placeholder="Reset reason (required for admin review)"
                     style={{ width: '100%', marginBottom: '0.4rem' }}
                   />
                   <button type="button" className="login-button" onClick={handleResetRequest}>
-                    Request Password Reset
+                    Request Admin Password Reset
                   </button>
                 </span>
               </>

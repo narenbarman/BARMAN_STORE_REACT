@@ -58,6 +58,21 @@ Supported by backend (`server/index.js`):
 - `BACKUP_DIR`
   - Default: `server/backups`
   - Backup files directory
+- `AUTO_BACKUP_ENABLED`
+  - Default: `false`
+  - Enables periodic automatic DB backups when `true`
+- `AUTO_BACKUP_INTERVAL_MINUTES`
+  - Default: `360`
+  - Interval between automatic backups
+- `AUTO_BACKUP_ON_STARTUP`
+  - Default: `false`
+  - If `true`, performs one automatic backup at server startup
+- `AUTO_BACKUP_RETENTION_COUNT`
+  - Default: `30`
+  - Maximum number of auto backups to keep (`0` means unlimited)
+- `AUTO_BACKUP_RETENTION_DAYS`
+  - Default: `30`
+  - Maximum age in days for auto backups (`0` means unlimited)
 
 ## Scripts
 - `npm run dev` start Vite dev server
@@ -88,6 +103,13 @@ Base URL: `http://localhost:5000`
 ### Admin Password Reset
 - `GET /api/admin/password-reset-requests`
 - `PUT /api/admin/password-reset-requests/:id`
+
+### Admin Backup
+- `POST /api/admin/backup/create`
+- `GET /api/admin/backup/status`
+- `GET /api/admin/backup/list`
+- `GET /api/admin/backup/download/:fileName`
+- `POST /api/admin/backup/restore`
 
 ### Users and Customers
 - `GET /api/users`

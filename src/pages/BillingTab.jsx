@@ -1,11 +1,12 @@
 import React, { useState, useCallback, useEffect, useRef } from 'react';
 import { Plus, Trash2 } from 'lucide-react';
 import { customersApi, productsApi, billingApi, creditApi, usersApi } from '../services/api';
-import { buildWhatsAppUrl } from '../utils/whatsapp';
+import { sendWhatsAppSmart } from '../utils/whatsapp';
 import { formatCurrency } from '../utils/formatters';
+import { buildBillShareText } from '../utils/messageTemplates';
+import { isValidIndianPhone, normalizeIndianPhone, PHONE_POLICY_MESSAGE } from '../utils/phone';
 import * as info from './info';
 import './BillingTab.css';
-import { TITLE } from './info';
 
 const createEmptyItem = () => ({
   id: Date.now() + Math.random(),
@@ -214,9 +215,13 @@ const BillingSystem = () => {
       alert('Please add at least one item to the bill.');
       return;
     }
+    if (!isValidIndianPhone(customer.phone)) {
+      alert(PHONE_POLICY_MESSAGE);
+      return;
+    }
 
     const paid = paidClamped;
-    const normalizePhone = (value) => String(value || '').replace(/\D/g, '');
+    const normalizePhone = (value) => normalizeIndianPhone(value);
     const isSame = (a, b) => String(a || '').trim().toLowerCase() === String(b || '').trim().toLowerCase();
     const findCustomerMatch = () => {
       const phone = normalizePhone(customer.phone);
@@ -237,7 +242,7 @@ const BillingSystem = () => {
       customer_id: customer.id || null,
       customer_name: customer.name,
       customer_email: customer.email || null,
-      customer_phone: customer.phone || null,
+      customer_phone: normalizeIndianPhone(customer.phone) || null,
       customer_address: customer.address || null,
       discount_amount: Number(totalDiscount.toFixed(2)),
       total_amount: Number(totalBill.toFixed(2)),
@@ -434,22 +439,27 @@ const BillingSystem = () => {
           // Keep bill flow resilient; fall back to this bill's credit amount.
         }
       }
-      const shareText = buildShareText({
+      const shareText = buildBillShareText({
         companyTitle: info.TITLE || 'BARMAN STORE',
-        bill_number: result?.bill_number,
-        created_at: new Date().toISOString(),
+        billNumber: result?.bill_number,
+        createdAt: new Date().toISOString(),
+        customerName: payload.customer_name,
+        customerPhone: payload.customer_phone,
+        customerEmail: payload.customer_email,
+        customerAddress: payload.customer_address,
         items: payload.items,
-        total_amount: payload.total_amount,
-        paid_amount: payload.paid_amount,
-        credit_amount: payload.credit_amount,
-        current_total_credit: currentTotalCredit,
-        payment_status: payload.payment_status,
+        totalAmount: payload.total_amount,
+        paidAmount: payload.paid_amount,
+        creditAmount: payload.credit_amount,
+        currentTotalCredit,
+        paymentStatus: payload.payment_status,
+        onlineStoreUrl: info.ONLINE_STORE_URL,
         thankYouLine: 'Thank you for shopping with us.'
       });
       setLastShareText(shareText);
       setLastShareNumber(result?.bill_number || '');
       setLastSharePhone(payload.customer_phone || '');
-      alert('? Bill created successfully!');
+      alert('Bill created successfully.');
       setCustomer({ name: '', email: '', phone: '', address: '' });
       setItems([createEmptyItem()]);
       setPaidAmount(0);
@@ -461,53 +471,6 @@ const BillingSystem = () => {
     }
   };
 
-  const buildShareText = ({
-    companyTitle,
-    thankYouLine,
-    bill_number,
-    created_at,
-    items = [],
-    total_amount = 0,
-    paid_amount = 0,
-    credit_amount = 0,
-    current_total_credit = 0,
-    payment_status = ''
-  }) => {
-    const lines = [];
-    lines.push(companyTitle || 'BARMAN STORE');
-    lines.push('');
-    lines.push(`Bill: ${bill_number || ''}`);
-    lines.push(`Date: ${new Date(created_at || Date.now()).toLocaleString()}`);
-    lines.push('');
-    lines.push('Items:');
-
-    if (!items.length) {
-      lines.push('- None');
-    } else {
-      items.forEach((it) => {
-        const name = it.product_name || it.name || 'Item';
-        const qty = Number(it.qty || it.quantity || 0);
-        const unit = it.unit || '';
-        const amount = Number(it.amount || 0);
-        lines.push(`- ${name} ${qty}${unit ? ` ${unit}` : ''} : Rs ${amount}`);
-      });
-    }
-
-    lines.push('');
-    lines.push(`Total: Rs ${Number(total_amount || 0)}`);
-    lines.push(`Paid: Rs ${Number(paid_amount || 0)}`);
-    lines.push(`Credit: Rs ${Number(credit_amount || 0)}`);
-    lines.push(`Current Total Credit: Rs ${Number(current_total_credit || 0)}`);
-    lines.push(`Status: ${payment_status || ''}`);
-    if (info.ONLINE_STORE_URL) {
-      lines.push('');
-      lines.push(`Visit online: ${info.ONLINE_STORE_URL}`);
-    }
-    lines.push('');
-    lines.push(thankYouLine || 'Thank you for shopping with us.');
-    return lines.join('\n');
-  };
-
   const handleCopyShare = async () => {
     if (!lastShareText) return;
     try {
@@ -515,6 +478,25 @@ const BillingSystem = () => {
       alert('Bill text copied.');
     } catch (err) {
       alert('Failed to copy bill text.');
+    }
+  };
+
+  const handleSendWhatsApp = async () => {
+    if (!lastShareText) return;
+    const result = await sendWhatsAppSmart({
+      phone: lastSharePhone || customer?.phone,
+      text: lastShareText,
+    });
+    if (result.status === 'missing_phone') {
+      alert('Customer phone is missing or invalid. Please update phone and try again.');
+      return;
+    }
+    if (result.status === 'fallback_copy') {
+      alert('Message was long, copied to clipboard. Paste it in WhatsApp.');
+      return;
+    }
+    if (result.status === 'fallback_no_copy') {
+      alert('Message was long. Opened WhatsApp chat, please paste message manually.');
     }
   };
 
@@ -743,7 +725,7 @@ const BillingSystem = () => {
           onClick={handleCreateBill} 
           disabled={isSubmitting}
         >
-          ? Create Bill
+          Create Bill
         </button>
       </div>
 
@@ -755,17 +737,13 @@ const BillingSystem = () => {
           <textarea className="share-text" readOnly value={lastShareText} />
           <div className="share-actions">
             <button className="share-btn" onClick={handleCopyShare}>Copy</button>
-            <a
+            <button
+              type="button"
               className="share-btn whatsapp"
-              href={buildWhatsAppUrl({
-                phone: lastSharePhone || customer?.phone,
-                text: lastShareText,
-              })}
-              target="_blank"
-              rel="noreferrer"
+              onClick={handleSendWhatsApp}
             >
               WhatsApp
-            </a>
+            </button>
           </div>
         </div>
       )}

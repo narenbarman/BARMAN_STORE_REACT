@@ -522,23 +522,23 @@
   justify-content: space-between;
   align-items: center;
   padding: 20px 24px;
-  border-bottom: 1px solid #e5e7eb;
+  border-bottom: 1px solid var(--color-border);
   position: sticky;
   top: 0;
-  background: white;
+  background: var(--color-card);
   z-index: 10;
 }
 
 .purchase-management .modal-header h2 {
   margin: 0;
   font-size: 20px;
-  color: #111827;
+  color: var(--color-primary);
 }
 
 .purchase-management .close-btn {
   background: none;
   border: none;
-  color: #6b7280;
+  color: var(--color-text);
   cursor: pointer;
   padding: 4px;
   border-radius: 6px;
@@ -546,8 +546,8 @@
 }
 
 .purchase-management .close-btn:hover {
-  background: #f3f4f6;
-  color: #111827;
+  background: var(--color-bg);
+  color: var(--color-primary);
 }
 
 .purchase-management form {
@@ -590,14 +590,14 @@
 
 .purchase-management .po-form-section {
   margin-bottom: 0;
-  background: #ffffff;
-  border: 1px solid #e5e7eb;
+  background: var(--color-card);
+  border: 1px solid var(--color-border);
   border-radius: 12px;
-  padding: 16px;
+  padding: 1.25rem;
 }
 
 .purchase-management .po-form-header {
-  background: linear-gradient(180deg, #f8fafc 0%, #ffffff 100%);
+  background: var(--color-bg);
 }
 
 .purchase-management .po-info-row {
@@ -628,7 +628,7 @@
 
 .purchase-management .form-section h3 {
   font-size: 16px;
-  color: #374151;
+  color: var(--color-primary);
   margin: 0 0 16px 0;
 }
 
@@ -647,19 +647,18 @@
   display: flex;
   align-items: center;
   gap: 6px;
-  padding: 8px 14px;
-  background: #f3f4f6;
-  border: 1px dashed #d1d5db;
-  border-radius: 6px;
-  color: #6b7280;
+  padding: 0.55rem 0.85rem;
+  background: var(--color-primary);
+  border: 1px solid var(--color-primary);
+  border-radius: 8px;
+  color: #fff;
   font-size: 14px;
   cursor: pointer;
   transition: all 0.2s ease;
 }
 
 .purchase-management .add-item-btn:hover {
-  background: #e5e7eb;
-  border-color: #9ca3af;
+  filter: brightness(0.9);
 }
 
 .purchase-management .form-row {
@@ -674,9 +673,9 @@
 
 .purchase-management .form-group label {
   display: block;
-  font-size: 14px;
-  font-weight: 500;
-  color: #374151;
+  font-size: 0.85rem;
+  font-weight: 600;
+  color: var(--color-text);
   margin-bottom: 6px;
 }
 
@@ -684,11 +683,11 @@
 .purchase-management .form-group select,
 .purchase-management .form-group textarea {
   width: 100%;
-  padding: 10px 12px;
-  border: 1px solid #d1d5db;
+  padding: 0.55rem 0.65rem;
+  border: 1px solid var(--color-border);
   border-radius: 8px;
   font-size: 14px;
-  color: #111827;
+  color: var(--color-text);
   transition: all 0.2s ease;
 }
 
@@ -696,8 +695,8 @@
 .purchase-management .form-group select:focus,
 .purchase-management .form-group textarea:focus {
   outline: none;
-  border-color: #10b981;
-  box-shadow: 0 0 0 3px rgba(16, 185, 129, 0.1);
+  border-color: var(--color-primary);
+  box-shadow: 0 0 0 3px rgba(26, 26, 26, 0.1);
 }
 
 .purchase-management .form-group textarea {
@@ -715,12 +714,12 @@
 .purchase-management .field-hint {
   display: block;
   margin-top: 4px;
-  color: #6b7280;
+  color: var(--color-text);
   font-size: 12px;
 }
 
 .purchase-management .quick-entry-table {
-  border: 1px solid #e5e7eb;
+  border: 1px solid var(--color-border);
   border-radius: 10px;
   overflow: auto;
 }
@@ -731,17 +730,17 @@
 }
 
 .purchase-management .quick-entry-table th {
-  background: #f9fafb;
-  padding: 10px 12px;
+  background: var(--color-bg);
+  padding: 0.55rem;
   text-align: left;
   font-size: 12px;
-  color: #6b7280;
-  border-bottom: 1px solid #e5e7eb;
+  color: var(--color-text);
+  border-bottom: 1px solid var(--color-border);
 }
 
 .purchase-management .quick-entry-table td {
-  padding: 10px 12px;
-  border-bottom: 1px solid #f3f4f6;
+  padding: 0.55rem;
+  border-bottom: 1px solid var(--color-border);
 }
 
 .purchase-management .quick-entry-table tr:last-child td {
@@ -750,8 +749,8 @@
 
 .purchase-management .quick-entry-table input {
   width: 100%;
-  padding: 8px 10px;
-  border: 1px solid #d1d5db;
+  padding: 0.45rem;
+  border: 1px solid var(--color-border);
   border-radius: 6px;
   font-size: 14px;
 }
@@ -767,9 +766,9 @@
   gap: 12px;
   align-items: end;
   padding: 16px;
-  background: #f9fafb;
+  background: var(--color-bg);
   border-radius: 10px;
-  border: 1px solid #e5e7eb;
+  border: 1px solid var(--color-border);
 }
 
 .purchase-management .order-item-row {
@@ -810,8 +809,8 @@
   grid-template-columns: repeat(3, minmax(0, 1fr));
   gap: 10px;
   align-items: end;
-  background: #f9fafb;
-  border: 1px solid #e5e7eb;
+  background: var(--color-bg);
+  border: 1px solid var(--color-border);
   border-radius: 8px;
   padding: 10px;
 }
@@ -821,15 +820,15 @@
   grid-template-columns: repeat(3, minmax(0, 1fr));
   gap: 10px;
   align-items: end;
-  background: #f9fafb;
-  border: 1px solid #e5e7eb;
+  background: var(--color-bg);
+  border: 1px solid var(--color-border);
   border-radius: 8px;
   padding: 10px;
 }
 
 .purchase-management .po-item-amounts .item-field span {
   font-weight: 600;
-  color: #111827;
+  color: var(--color-text);
 }
 
 .purchase-management .po-remove-btn {
@@ -852,21 +851,21 @@
 
 .purchase-management .item-field label {
   font-size: 12px;
-  color: #6b7280;
+  color: var(--color-text);
   font-weight: 500;
 }
 
 .purchase-management .item-field span {
   font-size: 14px;
-  color: #374151;
+  color: var(--color-text);
   padding: 8px 0;
 }
 
 .purchase-management .item-field input,
 .purchase-management .item-field select {
-  padding: 8px 10px;
-  border: 1px solid #d1d5db;
-  border-radius: 6px;
+  padding: 0.55rem 0.65rem;
+  border: 1px solid var(--color-border);
+  border-radius: 8px;
   font-size: 14px;
 }
 
@@ -899,8 +898,8 @@
   margin-top: 12px;
   margin-left: auto;
   max-width: 360px;
-  background: #f3f4f6;
-  border: 1px solid #e5e7eb;
+  background: var(--color-bg);
+  border: 1px solid var(--color-border);
   border-radius: 10px;
   padding: 12px;
 }
@@ -910,16 +909,17 @@
   justify-content: space-between;
   align-items: center;
   padding: 6px 0;
-  color: #374151;
+  color: var(--color-text);
   font-size: 14px;
 }
 
 .purchase-management .order-summary .summary-row.grand-total {
   margin-top: 6px;
   padding-top: 10px;
-  border-top: 1px solid #d1d5db;
-  color: #111827;
-  font-weight: 700;
+  border-top: 1px solid var(--color-border);
+  color: var(--color-primary);
+  font-size: 1.2rem;
+  font-weight: 800;
 }
 
 .purchase-management .po-form-footer .order-summary {
@@ -930,12 +930,12 @@
 .purchase-management .modal-actions {
   display: flex;
   justify-content: flex-end;
-  gap: 12px;
+  gap: 0.75rem;
   padding-top: 16px;
-  border-top: 1px solid #e5e7eb;
+  border-top: 1px solid var(--color-border);
   position: sticky;
   bottom: 0;
-  background: white;
+  background: var(--color-card);
   border-radius: 0 0 12px 12px;
 }
 
@@ -1038,34 +1038,33 @@ body.po-modal-resizing {
 }
 
 .purchase-management .cancel-btn {
-  padding: 10px 20px;
-  border: 1px solid #d1d5db;
+  padding: 0.55rem 0.85rem;
+  border: 1px solid var(--color-border);
   border-radius: 8px;
-  background: white;
-  color: #374151;
+  background: var(--color-bg);
+  color: var(--color-primary);
   font-weight: 500;
   cursor: pointer;
   transition: all 0.2s ease;
 }
 
 .purchase-management .cancel-btn:hover {
-  background: #f9fafb;
-  border-color: #9ca3af;
+  background: var(--color-card);
 }
 
 .purchase-management .submit-btn {
-  padding: 10px 24px;
-  border: none;
+  padding: 0.55rem 0.85rem;
+  border: 1px solid var(--color-primary);
   border-radius: 8px;
-  background: linear-gradient(135deg, #10b981, #059669);
-  color: white;
+  background: var(--color-primary);
+  color: #fff;
   font-weight: 500;
   cursor: pointer;
   transition: all 0.2s ease;
 }
 
 .purchase-management .submit-btn:hover {
-  background: linear-gradient(135deg, #059669, #047857);
+  filter: brightness(0.9);
 }
 
 /* Responsive */

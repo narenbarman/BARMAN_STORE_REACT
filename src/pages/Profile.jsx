@@ -4,8 +4,11 @@ import {
   User, Phone, MapPin, Mail, Save, CheckCircle, 
   AlertCircle, ArrowLeft, Camera, Trash2
 } from 'lucide-react';
-import { usersApi, resolveMediaSourceForDisplay } from '../services/api';
+import { authApi, usersApi, resolveMediaSourceForDisplay } from '../services/api';
+import { isValidIndianPhone, normalizeIndianPhone, PHONE_POLICY_MESSAGE } from '../utils/phone';
 import './Profile.css';
+
+const validateEmail = (email) => /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(String(email || '').trim());
 
 function Profile() {
   const navigate = useNavigate();
@@ -17,6 +20,13 @@ function Profile() {
   const [imageUploading, setImageUploading] = useState(false);
   const [imageLoadFailed, setImageLoadFailed] = useState(false);
   const [displayProfileImageSrc, setDisplayProfileImageSrc] = useState('');
+  const [emailVerified, setEmailVerified] = useState(false);
+  const [phoneVerified, setPhoneVerified] = useState(false);
+  const [emailVerificationToken, setEmailVerificationToken] = useState('');
+  const [phoneVerificationCode, setPhoneVerificationCode] = useState('');
+  const [verificationLoading, setVerificationLoading] = useState('');
+  const [preparedEmailVerification, setPreparedEmailVerification] = useState(null);
+  const [preparedPhoneVerification, setPreparedPhoneVerification] = useState(null);
   
   const [formData, setFormData] = useState({
     name: '',
@@ -98,6 +108,8 @@ function Profile() {
         profile_image: profile.profile_image || '',
         ...addressData
       });
+      setEmailVerified(Boolean(profile.email_verified));
+      setPhoneVerified(Boolean(profile.phone_verified));
       
       // Validate profile completeness
       validateProfile(profile, addressData);
@@ -112,8 +124,14 @@ function Profile() {
   const validateProfile = (profile, address) => {
     const issues = [];
     
-    if (!profile.phone || profile.phone.trim().length < 10) {
-      issues.push({ field: 'phone', message: 'Phone number is required (min 10 digits)' });
+    if (profile.email && !validateEmail(profile.email)) {
+      issues.push({ field: 'email', message: 'Enter a valid email or keep it blank' });
+    }
+    if (!profile.phone || !isValidIndianPhone(profile.phone)) {
+      issues.push({ field: 'phone', message: PHONE_POLICY_MESSAGE });
+    }
+    if (!profile.email_verified && !profile.phone_verified) {
+      issues.push({ field: 'verification', message: 'Verify at least one contact method (email or phone)' });
     }
     if (!address.street) issues.push({ field: 'street', message: 'Street address is required' });
     if (!address.city) issues.push({ field: 'city', message: 'City is required' });
@@ -143,6 +161,17 @@ function Profile() {
     setSuccess(null);
 
     try {
+      const normalizedEmail = String(formData.email || '').trim().toLowerCase();
+      if (normalizedEmail && !validateEmail(normalizedEmail)) {
+        setError('Enter a valid email or leave it blank');
+        setSaving(false);
+        return;
+      }
+      if (!isValidIndianPhone(formData.phone)) {
+        setError(PHONE_POLICY_MESSAGE);
+        setSaving(false);
+        return;
+      }
       const address = {
         street: formData.street,
         city: formData.city,
@@ -151,10 +180,10 @@ function Profile() {
         country: formData.country
       };
 
-      await usersApi.update(user.id, {
+      const updatedProfile = await usersApi.update(user.id, {
         name: formData.name,
-        email: formData.email,
-        phone: formData.phone,
+        email: normalizedEmail || null,
+        phone: normalizeIndianPhone(formData.phone),
         profile_image: formData.profile_image || null,
         address: JSON.stringify(address)
       });
@@ -162,20 +191,31 @@ function Profile() {
       // Update local storage
       const updatedUser = {
         ...user,
-        name: formData.name,
-        email: formData.email,
-        phone: formData.phone,
-        profile_image: formData.profile_image || null,
-        address: JSON.stringify(address)
+        ...updatedProfile,
+        token: user?.token
       };
       localStorage.setItem('user', JSON.stringify(updatedUser));
       window.dispatchEvent(new Event('user-updated'));
       setUser(updatedUser);
+      setEmailVerified(Boolean(updatedProfile?.email_verified));
+      setPhoneVerified(Boolean(updatedProfile?.phone_verified));
+      setPreparedEmailVerification(null);
+      setPreparedPhoneVerification(null);
+      setEmailVerificationToken('');
+      setPhoneVerificationCode('');
       
       setSuccess('Profile updated successfully!');
       
       // Re-validate
-      validateProfile({ ...formData, phone: formData.phone }, address);
+      validateProfile(
+        {
+          ...formData,
+          phone: normalizeIndianPhone(formData.phone),
+          email_verified: Boolean(updatedProfile?.email_verified),
+          phone_verified: Boolean(updatedProfile?.phone_verified),
+        },
+        address
+      );
       
     } catch (err) {
       setError(err.message);
@@ -277,6 +317,154 @@ function Profile() {
     } finally {
       setImageUploading(false);
       e.target.value = '';
+    }
+  };
+
+  const normalizedDraftEmail = String(formData.email || '').trim().toLowerCase();
+  const normalizedSavedEmail = String(user?.email || '').trim().toLowerCase();
+  const normalizedDraftPhone = normalizeIndianPhone(formData.phone || '');
+  const normalizedSavedPhone = normalizeIndianPhone(user?.phone || '');
+  const emailDraftChanged = normalizedDraftEmail !== normalizedSavedEmail;
+  const phoneDraftChanged = normalizedDraftPhone !== normalizedSavedPhone;
+
+  const copyText = async (value, label) => {
+    try {
+      const text = String(value || '').trim();
+      if (!text) return;
+      if (!navigator?.clipboard?.writeText) {
+        setError('Clipboard is not available in this browser');
+        return;
+      }
+      await navigator.clipboard.writeText(text);
+      setSuccess(`${label} copied`);
+    } catch (_) {
+      setError(`Failed to copy ${label.toLowerCase()}`);
+    }
+  };
+
+  const handleRequestEmailVerification = async () => {
+    try {
+      setError(null);
+      setSuccess(null);
+      if (emailDraftChanged) {
+        setError('Save email changes first, then request verification');
+        return;
+      }
+      if (!normalizedSavedEmail || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(normalizedSavedEmail)) {
+        setError('Enter a valid email and save profile first');
+        return;
+      }
+      setVerificationLoading('email_request');
+      const response = await authApi.requestMyEmailVerification();
+      setPreparedEmailVerification(response?.prepared_email || response?.delivery?.email || null);
+      setSuccess(response?.message || 'Verification instructions sent');
+    } catch (err) {
+      setError(err.message || 'Failed to request email verification');
+    } finally {
+      setVerificationLoading('');
+    }
+  };
+
+  const handleConfirmEmailVerification = async () => {
+    try {
+      setError(null);
+      setSuccess(null);
+      const token = String(emailVerificationToken || '').trim();
+      if (!normalizedSavedEmail) {
+        setError('Save a valid email first');
+        return;
+      }
+      if (!token) {
+        setError('Email verification token is required');
+        return;
+      }
+      setVerificationLoading('email_confirm');
+      const response = await authApi.confirmEmailVerification(normalizedSavedEmail, token);
+      setEmailVerified(true);
+      setPreparedEmailVerification(null);
+      setEmailVerificationToken('');
+      const updatedUser = { ...user, email_verified: true };
+      setUser(updatedUser);
+      localStorage.setItem('user', JSON.stringify(updatedUser));
+      window.dispatchEvent(new Event('user-updated'));
+      setSuccess(response?.message || 'Email verified successfully');
+      validateProfile(
+        { ...formData, email_verified: true, phone_verified: phoneVerified, phone: normalizedDraftPhone || formData.phone },
+        {
+          street: formData.street,
+          city: formData.city,
+          state: formData.state,
+          zip: formData.zip,
+          country: formData.country
+        }
+      );
+    } catch (err) {
+      setError(err.message || 'Failed to confirm email verification');
+    } finally {
+      setVerificationLoading('');
+    }
+  };
+
+  const handleRequestPhoneVerification = async () => {
+    try {
+      setError(null);
+      setSuccess(null);
+      if (phoneDraftChanged) {
+        setError('Save phone changes first, then request verification');
+        return;
+      }
+      if (!normalizedSavedPhone) {
+        setError(PHONE_POLICY_MESSAGE);
+        return;
+      }
+      setVerificationLoading('phone_request');
+      const response = await authApi.requestMyPhoneVerification();
+      setPreparedPhoneVerification(response?.prepared_whatsapp || response?.delivery?.whatsapp || null);
+      setSuccess(response?.message || 'Phone verification instructions sent');
+    } catch (err) {
+      setError(err.message || 'Failed to request phone verification');
+    } finally {
+      setVerificationLoading('');
+    }
+  };
+
+  const handleConfirmPhoneVerification = async () => {
+    try {
+      setError(null);
+      setSuccess(null);
+      const code = String(phoneVerificationCode || '').trim();
+      if (!normalizedSavedPhone) {
+        setError(PHONE_POLICY_MESSAGE);
+        return;
+      }
+      if (!code) {
+        setError('Phone verification code is required');
+        return;
+      }
+      setVerificationLoading('phone_confirm');
+      const response = await authApi.confirmPhoneVerification(normalizedSavedPhone, code);
+      setPhoneVerified(true);
+      setPreparedPhoneVerification(null);
+      setPhoneVerificationCode('');
+      const updatedUser = { ...user, phone_verified: true };
+      setUser(updatedUser);
+      localStorage.setItem('user', JSON.stringify(updatedUser));
+      window.dispatchEvent(new Event('user-updated'));
+      setSuccess(response?.message || 'Phone verified successfully');
+      validateProfile(
+        { ...formData, email_verified: emailVerified, phone_verified: true, phone: normalizedDraftPhone || formData.phone },
+        {
+          street: formData.street,
+          city: formData.city,
+          state: formData.state,
+          zip: formData.zip,
+          country: formData.country
+        }
+      );
+    } catch (err) {
+      setError(err.message || 'Failed to confirm phone verification');
+    } finally {
+      setVerificationLoading('');
     }
   };
 
@@ -419,6 +607,14 @@ function Profile() {
               <div className="form-group">
                 <label htmlFor="email">
                   <Mail size={16} /> Email Address
+                  {formData.email && (
+                    <span
+                      className={`verification-pill ${emailVerified ? 'verified' : 'unverified'}`}
+                      title={emailVerified ? 'Verified email' : 'Unverified email'}
+                    >
+                      {emailVerified ? 'Verified' : 'Unverified'}
+                    </span>
+                  )}
                 </label>
                 <input
                   type="email"
@@ -427,11 +623,87 @@ function Profile() {
                   value={formData.email}
                   onChange={handleInputChange}
                   placeholder="your@email.com"
+                  className={validationIssues.find(i => i.field === 'email') ? 'error-field' : ''}
                 />
+                {formData.email && (
+                  <div className="verification-tools">
+                    {emailDraftChanged && (
+                      <span className="verification-note">Save email changes before verification actions</span>
+                    )}
+                    {!emailVerified && (
+                      <div className="verification-actions">
+                        <button
+                          type="button"
+                          className="verify-btn"
+                          onClick={handleRequestEmailVerification}
+                          disabled={verificationLoading === 'email_request' || emailDraftChanged}
+                        >
+                          {verificationLoading === 'email_request' ? 'Preparing...' : 'Send Verification'}
+                        </button>
+                        <input
+                          type="text"
+                          value={emailVerificationToken}
+                          onChange={(e) => setEmailVerificationToken(e.target.value)}
+                          placeholder="Enter email token"
+                          disabled={emailDraftChanged}
+                        />
+                        <button
+                          type="button"
+                          className="verify-btn secondary"
+                          onClick={handleConfirmEmailVerification}
+                          disabled={verificationLoading === 'email_confirm' || emailDraftChanged}
+                        >
+                          {verificationLoading === 'email_confirm' ? 'Confirming...' : 'Confirm Email'}
+                        </button>
+                      </div>
+                    )}
+                    {preparedEmailVerification && (
+                      <div className="verification-prepared">
+                        <textarea
+                          value={preparedEmailVerification.body || ''}
+                          rows={5}
+                          readOnly
+                        />
+                        <div className="verification-actions">
+                          <button
+                            type="button"
+                            className="verify-btn secondary"
+                            onClick={() => copyText(preparedEmailVerification.subject, 'Subject')}
+                          >
+                            Copy Subject
+                          </button>
+                          <button
+                            type="button"
+                            className="verify-btn secondary"
+                            onClick={() => copyText(preparedEmailVerification.body, 'Email body')}
+                          >
+                            Copy Body
+                          </button>
+                          {preparedEmailVerification.mailto_url && (
+                            <a
+                              className="verify-btn"
+                              href={preparedEmailVerification.mailto_url}
+                            >
+                              Open Email App
+                            </a>
+                          )}
+                        </div>
+                      </div>
+                    )}
+                  </div>
+                )}
               </div>
               <div className="form-group">
                 <label htmlFor="phone">
                   <Phone size={16} /> Phone Number *
+                  {formData.phone && (
+                    <span
+                      className={`verification-pill ${phoneVerified ? 'verified' : 'unverified'}`}
+                      title={phoneVerified ? 'Verified phone' : 'Unverified phone'}
+                    >
+                      {phoneVerified ? 'Verified' : 'Unverified'}
+                    </span>
+                  )}
                 </label>
                 <input
                   type="tel"
@@ -443,6 +715,68 @@ function Profile() {
                   placeholder="+91 98765 43210"
                   className={validationIssues.find(i => i.field === 'phone') ? 'error-field' : ''}
                 />
+                {formData.phone && (
+                  <div className="verification-tools">
+                    {phoneDraftChanged && (
+                      <span className="verification-note">Save phone changes before verification actions</span>
+                    )}
+                    {!phoneVerified && (
+                      <div className="verification-actions">
+                        <button
+                          type="button"
+                          className="verify-btn"
+                          onClick={handleRequestPhoneVerification}
+                          disabled={verificationLoading === 'phone_request' || phoneDraftChanged}
+                        >
+                          {verificationLoading === 'phone_request' ? 'Preparing...' : 'Send WhatsApp Verification'}
+                        </button>
+                        <input
+                          type="text"
+                          value={phoneVerificationCode}
+                          onChange={(e) => setPhoneVerificationCode(e.target.value)}
+                          placeholder="Enter phone code"
+                          disabled={phoneDraftChanged}
+                        />
+                        <button
+                          type="button"
+                          className="verify-btn secondary"
+                          onClick={handleConfirmPhoneVerification}
+                          disabled={verificationLoading === 'phone_confirm' || phoneDraftChanged}
+                        >
+                          {verificationLoading === 'phone_confirm' ? 'Confirming...' : 'Confirm Phone'}
+                        </button>
+                      </div>
+                    )}
+                    {preparedPhoneVerification && (
+                      <div className="verification-prepared">
+                        <textarea
+                          value={preparedPhoneVerification.text || ''}
+                          rows={5}
+                          readOnly
+                        />
+                        <div className="verification-actions">
+                          <button
+                            type="button"
+                            className="verify-btn secondary"
+                            onClick={() => copyText(preparedPhoneVerification.text, 'WhatsApp text')}
+                          >
+                            Copy Message
+                          </button>
+                          {preparedPhoneVerification.whatsapp_url && (
+                            <a
+                              className="verify-btn"
+                              href={preparedPhoneVerification.whatsapp_url}
+                              target="_blank"
+                              rel="noreferrer"
+                            >
+                              Open WhatsApp
+                            </a>
+                          )}
+                        </div>
+                      </div>
+                    )}
+                  </div>
+                )}
               </div>
             </div>
           </div>

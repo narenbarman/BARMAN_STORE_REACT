@@ -21,7 +21,6 @@ const OrderTracking = lazy(() => import('./pages/OrderTracking'));
 const MyOrders = lazy(() => import('./pages/MyOrders'));
 const OrderDetails = lazy(() => import('./pages/OrderDetails'));
 const Profile = lazy(() => import('./pages/Profile'));
-const Billing = lazy(() => import('./pages/Billing'));
 
 
 // React Router v7 future flags to opt-in early and suppress warnings
@@ -106,14 +105,43 @@ function App() {
   }, []);
 
   useEffect(() => {
+    const isVisible = (element) => {
+      if (!element || !(element instanceof HTMLElement)) return false;
+      const style = window.getComputedStyle(element);
+      if (style.display === 'none' || style.visibility === 'hidden') return false;
+      const rect = element.getBoundingClientRect();
+      return rect.width > 0 && rect.height > 0;
+    };
+
+    const findTopMostCloseControl = () => {
+      const selector = [
+        '[data-modal-close="true"]',
+        '.app-modal-close-btn',
+        '.mobile-sheet-close-btn',
+        '.invoice-close-btn',
+        '.dropdown-close-btn',
+        '.close-btn',
+      ].join(', ');
+      const candidates = Array.from(document.querySelectorAll(selector)).filter(isVisible);
+      if (candidates.length === 0) return null;
+      return candidates[candidates.length - 1];
+    };
+
     const handleEscape = (event) => {
-      if (event.key === 'Escape') {
+      if (event.key !== 'Escape') return;
+      if (mobileMenuOpen) {
         setMobileMenuOpen(false);
+        return;
+      }
+      const closer = findTopMostCloseControl();
+      if (closer) {
+        event.preventDefault();
+        closer.click();
       }
     };
     window.addEventListener('keydown', handleEscape);
     return () => window.removeEventListener('keydown', handleEscape);
-  }, []);
+  }, [mobileMenuOpen]);
 
   useEffect(() => {
     if (!mobileMenuOpen) {
@@ -205,8 +233,6 @@ function App() {
               <Route path="/order-tracking" element={<OrderTracking />} />
               <Route path="/order-tracking/:orderId" element={<OrderTracking />} />
               <Route path="/profile" element={<Profile />} />
-              <Route path="/billing" element={<Billing />} />
-              <Route path="/billing/:billNumber" element={<Billing />} />
             </Routes>
           </Suspense>
         </main>

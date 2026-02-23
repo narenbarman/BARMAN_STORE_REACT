@@ -16,6 +16,7 @@ import BillsViewer from './BillsViewer';
 import OfferManagement from './OfferManagement';
 import PasswordResetRequests from './PasswordResetRequests';
 import CreditKhata from './CreditKhata';
+import AppModal from '../components/AppModal';
 import './Admin.css';
 
 // Currency formatter with conditional color styling
@@ -953,6 +954,10 @@ function Admin({ user }) {
   };
 
   const handleEditUser = (user) => {
+    if (!user || !user.email_verified || !user.phone_verified) {
+      showNotification('User type can be changed only when both email and phone are verified.', 'error');
+      return;
+    }
     setEditingUser(user);
   };
 
@@ -1194,7 +1199,7 @@ function Admin({ user }) {
                   className={`${activeTab === 'password-resets' ? 'active' : ''} sub-item`}
                   onClick={() => handleTabChange('password-resets')}
                 >
-                  <KeyRound size={18} /> Password Resets
+                  <KeyRound size={18} /> Account Actions
                 </button>
                 <button
                   className={`${activeTab === 'backup-restore' ? 'active' : ''} sub-item`}
@@ -1936,7 +1941,8 @@ function Admin({ user }) {
                                 <button
                                   className="action-btn edit"
                                   onClick={() => handleEditUser(u)}
-                                  title="Edit user"
+                                  title={u.email_verified && u.phone_verified ? 'Change user type' : 'Requires verified email and phone'}
+                                  disabled={!u.email_verified || !u.phone_verified}
                                 >
                                   <Edit size={16} />
                                 </button>
@@ -2064,9 +2070,11 @@ function Admin({ user }) {
         />
       )}
       {showApproveModal && modalOrder && (
-        <div className="modal-backdrop">
-        <div className="modal-card">
-          <h2>Approve Order {modalOrder.order_number || `#${modalOrder.id}`}</h2>
+        <AppModal
+          open={showApproveModal}
+          title={`Approve Order ${modalOrder.order_number || `#${modalOrder.id}`}`}
+          onClose={() => setShowApproveModal(false)}
+        >
           {modalLoading ? (
             <p>Loading...</p>
           ) : (
@@ -2100,13 +2108,15 @@ function Admin({ user }) {
               </div>
             </>
           )}
-        </div>
-      </div>
-    )}
+        </AppModal>
+      )}
       {showExportDialog && (
-        <div className="modal-backdrop">
-          <div className="modal-card export-modal-card">
-            <h2>Export Products</h2>
+        <AppModal
+          open={showExportDialog}
+          title="Export Products"
+          onClose={() => setShowExportDialog(false)}
+          dialogClassName="export-modal-card"
+        >
             <p>Select format, then confirm export.</p>
             <div className="export-format-toggle-group">
               <button
@@ -2132,8 +2142,7 @@ function Admin({ user }) {
                 Confirm Export
               </button>
             </div>
-          </div>
-        </div>
+        </AppModal>
       )}
       {/* Category Management Modal */}
       {showCategoryManagement && (
